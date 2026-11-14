@@ -32,15 +32,7 @@ struct WordsTab: View {
                 default: decks
                 }
             }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                Picker("顯示", selection: $segment.animation(.snappy)) {
-                    Text("全部 \(words.count)").tag(0)
-                    Text("清單").tag(1)
-                    Text("內建字庫").tag(2)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 20).padding(.vertical, 8)
-            }
+            .modifier(DeckSearch(on: segment == 0 && !words.isEmpty, query: $search))
             .navigationTitle("字庫")
             .themedBackground()
             .toolbar {
@@ -133,13 +125,30 @@ struct WordsTab: View {
         return (days, byDay)
     }
 
+    /// 全部／清單／內建字庫, as the first row of each list. A pinned top inset was drawn on top of the
+    /// search field on iOS 27.3 devices, which place the search drawer in the scrolling content.
+    private var segmentPicker: some View {
+        Picker("顯示", selection: $segment.animation(.snappy)) {
+            Text("全部 \(words.count)").tag(0)
+            Text("清單").tag(1)
+            Text("內建字庫").tag(2)
+        }
+        .pickerStyle(.segmented)
+    }
+    private var segmentRow: some View {
+        Section { segmentPicker.listRowBackground(Color.clear).listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)) }
+    }
+
     private var allWords: some View {
         Group {
             if words.isEmpty {
-                EmptyState("還沒有單字", icon: "character.book.closed", message: "到「新增」或「探索」收集第一個單字吧。")
-                    .frame(maxHeight: .infinity)
+                VStack {
+                    segmentPicker.padding(.horizontal, 20).padding(.top, 8)
+                    EmptyState("還沒有單字", icon: "character.book.closed", message: "到「新增」或「探索」收集第一個單字吧。")
+                        .frame(maxHeight: .infinity)
+                }
             } else {
-                List { Group {
+                List { segmentRow; Group {
                     let dups = search.isEmpty && !selecting ? duplicates : []
                     if !dups.isEmpty { duplicateNotice(dups) }
                     if sort == .newest || sort == .oldest {
@@ -161,9 +170,6 @@ struct WordsTab: View {
                         EmptyState("沒有「\(search)」", icon: "magnifyingglass", message: "到「新增」可以查字典裡的字。")
                     }
                 }
-                .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜尋英文或中文")
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
             }
         }
         .task(id: "\(words.count)|\(dismissedDuplicates)") { duplicates = scanDuplicates }
@@ -264,7 +270,7 @@ struct WordsTab: View {
     }
 
     private var myLists: some View {
-        List { Group {
+        List { segmentRow; Group {
             Section {
                 Button { newList = true } label: { Label("建立新清單", pulso: "plus.circle.fill").font(.app(.headline)) }
             }
@@ -281,7 +287,7 @@ struct WordsTab: View {
     }
 
     private var decks: some View {
-        List { Group {
+        List { segmentRow; Group {
             Section("大考詞彙") { deckLinks(Deck.examDecks) }
             Section("國中小・檢定考試") { deckLinks(Deck.testDecks) }
             Section("依等級") {
@@ -693,7 +699,7 @@ func dueText(_ due: Date) -> String {
     return d <= 0 ? "今天" : d == 1 ? "明天" : d == 2 ? "後天" : "\(d) 天後"
 }
 
-/// Search for a built-in deck's page only (a saved list is short enough to scroll).
+/// The search drawer for 字庫 › 全部 and for a built-in deck's page (a saved list is short enough to scroll).
 private struct DeckSearch: ViewModifier {
     let on: Bool
     @Binding var query: String
