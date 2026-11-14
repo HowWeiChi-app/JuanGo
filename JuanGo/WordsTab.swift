@@ -43,7 +43,7 @@ struct WordsTab: View {
                 }
             }
             .task(id: "\(words.count)|\(dismissedDuplicates)") { duplicates = scanDuplicates }
-            .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜尋英文或中文")
+            .keepAppFont().searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜尋英文或中文").systemSearchField()
             .textInputAutocapitalization(.never).autocorrectionDisabled()
             .navigationTitle("字庫")
             .themedBackground()
@@ -709,7 +709,7 @@ private struct DeckSearch: ViewModifier {
     @Binding var query: String
     func body(content: Content) -> some View {
         if on {
-            content.searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜尋英文或中文")
+            content.keepAppFont().searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜尋英文或中文").systemSearchField()
                 .textInputAutocapitalization(.never).autocorrectionDisabled()
         } else {
             content

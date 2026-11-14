@@ -305,7 +305,7 @@ struct AddToListSheet: View {
                 }
             }.listRowBackground(Color.cardFill) }.themedBackground()
             .foregroundStyle(.primary)
-            .searchable(text: $search, placement: .navigationBarDrawer, prompt: "搜尋清單")
+            .keepAppFont().searchable(text: $search, placement: .navigationBarDrawer, prompt: "搜尋清單").systemSearchField()
             .navigationTitle("加入其他清單")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消", pulso: "xmark") { dismiss() } }

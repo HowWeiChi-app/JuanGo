@@ -65,7 +65,7 @@ struct ImportTab: View {
                 }
             }.listRowBackground(Color.cardFill) }.themedBackground()
             .listStyle(.insetGrouped)
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "輸入英文單字或中文意思")
+            .keepAppFont().searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "輸入英文單字或中文意思").systemSearchField()
             .searchFocused($focused)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()

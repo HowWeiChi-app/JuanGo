@@ -100,7 +100,8 @@ struct MainTabs: View {
     }
 
     var body: some View {
-        TabView(selection: $tab) {
+        // the old screen dissolves into the new one instead of cutting over
+        TabView(selection: Binding(get: { tab }, set: { new in if new != tab { TabCrossfade.run() }; tab = new })) {
             // icons only, no titles under them; the name is still read out by VoiceOver
             Tab(value: AppTab.study) { StudyTab(onFindWords: { tab = .explore }) } label: { tabIcon("主頁", "house.fill") }
             Tab(value: AppTab.explore) { ExploreTab() } label: { tabIcon("探索", "sparkles.rectangle.stack.fill") }
@@ -195,3 +196,24 @@ struct ThemedBackground: ViewModifier {
 }
 extension View { func themedBackground() -> some View { modifier(ThemedBackground()) } }
 
+
+/// A short dissolve between tabs: a picture of the tab being left, laid under the tab bar, fades out over the new one.
+@MainActor enum TabCrossfade {
+    static func run() {
+        guard let window = UIApplication.shared.connectedScenes.compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first,
+              let tabs = find(window.rootViewController),
+              let page = tabs.selectedViewController?.view,
+              let picture = page.snapshotView(afterScreenUpdates: false) else { return }
+        picture.isUserInteractionEnabled = false
+        picture.frame = page.convert(page.bounds, to: tabs.view)
+        if tabs.tabBar.superview === tabs.view { tabs.view.insertSubview(picture, belowSubview: tabs.tabBar) } else { tabs.view.addSubview(picture) }
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseInOut, .allowUserInteraction]) { picture.alpha = 0 } completion: { _ in picture.removeFromSuperview() }
+    }
+
+    private static func find(_ vc: UIViewController?) -> UITabBarController? {
+        guard let vc else { return nil }
+        if let t = vc as? UITabBarController { return t }
+        for c in vc.children { if let t = find(c) { return t } }
+        return nil
+    }
+}

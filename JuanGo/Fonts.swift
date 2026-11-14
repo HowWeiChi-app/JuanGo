@@ -213,3 +213,15 @@ extension Font {
         AppFont.shared.font(nil, size: size, weight: weight ?? .regular)
     }
 }
+
+private struct KeepAppFont: ViewModifier {
+    @Environment(AppSettings.self) private var settings
+    func body(content: Content) -> some View { content.font(.app(.body)).fontDesign(settings.fontDesign) }
+}
+
+extension View {
+    /// Put before `.searchable`: the content keeps the app font while `systemSearchField()` resets the field.
+    func keepAppFont() -> some View { modifier(KeepAppFont()) }
+    /// Put after `.searchable`: the search field otherwise takes the app's font (宋體 made it much taller).
+    func systemSearchField() -> some View { font(.body).fontDesign(.default) }
+}
