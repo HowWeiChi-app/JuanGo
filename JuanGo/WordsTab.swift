@@ -32,7 +32,7 @@ struct WordsTab: View {
                 default: decks
                 }
             }
-            .scrollDismissesKeyboard(.immediately)
+            .modifier(DeckSearch(on: segment == 0 && !words.isEmpty, query: $search))
             .navigationTitle("字庫")
             .themedBackground()
             .toolbar {
@@ -136,11 +136,7 @@ struct WordsTab: View {
         .pickerStyle(.segmented)
     }
     private var segmentRow: some View {
-        Section {
-            if segment == 0 { SearchField(prompt: "搜尋英文或中文", text: $search).asRow() }
-            segmentPicker.listRowBackground(Color.clear).listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-                .listRowSeparator(.hidden)
-        }
+        Section { segmentPicker.listRowBackground(Color.clear).listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)) }
     }
 
     private var allWords: some View {
@@ -363,9 +359,7 @@ struct ListWordsView: View {
 
     var body: some View {
         let have = Set(words.map(\.term))   // once, not a scan of every saved word for each of the deck's rows
-        List {
-            if isDeck { Section { SearchField(prompt: "搜尋英文或中文", text: $query).asRow() } }
-            Group {
+        List { Group {
             switch route {
             case .deck, .level:
                 let shown = onlyNew ? entries.filter { !have.contains($0.w) } : entries
@@ -413,7 +407,7 @@ struct ListWordsView: View {
             Button("好", role: .cancel) {}
         } message: { Text(shareResult ?? "") }
         .fullScreenCover(item: $practice) { StudyFlow(request: $0) }
-        .scrollDismissesKeyboard(.immediately)
+        .modifier(DeckSearch(on: isDeck, query: $query))
         .toolbar {
             if isDeck {
                 ToolbarItem {
@@ -705,3 +699,16 @@ func dueText(_ due: Date) -> String {
     return d <= 0 ? "今天" : d == 1 ? "明天" : d == 2 ? "後天" : "\(d) 天後"
 }
 
+/// The search drawer for 字庫 › 全部 and for a built-in deck's page (a saved list is short enough to scroll).
+private struct DeckSearch: ViewModifier {
+    let on: Bool
+    @Binding var query: String
+    func body(content: Content) -> some View {
+        if on {
+            content.searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜尋英文或中文")
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+        } else {
+            content
+        }
+    }
+}

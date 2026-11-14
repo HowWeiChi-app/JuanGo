@@ -290,9 +290,7 @@ struct AddToListSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if lists.count > 5 { Section { SearchField(prompt: "搜尋清單", text: $search).asRow() } }
-                Group {
+            List { Group {
                 Section {
                     Button { creating = true } label: { Label("建立新清單", pulso: "plus.circle.fill").font(.app(.headline)) }
                 }
@@ -307,7 +305,7 @@ struct AddToListSheet: View {
                 }
             }.listRowBackground(Color.cardFill) }.themedBackground()
             .foregroundStyle(.primary)
-            .scrollDismissesKeyboard(.immediately)
+            .searchable(text: $search, placement: .navigationBarDrawer, prompt: "搜尋清單")
             .navigationTitle("加入其他清單")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消", pulso: "xmark") { dismiss() } }
@@ -534,45 +532,5 @@ struct ScoreRing: View {
         .onAppear { withAnimation(.easeOut(duration: 0.9)) { shown = true } }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("一次就會 \(Int((Double(good) / Double(max(1, good + unsure + again)) * 100).rounded()))%：會 \(good) 個、不確定 \(unsure) 個、不會 \(again) 個")
-    }
-}
-
-/// A compact search field drawn as a list row. iOS 27's navigation-bar search drawer is about 60pt tall
-/// and can't be resized, so the lists use this instead (about the height of Settings' search field).
-struct SearchField: View {
-    let prompt: String
-    @Binding var text: String
-    var focused: FocusState<Bool>.Binding? = nil
-    var onSubmit: () -> Void = {}
-
-    var body: some View {
-        HStack(spacing: 8) {
-            LIcon("magnifyingglass").foregroundStyle(.secondary)
-            field
-                .font(.app(.body))
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .submitLabel(.search)
-                .onSubmit(onSubmit)
-            if !text.isEmpty {
-                Button { text = "" } label: { LIcon("xmark.circle.fill").foregroundStyle(.tertiary) }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("清除")
-            }
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 40)
-        .background(Color.cardFill, in: Capsule())
-    }
-
-    @ViewBuilder private var field: some View {
-        if let focused { TextField(prompt, text: $text).focused(focused) } else { TextField(prompt, text: $text) }
-    }
-
-    /// as the first row of a List: no card behind it, no separator
-    func asRow() -> some View {
-        self.listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 10, trailing: 0))
-            .listRowSeparator(.hidden)
     }
 }
