@@ -106,6 +106,7 @@ final class AppFont {
         seg.setTitleTextAttributes(a.segment(selected: false), for: .normal)
         seg.setTitleTextAttributes(a.segment(selected: true), for: .selected)
         seg.selectedSegmentTintColor = a.accent
+        UISearchTextField.appearance().font = a.body
         for state: UIControl.State in [.normal, .highlighted, .disabled] {
             UIBarButtonItem.appearance().setTitleTextAttributes([.font: a.body], for: state)
         }
@@ -122,6 +123,8 @@ final class AppFont {
             } else if let n = v as? UINavigationBar {
                 n.largeTitleTextAttributes = [.font: a.large]
                 n.titleTextAttributes = [.font: a.inline]
+            } else if let t = v as? UISearchTextField {
+                t.font = a.body
             }
             v.subviews.forEach(visit)
         }
@@ -220,8 +223,54 @@ private struct KeepAppFont: ViewModifier {
 }
 
 extension View {
-    /// Put before `.searchable`: the content keeps the app font while `systemSearchField()` resets the field.
+    /// Put before `.searchable`: the content keeps the app font.
     func keepAppFont() -> some View { modifier(KeepAppFont()) }
-    /// Put after `.searchable`: the search field otherwise takes the app's font (宋體 made it much taller).
-    func systemSearchField() -> some View { font(.body).fontDesign(.default) }
+    /// Put after `.searchable`. SwiftUI sizes the search drawer from the font it sees here: any custom font
+    /// makes it 62pt tall instead of 44pt. So it sees the system body style, and the field's own text is
+    /// switched to the app font in UIKit (`applyAppearance`), which doesn't change the height.
+    func systemSearchField() -> some View { font(.body).fontDesign(.default).background(SearchFieldStyler()) }
+}
+
+/// Gives every search field on screen the app's body font, text and placeholder alike. SwiftUI sets both
+/// itself when it builds or updates the field, so this runs again after that and whenever editing starts or ends.
+private struct SearchFieldStyler: UIViewRepresentable {
+    final class Probe: UIView {
+        private var tokens: [NSObjectProtocol] = []
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            tokens.forEach(NotificationCenter.default.removeObserver)
+            tokens = []
+            guard window != nil else { return }
+            for name in [UITextField.textDidBeginEditingNotification, UITextField.textDidEndEditingNotification] {
+                tokens.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.restyleSoon() }
+                })
+            }
+            restyleSoon()
+        }
+        func restyleSoon() {
+            for delay in [0.0, 0.3] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.restyle() }
+            }
+        }
+        private func restyle() {
+            guard let window else { return }
+            let font = AppFont.shared.uiFont(style: .body, size: nil, weight: .regular)
+            func visit(_ v: UIView) {
+                if let t = v as? UISearchTextField {
+                    if t.font != font { t.font = font }
+                    if let p = t.attributedPlaceholder, p.length > 0, (p.attribute(.font, at: 0, effectiveRange: nil) as? UIFont) != font {
+                        let m = NSMutableAttributedString(attributedString: p)
+                        m.addAttribute(.font, value: font, range: NSRange(location: 0, length: m.length))
+                        t.attributedPlaceholder = m
+                    }
+                    return
+                }
+                v.subviews.forEach(visit)
+            }
+            visit(window)
+        }
+    }
+    func makeUIView(context: Context) -> Probe { let v = Probe(); v.isUserInteractionEnabled = false; return v }
+    func updateUIView(_ v: Probe, context: Context) { v.restyleSoon() }
 }
