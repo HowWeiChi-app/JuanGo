@@ -42,7 +42,7 @@ struct ImportTab: View {
                             Label { Text("存到") } icon: { LIcon("folder").foregroundStyle(.tint) }
                         }
                     } footer: {
-                        Text("在上方搜尋英文單字或中文意思，查到的字會存進這裡。")
+                        Text("查過的字會存在這裡。")
                     }
                     Section("其他加入方式") {
                         sourceRow("拍照掃描", "camera.viewfinder") { showCamera = true }
@@ -152,7 +152,7 @@ struct ImportTab: View {
                         Text(e.w).font(.app(.headline)).foregroundStyle(.primary)
                         Text(e.zh.first ?? "").foregroundStyle(.secondary).lineLimit(1)
                         Spacer()
-                        if Library.word(e.w, in: ctx) != nil { LIcon("checkmark.circle.fill").foregroundStyle(.green).accessibilityLabel("已收藏") }
+                        if Library.word(e.w, in: ctx) != nil { LIcon("checkmark.circle.fill").foregroundStyle(Color.knowInk).accessibilityLabel("已收藏") }
                     }
                 }
             }
@@ -290,7 +290,7 @@ struct OCRPickerView: View {
                             row(u.term, u.meaning.isEmpty ? WordTranslator.shared.cached(u.term)?.meanings.joined(separator: "・") ?? "" : u.meaning, level: nil)
                         }
                     } header: { Text("其他字") } footer: {
-                        if WordTranslator.shared.provider != .none { Text("沒有中文意思的字，加入後會用 AI 自動翻譯。") }
+                        if WordTranslator.shared.provider != .none { Text("加入後用 AI 翻譯。") }
                     }
                 }
             }.listRowBackground(Color.cardFill) }.themedBackground()

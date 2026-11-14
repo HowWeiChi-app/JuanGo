@@ -69,7 +69,7 @@ struct StudyTab: View {
                 } header: {
                     Text("國中小・檢定考試")
                 } footer: {
-                    Text("從內建字庫開始，會把還沒學過的字加入「我的單字」。")
+                    Text("會把還沒學過的字加入「我的單字」。")
                 }
             }.listRowBackground(Color.cardFill) }
             .listStyle(.insetGrouped)

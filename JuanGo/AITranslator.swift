@@ -56,7 +56,7 @@ final class WordTranslator {
         switch provider {
         case .api: AppSettings.shared.apiModel
         case .onDevice: "Apple Intelligence（裝置端）"
-        case .none: AppSettings.shared.aiTranslate ? "無法使用" : "關閉"
+        case .none: AppSettings.shared.aiTranslate ? "Apple 翻譯（這台裝置不支援 AI）" : "關閉"
         }
     }
 

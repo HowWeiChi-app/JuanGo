@@ -6,6 +6,7 @@ struct JuanGoApp: App {
     @State private var settings = AppSettings.shared
 
     init() {
+        AppFont.shared.applyAppearance()   // before the first screen, so its segmented controls pick it up
         #if DEBUG
         if ProcessInfo.processInfo.environment["JUANGO_BACKUP_SELFTEST"] != nil { Backup.selfTest() }
         #endif
@@ -20,6 +21,7 @@ struct JuanGoApp: App {
                 .font(.app(.body))
                 .task { AppFont.shared.prepare(); AppFont.shared.applyAppearance() }
                 .onChange(of: settings.fontStyle) { AppFont.shared.styleChanged() }
+                .onChange(of: settings.themeID) { AppFont.shared.applyAppearance() }
                 .preferredColorScheme(settings.colorScheme)
                 .environment(\.locale, .zh)
         }

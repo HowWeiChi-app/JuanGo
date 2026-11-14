@@ -265,7 +265,7 @@ struct WordsTab: View {
         .gesture(TapGesture().onEnded { toggleSel(w) }, isEnabled: selecting)
         .swipeActions {
             Button("刪除", pulso: "trash", role: .destructive) { Library.remove(w, in: ctx) }
-            Button(w.favorite ? "取消喜歡" : "喜歡", pulso: "heart") { w.favorite.toggle(); try? ctx.save() }.tint(.pink)
+            Button(w.favorite ? "取消喜歡" : "喜歡", pulso: "heart") { w.favorite.toggle(); try? ctx.save() }.tint(.themeAccent)
         }
     }
 
@@ -375,7 +375,7 @@ struct ListWordsView: View {
                         Text(levelLabel(e.lv)).font(.app(.caption, .bold)).foregroundStyle(.secondary)
                         Button { if !saved { Library.add(e, in: ctx) } } label: {
                             LIcon(saved ? "checkmark.circle.fill" : "plus.circle.fill").font(.app(.title2))
-                        }.buttonStyle(.plain).foregroundStyle(saved ? Color.green : .themeAccent)
+                        }.buttonStyle(.plain).foregroundStyle(saved ? Color.knowInk : .themeAccent)
                         .accessibilityLabel(saved ? "已加入我的單字" : "加入我的單字")
                     }
                     .contentShape(Rectangle())

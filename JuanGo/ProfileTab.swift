@@ -219,7 +219,7 @@ struct SettingsView: View {
                         }.listRowBackground(Color.cardFill) }.themedBackground().navigationTitle("探索")
                     } label: { row("safari.fill", "探索", "探索卡片的音標與例句翻譯") }
                     NavigationLink { AITranslationSettings() } label: {
-                        row("sparkles", "API", "AI 翻譯字典沒有的字：\(WordTranslator.shared.providerName)")
+                        row("sparkles", "AI 翻譯", WordTranslator.shared.providerName)
                     }
                 }
                 Section {
@@ -232,11 +232,11 @@ struct SettingsView: View {
                     ThemeGrid(selection: $settings.themeID).padding(.vertical, 6)
                 } header: { Text("外觀") } footer: {
                     if let d = AppFont.shared.downloading {
-                        Text("正在下載中文\(d)字體…下載好之前先用蘋方顯示。")
+                        Text("正在下載\(d)…")
                     } else if let f = AppFont.shared.failed {
-                        Text("中文\(f)字體下載失敗，先用蘋方顯示；連上網路後重新選一次字體。")
+                        Text("\(f)下載失敗，連上網路後再選一次。")
                     } else {
-                        Text("圓體、襯線會連中文一起換（圓體、宋體），第一次使用時會從 Apple 下載字體。")
+                        Text("選單和提示視窗是系統字體。")
                     }
                 }
                 Section {
@@ -246,7 +246,7 @@ struct SettingsView: View {
                     }
                     Button("從備份還原") { pickBackup = true }
                 } header: { Text("備份") } footer: {
-                    Text("備份檔包含所有單字、熟練度、清單、複習紀錄和設定（不含 API key）。存到「檔案」或 iCloud 雲碟，刪掉 App 或換手機後從這裡還原。")
+                    Text("包含單字、進度、清單和設定（不含 API key）。")
                 }
                 Section("資料") {
                     Button("重設所有學習進度") { confirmReset = true }
@@ -257,7 +257,7 @@ struct SettingsView: View {
                     LabeledContent("字典", value: "\(Dictionary_.all.count) 個內建單字")
                     LabeledContent("版本", value: "1.4")
                 } footer: {
-                    Text("大考詞彙與分級：大學入學考試中心《高中英文參考詞彙表》（111 學年度起適用），僅供非營利學習使用。國中小 1200：教育部十二年國教英語文課綱附錄五。多益：TOEIC Service List 1.2（CC BY-SA 4.0）。雅思、托福字表與中文解釋、音標整理自 ECDICT（MIT 授權），內容可能有誤，可在單字頁自行編輯。學習資料只存在這台裝置上；打開 API 翻譯並設定 key 後，字典沒有的字會傳到該 API 翻譯。")
+                    Text("大考詞彙與分級：大學入學考試中心《高中英文參考詞彙表》（111 學年度起適用），僅供非營利學習使用。國中小 1200：教育部十二年國教英語文課綱附錄五。多益：TOEIC Service List 1.2（CC BY-SA 4.0）。雅思、托福字表與中文解釋、音標整理自 ECDICT（MIT 授權），內容可能有誤，可在單字頁自行編輯。學習資料只存在這台裝置；設定自訂 API 後，字典沒有的字會傳到該 API。")
                 }
             }.listRowBackground(Color.cardFill) }.themedBackground()
             .navigationTitle("設定")
@@ -313,7 +313,7 @@ struct SettingsView: View {
     }
 }
 
-/// 設定 › API: translate words the dictionary doesn't know with a language model (off by default — it's slow).
+/// 設定 › AI 翻譯: translate words the dictionary doesn't know with a language model (on by default).
 struct AITranslationSettings: View {
     @Environment(AppSettings.self) private var settings
     @State private var key = APIKey.value
@@ -330,8 +330,8 @@ struct AITranslationSettings: View {
                 if settings.aiTranslate { LabeledContent("目前使用", value: translator.providerName) }
             } footer: {
                 Text(settings.aiTranslate
-                     ? "單字不在內建字典時，選擇使用裝置端 Apple Intelligence 翻譯，或接入大模型 API 。"
-                     : "使用 Apple 翻譯，速度較快，但只有一個意思且沒有詞性。")
+                     ? "字典沒有的字用 AI 翻譯。"
+                     : "改用 Apple 翻譯：較快，但只有一個意思。")
             }
             if settings.aiTranslate {
                 Section {
@@ -349,8 +349,8 @@ struct AITranslationSettings: View {
                         if let testResult { Text(testResult).font(.app(.footnote)).foregroundStyle(.secondary) }
                         Button("移除 key", role: .destructive) { APIKey.value = ""; key = ""; saved = false; testResult = nil }
                     }
-                } header: { Text("API") } footer: {
-                    Text("支援任何大模型 API （Agnes、ChatGPT、Grok、Gemini…），填入 API 網址、模型名稱和 API key。API key 只存在此裝置的鑰匙圈。")
+                } header: { Text("自訂 API（選填）") } footer: {
+                    Text("沒填就用裝置端 Apple Intelligence。key 只存在這台裝置。")
                 }
                 if translator.cache.count > 0 {
                     Section { LabeledContent("已翻譯", value: "\(translator.cache.count) 個字") }
@@ -390,7 +390,7 @@ struct AccountView: View {
                         Task { do { message = try await cloud.sync(ctx) } catch { message = error.localizedDescription } }
                     }.disabled(cloud.syncing)
                 } footer: {
-                    Text("不同裝置登入同一個 Email，單字和進度會同步。")
+                    Text("同一個 Email 的裝置會互相同步。")
                 }
                 Section {
                     if lists.isEmpty { Text("還沒有分享過清單").foregroundStyle(.secondary) }
@@ -411,7 +411,7 @@ struct AccountView: View {
                         .contextMenu { Button("拷貝代碼") { UIPasteboard.general.string = Cloud.pretty(l.code) } }
                     }
                 } header: { Text("我分享的清單") } footer: {
-                    Text("在清單頁右上角「分享」可以產生代碼。左滑可以停止分享。")
+                    Text("左滑停止分享。")
                 }
                 Section { Button("登出", role: .destructive) { cloud.signOut(); lists = [] } }
             } else {
@@ -431,7 +431,7 @@ struct AccountView: View {
                             .font(.app(.footnote)).foregroundStyle(.secondary)
                     }
                 } header: { Text("登入") } footer: {
-                    Text("輸入 Email 後使用連結登入。登入後單字、熟練度、清單和複習紀錄會同步到雲端。")
+                    Text("用 Email 連結登入，資料會同步到雲端。")
                 }
             }
         }.listRowBackground(Color.cardFill) }.themedBackground()

@@ -19,7 +19,7 @@ struct StreakView: View {
             ZStack {
                 LIcon("drop.fill").font(.app(size: 220)).foregroundStyle(Color(white: 0.72))
                 LIcon("flame.fill").font(.app(size: 92))
-                    .foregroundStyle(Color.orange)
+                    .foregroundStyle(Color.themeAccent)
                     .offset(y: 30)
             }
             .scaleEffect(appear ? 1 : 0.5)
@@ -46,7 +46,7 @@ struct StreakView: View {
             ForEach(days, id: \.self) { d in
                 VStack(spacing: 6) {
                     if stats.activeDays.contains(d) {
-                        LIcon("flame.fill").font(.app(.title2)).foregroundStyle(.orange).frame(width: 30, height: 30)
+                        LIcon("flame.fill").font(.app(.title2)).foregroundStyle(Color.themeAccent).frame(width: 30, height: 30)
                     } else {
                         Circle().fill(.white.opacity(0.12)).frame(width: 30, height: 30)
                     }

@@ -309,7 +309,7 @@ enum SRS {
 
     init() {
         d.register(defaults: ["language": "zh-Hant", "level": "3", "dailyGoal": 10, "reminderMinutes": 20 * 60,
-                              "themeID": "phoenix", "fontStyle": 0, "showTranslation": true, "haptics": true,
+                              "themeID": "phoenix", "fontStyle": 0, "aiTranslate": true, "showTranslation": true, "haptics": true,
                               "speechRate": 0.45, "listShowMeaning": true, "exploreShowIPA": true,
                               "apiBaseURL": "https://apihub.agnes-ai.com/v1", "apiModel": "agnes-3.0-flash"])
         onboarded = d.bool(forKey: "onboarded")

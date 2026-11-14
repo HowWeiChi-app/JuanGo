@@ -95,13 +95,56 @@ final class AppFont {
         applyAppearance()
     }
 
-    /// Navigation bar titles are UIKit; give them the same pair of fonts.
+    /// The UIKit-drawn parts (navigation titles, segmented controls, the search field, bar buttons) get the
+    /// same font and theme colours as the SwiftUI text. Alerts, menus and the date picker can't be restyled.
     func applyAppearance() {
-        let large = uiFont(style: .largeTitle, size: nil, weight: .bold)
-        let inline = uiFont(style: .headline, size: nil, weight: .semibold)
+        let a = Attrs(self)
         let nav = UINavigationBar.appearance()
-        nav.largeTitleTextAttributes = [.font: large]
-        nav.titleTextAttributes = [.font: inline]
+        nav.largeTitleTextAttributes = [.font: a.large]
+        nav.titleTextAttributes = [.font: a.inline]
+        let seg = UISegmentedControl.appearance()
+        seg.setTitleTextAttributes(a.segment(selected: false), for: .normal)
+        seg.setTitleTextAttributes(a.segment(selected: true), for: .selected)
+        seg.selectedSegmentTintColor = a.accent
+        UITextField.appearance(whenContainedInInstancesOf: [UISearchBar.self]).font = a.body
+        for state: UIControl.State in [.normal, .highlighted, .disabled] {
+            UIBarButtonItem.appearance().setTitleTextAttributes([.font: a.body], for: state)
+        }
+        Task { @MainActor in self.refreshLiveViews(a) }
+    }
+
+    /// Appearance proxies only reach controls made later; restyle the ones already on screen.
+    @MainActor private func refreshLiveViews(_ a: Attrs) {
+        func visit(_ v: UIView) {
+            if let s = v as? UISegmentedControl {
+                s.setTitleTextAttributes(a.segment(selected: false), for: .normal)
+                s.setTitleTextAttributes(a.segment(selected: true), for: .selected)
+                s.selectedSegmentTintColor = a.accent
+            } else if let n = v as? UINavigationBar {
+                n.largeTitleTextAttributes = [.font: a.large]
+                n.titleTextAttributes = [.font: a.inline]
+            } else if let t = v as? UISearchTextField {
+                t.font = a.body
+            }
+            v.subviews.forEach(visit)
+        }
+        for case let scene as UIWindowScene in UIApplication.shared.connectedScenes { scene.windows.forEach(visit) }
+    }
+
+    private struct Attrs {
+        let large, inline, body, segmentFont, segmentBold: UIFont
+        let accent: UIColor
+        init(_ f: AppFont) {
+            large = f.uiFont(style: .largeTitle, size: nil, weight: .bold)
+            inline = f.uiFont(style: .headline, size: nil, weight: .semibold)
+            body = f.uiFont(style: .body, size: nil, weight: .regular)
+            segmentFont = f.uiFont(style: .subheadline, size: nil, weight: .medium)
+            segmentBold = f.uiFont(style: .subheadline, size: nil, weight: .semibold)
+            accent = UIColor(AppSettings.shared.theme.accent)
+        }
+        func segment(selected: Bool) -> [NSAttributedString.Key: Any] {
+            selected ? [.font: segmentBold, .foregroundColor: UIColor.white] : [.font: segmentFont, .foregroundColor: UIColor.label]
+        }
     }
 
     // MARK: building fonts
