@@ -102,11 +102,11 @@ struct MainTabs: View {
     var body: some View {
         TabView(selection: $tab) {
             // icons only, no titles under them; the name is still read out by VoiceOver
-            Tab(value: AppTab.study) { StudyTab(onFindWords: { tab = .explore }) } label: { tabIcon("主頁", "house.fill") }
-            Tab(value: AppTab.explore) { ExploreTab() } label: { tabIcon("探索", "sparkles.rectangle.stack.fill") }
-            Tab(value: AppTab.importing) { ImportTab() } label: { tabIcon("新增", "plus.circle.fill") }
-            Tab(value: AppTab.words) { WordsTab() } label: { tabIcon("字庫", "character.book.closed.fill") }
-            Tab(value: AppTab.profile) { ProfileTab() } label: { tabIcon("我的", "person.crop.circle.fill") }
+            Tab(value: AppTab.study) { StudyTab(onFindWords: { tab = .explore }).tabFade(tab == .study) } label: { tabIcon("主頁", "house.fill") }
+            Tab(value: AppTab.explore) { ExploreTab().tabFade(tab == .explore) } label: { tabIcon("探索", "sparkles.rectangle.stack.fill") }
+            Tab(value: AppTab.importing) { ImportTab().tabFade(tab == .importing) } label: { tabIcon("新增", "plus.circle.fill") }
+            Tab(value: AppTab.words) { WordsTab().tabFade(tab == .words) } label: { tabIcon("字庫", "character.book.closed.fill") }
+            Tab(value: AppTab.profile) { ProfileTab().tabFade(tab == .profile) } label: { tabIcon("我的", "person.crop.circle.fill") }
         }
         .tabBarMinimizeBehavior(.never)   // the tab bar always stays full size
         // 開始今日學習 from Siri / Spotlight / Shortcuts: the home tab takes it from here
@@ -194,3 +194,10 @@ struct ThemedBackground: ViewModifier {
     }
 }
 extension View { func themedBackground() -> some View { modifier(ThemedBackground()) } }
+
+private extension View {
+    /// The newly picked tab fades in instead of cutting over.
+    func tabFade(_ shown: Bool) -> some View {
+        opacity(shown ? 1 : 0).animation(.easeOut(duration: 0.22), value: shown)
+    }
+}

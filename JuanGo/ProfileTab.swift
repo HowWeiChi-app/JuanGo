@@ -186,7 +186,7 @@ struct SettingsView: View {
                     NavigationLink {
                         Form { Group {
                             Toggle("顯示例句翻譯", isOn: $settings.showTranslation)
-                            Toggle("自動發音", isOn: Binding(get: { !settings.muted }, set: { settings.muted = !$0 }))
+                            Toggle("自動唸單字", isOn: $settings.autoSpeak)
                             Toggle("震動回饋", isOn: $settings.haptics)
                             VStack(alignment: .leading) {
                                 Text("發音速度")

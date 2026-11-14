@@ -53,7 +53,7 @@ struct FlashcardQuestion: View {
         }
         .padding(.bottom, 12)
         .onAppear {
-            if !settings.muted { Speech.say(word.term) }
+            if settings.autoSpeak { Speech.say(word.term) }
             #if DEBUG
             if ProcessInfo.processInfo.environment["JUANGO_FLIP"] != nil { flipped = true }   // simulator: show the back
             #endif
@@ -242,7 +242,7 @@ struct ChoiceQuestion: View {
         .padding(.top, 12).padding(.bottom, 8)
         .onAppear {
             options = makeOptions()
-            if type == .listenZh || type == .listenEn || (!settings.muted && type == .enToZh) { Speech.say(word.term) }
+            if type == .listenZh || type == .listenEn || (settings.autoSpeak && type == .enToZh) { Speech.say(word.term) }
         }
         .sheet(item: $lookup) { WordConfirmSheet(term: $0.term) }
         .sensoryFeedback(trigger: picked) { _, new in

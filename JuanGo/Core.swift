@@ -293,6 +293,8 @@ enum SRS {
     var fontStyle: Int { didSet { d.set(fontStyle, forKey: "fontStyle") } }
     var themeID: String { didSet { d.set(themeID, forKey: "themeID") } }
     var muted: Bool { didSet { d.set(muted, forKey: "muted") } }
+    /// 自動唸單字: the one switch Settings and the Explore toolbar both flip (stored as `muted`, inverted)
+    var autoSpeak: Bool { get { !muted } set { muted = !newValue } }
     var showTranslation: Bool { didSet { d.set(showTranslation, forKey: "showTranslation") } }
     var haptics: Bool { didSet { d.set(haptics, forKey: "haptics") } }
     var speechRate: Double { didSet { d.set(speechRate, forKey: "speechRate") } }

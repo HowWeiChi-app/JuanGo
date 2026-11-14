@@ -22,6 +22,7 @@ struct ExploreTab: View {
         NavigationStack {
             // JuanGo deals the words as a horizontal deck: swipe sideways, with the neighbours peeking in.
             VStack(spacing: 12) {
+            ScrollViewReader { proxy in
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 12) {
                     ForEach(feed) { e in
@@ -40,9 +41,14 @@ struct ExploreTab: View {
                 .scrollTargetLayout()
             }
             .contentMargins(.horizontal, 28, for: .scrollContent)
-            .scrollTargetBehavior(.viewAligned)
+            // one card per swipe, however hard the flick
+            .scrollTargetBehavior(.viewAligned(limitBehavior: .alwaysByOne))
             .scrollPosition(id: $current)
             .scrollIndicators(.hidden)
+            // leaving the tab mid-swipe froze the deck between two cards: settle on the nearest one on the way out and back
+            .onAppear { snap(proxy) }
+            .onDisappear { snap(proxy) }
+            }
             if let i = feed.firstIndex(where: { $0.w == current }) {
                 Text("\(i + 1) / \(feed.count)").font(.app(.caption, .bold).monospacedDigit()).foregroundStyle(.secondary)
             }
@@ -55,9 +61,12 @@ struct ExploreTab: View {
             .toolbar {
                 ToolbarItem(placement: .principal) { deckMenu }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button(settings.muted ? "取消靜音" : "靜音", pulso: settings.muted ? "speaker.slash.fill" : "speaker.wave.2.fill") {
-                        settings.muted.toggle()
+                    // same switch as 自動唸單字 in Settings; the icon shows its state
+                    Button(settings.autoSpeak ? "關閉自動唸單字" : "開啟自動唸單字", pulso: settings.autoSpeak ? "speaker.wave.2.fill" : "speaker.slash.fill") {
+                        settings.autoSpeak.toggle()
                     }
+                    .id(settings.autoSpeak)   // the bar keeps a stale icon otherwise
+                    .accessibilityValue(settings.autoSpeak ? "開" : "關")
                     filterMenu
                 }
             }
@@ -70,7 +79,7 @@ struct ExploreTab: View {
             .onChange(of: levels) { rebuild() }
             .onChange(of: posFilter) { rebuild() }
             .onChange(of: current) { old, new in
-                if let new, !settings.muted { Speech.say(new) }
+                if let new, settings.autoSpeak { Speech.say(new) }
                 if old != nil, tipStep == 0 { tipStep = 1 }
                 if let i = feed.firstIndex(where: { $0.w == new }) {
                     for e in feed.dropFirst(i + 1).prefix(3) { ExampleStore.shared.request(e, priority: .soon) }
@@ -79,6 +88,12 @@ struct ExploreTab: View {
             .sheet(item: $lookup) { WordConfirmSheet(term: $0.term) }
             .sheet(item: $listTarget) { e in AddToListSheet { list in Library.add(e, to: list, myWords: list == nil || isSaved(e), in: ctx) } }
         }
+    }
+
+    private func snap(_ proxy: ScrollViewProxy) {
+        guard let id = current ?? feed.first?.w else { return }
+        var t = Transaction(); t.disablesAnimations = true
+        withTransaction(t) { proxy.scrollTo(id, anchor: .center) }
     }
 
     private var deckMenu: some View {
@@ -189,7 +204,9 @@ struct ExploreCard: View {
     /// Headword, meanings and example. Centred on the card; scrolls when it doesn't fit (large text sizes),
     /// so the tags above and the buttons below stay put instead of being pushed off the card.
     @ViewBuilder private var middle: some View {
-        Text(entry.w).font(.app(size: 44, .bold)).minimumScaleFactor(0.5).lineLimit(1)
+        // a fixed-height line, so the word sits at the same spot on every card
+        Text(entry.w).font(.app(size: 44, .bold)).minimumScaleFactor(0.4).lineLimit(1)
+            .frame(height: 56, alignment: .leading)
         HStack(spacing: 8) {
             SpeakButton(text: entry.w)
             if settings.exploreShowIPA && !entry.ipa.isEmpty { Text("/\(entry.ipa)/").foregroundStyle(.secondary) }
@@ -235,7 +252,7 @@ struct ExploreCard: View {
                 if isSaved { Label("已收藏", pulso: "bookmark.fill").font(.app(.caption, .bold)).foregroundStyle(.tint) }
             }
             ViewThatFits(in: .vertical) {
-                VStack(alignment: .leading, spacing: 14) { Spacer(minLength: 0); middle; Spacer(minLength: 0) }
+                VStack(alignment: .leading, spacing: 14) { middle; Spacer(minLength: 0) }.padding(.top, 8)
                 ScrollView { VStack(alignment: .leading, spacing: 14) { middle }.frame(maxWidth: .infinity, alignment: .leading) }
                     .scrollIndicators(.hidden)
             }
