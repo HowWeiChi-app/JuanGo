@@ -25,14 +25,26 @@ struct WordsTab: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                switch segment {
-                case 0: allWords
-                case 1: myLists
-                default: decks
+            // one list for all three, so switching keeps the search field and the picker where they are
+            List {
+                segmentRow
+                Group {
+                    switch segment {
+                    case 0: allWords
+                    case 1: myLists
+                    default: decks
+                    }
+                }.listRowBackground(Color.cardFill)
+            }
+            .listStyle(.insetGrouped)
+            .overlay {
+                if segment == 0, !search.isEmpty, filtered.isEmpty {
+                    EmptyState("沒有「\(search)」", icon: "magnifyingglass", message: "到「新增」可以查字典裡的字。")
                 }
             }
-            .modifier(DeckSearch(on: segment == 0 && !words.isEmpty, query: $search))
+            .task(id: "\(words.count)|\(dismissedDuplicates)") { duplicates = scanDuplicates }
+            .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜尋英文或中文")
+            .textInputAutocapitalization(.never).autocorrectionDisabled()
             .navigationTitle("字庫")
             .themedBackground()
             .toolbar {
@@ -128,7 +140,7 @@ struct WordsTab: View {
     /// 全部／清單／內建字庫, as the first row of each list. A pinned top inset was drawn on top of the
     /// search field on iOS 27.3 devices, which place the search drawer in the scrolling content.
     private var segmentPicker: some View {
-        Picker("顯示", selection: $segment.animation(.snappy)) {
+        Picker("顯示", selection: $segment) {
             Text("全部 \(words.count)").tag(0)
             Text("清單").tag(1)
             Text("內建字庫").tag(2)
@@ -139,40 +151,26 @@ struct WordsTab: View {
         Section { segmentPicker.listRowBackground(Color.clear).listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)) }
     }
 
-    private var allWords: some View {
-        Group {
-            if words.isEmpty {
-                VStack {
-                    segmentPicker.padding(.horizontal, 20).padding(.top, 8)
-                    EmptyState("還沒有單字", icon: "character.book.closed", message: "到「新增」或「探索」收集第一個單字吧。")
-                        .frame(maxHeight: .infinity)
+    @ViewBuilder private var allWords: some View {
+        if words.isEmpty {
+            EmptyState("還沒有單字", icon: "character.book.closed", message: "到「新增」或「探索」收集第一個單字吧。")
+                .padding(.vertical, 40).listRowBackground(Color.clear)
+        } else {
+            let dups = search.isEmpty && !selecting ? duplicates : []
+            if !dups.isEmpty { duplicateNotice(dups) }
+            if sort == .newest || sort == .oldest {
+                let groups = dayGroups
+                ForEach(groups.days, id: \.self) { day in
+                    Section {
+                        ForEach(groups.words[day] ?? []) { row($0) }
+                    } header: {
+                        Text(dayLabel(day))
+                    }
                 }
             } else {
-                List { segmentRow; Group {
-                    let dups = search.isEmpty && !selecting ? duplicates : []
-                    if !dups.isEmpty { duplicateNotice(dups) }
-                    if sort == .newest || sort == .oldest {
-                        let groups = dayGroups
-                        ForEach(groups.days, id: \.self) { day in
-                            Section {
-                                ForEach(groups.words[day] ?? []) { row($0) }
-                            } header: {
-                                Text(dayLabel(day))
-                            }
-                        }
-                    } else {
-                        ForEach(filtered) { row($0) }
-                    }
-                }.listRowBackground(Color.cardFill) }.themedBackground()
-                .listStyle(.insetGrouped)
-                .overlay {
-                    if !search.isEmpty, filtered.isEmpty {
-                        EmptyState("沒有「\(search)」", icon: "magnifyingglass", message: "到「新增」可以查字典裡的字。")
-                    }
-                }
+                ForEach(filtered) { row($0) }
             }
         }
-        .task(id: "\(words.count)|\(dismissedDuplicates)") { duplicates = scanDuplicates }
     }
 
     /// Scanned words with phonetics glued on whose clean spelling is saved too ("accuracy takjoresi" beside "accuracy").
@@ -269,34 +267,40 @@ struct WordsTab: View {
         }
     }
 
-    private var myLists: some View {
-        List { segmentRow; Group {
+    /// the search field narrows 清單 and 內建字庫 by name too
+    private func matches(_ name: String) -> Bool {
+        let q = search.trimmingCharacters(in: .whitespaces)
+        return q.isEmpty || name.localizedCaseInsensitiveContains(q)
+    }
+
+    @ViewBuilder private var myLists: some View {
+        if search.isEmpty {
             Section {
                 Button { newList = true } label: { Label("建立新清單", pulso: "plus.circle.fill").font(.app(.headline)) }
             }
-            Section {
-                NavigationLink(value: ListRoute.myWords) { listLabel("我的單字", "folder.fill", words.filter(\.inMyWords).count) }
-                NavigationLink(value: ListRoute.favorites) { listLabel("喜歡", "heart.fill", words.filter(\.favorite).count) }
-                ForEach(lists) { l in
-                    NavigationLink(value: ListRoute.custom(l.persistentModelID)) { listLabel(l.name, "folder", l.words.count) }
-                }
-                .onDelete { idx in idx.map { lists[$0] }.forEach(ctx.delete); try? ctx.save() }
+        }
+        Section {
+            if matches("我的單字") { NavigationLink(value: ListRoute.myWords) { listLabel("我的單字", "folder.fill", words.filter(\.inMyWords).count) } }
+            if matches("喜歡") { NavigationLink(value: ListRoute.favorites) { listLabel("喜歡", "heart.fill", words.filter(\.favorite).count) } }
+            ForEach(lists.filter { matches($0.name) }) { l in
+                NavigationLink(value: ListRoute.custom(l.persistentModelID)) { listLabel(l.name, "folder", l.words.count) }
             }
-        }.listRowBackground(Color.cardFill) }.themedBackground()
-        .listStyle(.insetGrouped)
+            .onDelete { idx in let shown = lists.filter { matches($0.name) }; idx.map { shown[$0] }.forEach(ctx.delete); try? ctx.save() }
+        }
     }
 
-    private var decks: some View {
-        List { segmentRow; Group {
-            Section("大考詞彙") { deckLinks(Deck.examDecks) }
-            Section("國中小・檢定考試") { deckLinks(Deck.testDecks) }
+    @ViewBuilder private var decks: some View {
+        let exam = Deck.examDecks.filter { matches($0.rawValue) }, test = Deck.testDecks.filter { matches($0.rawValue) }
+        let lvs = examLevels.filter { matches(levelLabel($0)) }
+        if !exam.isEmpty { Section("大考詞彙") { deckLinks(exam) } }
+        if !test.isEmpty { Section("國中小・檢定考試") { deckLinks(test) } }
+        if !lvs.isEmpty {
             Section("依等級") {
-                ForEach(examLevels, id: \.self) { lv in
+                ForEach(lvs, id: \.self) { lv in
                     NavigationLink(value: ListRoute.level(lv)) { listLabel(levelLabel(lv), "chart.bar.fill", Dictionary_.entries(level: lv).count) }
                 }
             }
-        }.listRowBackground(Color.cardFill) }.themedBackground()
-        .listStyle(.insetGrouped)
+        }
     }
 
     private func deckLinks(_ decks: [Deck]) -> some View {

@@ -106,7 +106,6 @@ final class AppFont {
         seg.setTitleTextAttributes(a.segment(selected: false), for: .normal)
         seg.setTitleTextAttributes(a.segment(selected: true), for: .selected)
         seg.selectedSegmentTintColor = a.accent
-        UITextField.appearance(whenContainedInInstancesOf: [UISearchBar.self]).font = a.body
         for state: UIControl.State in [.normal, .highlighted, .disabled] {
             UIBarButtonItem.appearance().setTitleTextAttributes([.font: a.body], for: state)
         }
@@ -123,8 +122,6 @@ final class AppFont {
             } else if let n = v as? UINavigationBar {
                 n.largeTitleTextAttributes = [.font: a.large]
                 n.titleTextAttributes = [.font: a.inline]
-            } else if let t = v as? UISearchTextField {
-                t.font = a.body
             }
             v.subviews.forEach(visit)
         }
