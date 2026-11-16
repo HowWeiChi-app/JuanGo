@@ -1,0 +1,6 @@
+raw/
+clean/
+shots/
+.taste-skill/
+.playwright-cli/
+.DS_Store
