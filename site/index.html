@@ -60,25 +60,34 @@
   .device > img { position: absolute; top: 1.524%; left: 3.2%; width: 93.6%; height: 96.952%; object-fit: cover;
     border-radius: 13.68% / 6.29%; }
   /* in a stage the phone stands whole, as tall as the stage allows */
-  .jg-stage.jg-stage > .device { position: absolute; top: var(--dev-pad, 48px); bottom: var(--dev-pad, 48px); left: 50%; transform: translateX(-50%); height: auto; }
+  /* the phone's width is set and its height follows from it: Safari keeps no aspect ratio on a box held
+     by top and bottom once a max-width cuts it, and stretches the phone instead. The width is the
+     smaller of what the stage's height and its width allow (cq units: the stage's content box), and
+     the phone stands centred. */
+  .jg-stage.jg-stage, #daily .mo-pc__visual--lit { container-type: size; }
+  .mo-pc__visual--lit { position: relative; align-self: start; }
+  .jg-stage.jg-stage > .device, #daily .mo-pc__visual--lit > .device {
+    --dev-w: min(calc(100cqw - var(--dev-side, 32px)), calc((100cqh - 2 * var(--dev-pad, 48px)) * 0.4764));
+    position: absolute; left: 50%; top: 50%; bottom: auto; width: var(--dev-w); height: auto; max-width: none;
+    transform: translate(-50%, -50%); }
+  .frame.jg-stage, #daily .mo-pc__visual--lit { --dev-pad: 0px; --dev-side: 0px; }
   .hero__media.jg-stage { --dev-pad: 56px; }
   /* the hero holds two phones: the card behind, a little smaller, the explore screen in front */
   /* two phones side by side, a little apart in height, never over each other */
   .hero__media.jg-duo { --dev-pad: 64px; --dev-step: 28px; }
-  .jg-duo.jg-duo > .device { left: 73%; top: calc(var(--dev-pad) - var(--dev-step)); bottom: calc(var(--dev-pad) + var(--dev-step)); }
-  .jg-duo.jg-duo > .device--back { left: 27%; top: calc(var(--dev-pad) + var(--dev-step)); bottom: calc(var(--dev-pad) - var(--dev-step)); }
+  .jg-duo.jg-duo > .device { --dev-w: min(46cqw, calc((100cqh - 2 * var(--dev-pad)) * 0.4764)); left: 73%; transform: translate(-50%, calc(-50% - var(--dev-step))); }
+  .jg-duo.jg-duo > .device--back { left: 27%; transform: translate(-50%, calc(-50% + var(--dev-step))); }
   footer .close__word { line-height: 1.12; overflow-x: clip; overflow-y: visible; }
   @media (min-width: 1024px) and (max-width: 1279px) { .hero__media.jg-duo { --dev-pad: 108px; --dev-step: 24px; } }
   /* the practice cards: the phone cut by the panel's foot */
   #practice .card .panel.jg-stage { --p-h: 420px; }
-  #practice .card .panel.jg-stage > .device { top: 36px; bottom: auto; width: min(62%, 240px); }
-  .menu-card .panel.jg-stage > .device { top: 14px; bottom: auto; width: 46%; }
+  #practice .card .panel.jg-stage > .device { top: 36px; width: min(62%, 240px); transform: translateX(-50%); }
+  .menu-card .panel.jg-stage > .device { top: 14px; width: 46%; transform: translateX(-50%); }
   /* the pinned chapters: one dark stage, the phone filling its height */
   #daily.is-live .mo-pc__visuals { aspect-ratio: 1 / 1; max-height: calc(100svh - 144px); }
-  #daily .mo-pc__visual.mo-pc__visual--lit { background: var(--jg-dark); padding: clamp(16px, 3vw, 40px); }
+  #daily .mo-pc__visual.mo-pc__visual--lit { background: var(--jg-dark); padding: clamp(16px, 3vw, 40px); aspect-ratio: 4 / 3; }
   #daily.is-live .mo-pc__visual.mo-pc__visual--lit { aspect-ratio: auto; }
   #daily.is-live .mo-pc__visuals.frame { border-color: transparent; background: var(--jg-dark); }
-  #daily .mo-pc__visual--lit > .device { height: 100%; }
   .jg-appicon { width: 28px; height: 28px; border-radius: 22.5%; display: block; }
   .jg-bigicon { width: clamp(112px, 30%, 200px); height: auto; border-radius: 22.5%; box-shadow: 0 30px 60px -24px rgb(110 14 34 / 0.45); }
   .nw { display: inline-block; }
@@ -106,7 +115,6 @@
     .closing__links .footer__lede { display: none; }
     footer .close__word { font-size: 60px; line-height: 1.05; }
     #faq > .wrap > .grid.fill { flex: 1 0 auto; }
-    .frame.jg-stage { --dev-pad: 32px; }
   }
 </style>
 </head>
