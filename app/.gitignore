@@ -1,0 +1,20 @@
+# Flutter 自動產生的檔案
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+*.iml
+.idea/
+.metadata
+pubspec.lock
+
+# android/ 由 tool/prepare_android.sh 產生
+android/
+ios/
+
+# 字典與考古題由 tool/prepare_android.sh 從 ../ios/JuanGo 複製
+assets/words.json
+assets/exams.json

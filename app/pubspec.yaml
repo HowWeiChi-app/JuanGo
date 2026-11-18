@@ -1,0 +1,32 @@
+name: juango
+description: JuanGo：英文單字學習 App（Android 版）
+publish_to: "none"
+version: 1.1.0+2
+
+environment:
+  sdk: ^3.13.0
+  flutter: ">=3.47.0" # material_ui 需要
+
+dependencies:
+  flutter:
+    sdk: flutter
+  material_ui: ^1.10.0              # Material 元件（Flutter 3.47 起從 flutter 套件拆出來）
+  shared_preferences: ^2.3.0        # 設定
+  path_provider: ^2.1.0             # 單字、清單、學習紀錄存在 App 資料夾
+  flutter_tts: ^4.2.0               # 念單字（Android 系統語音）
+  share_plus: ^13.3.1               # 匯出備份、分享清單與連續天數
+  file_picker: ^13.4.0              # 匯入 txt、csv、JuanGo 清單與備份
+  flutter_local_notifications: ^19.0.0 # 每日提醒
+  timezone: ^0.10.0                 # 排程通知需要
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    # 由 tool/prepare_android.sh 從 iOS 版複製，兩邊共用同一份資料
+    - assets/words.json
+    - assets/exams.json
