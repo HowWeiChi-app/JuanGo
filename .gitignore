@@ -10,3 +10,8 @@ xcuserdata/
 tools/examples/gen
 tools/examples/log*.txt
 tools/examples/words-source.json
+tools/examples/out*.jsonl
+
+# local files that are not part of the source
+Payload/
+tools/exams/pdf/
