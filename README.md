@@ -24,6 +24,7 @@
     - 結算頁先列出這輪的字，點字可看單字頁，也可以「只練答錯的字」
     - 複習以「天」為單位到期：昨晚練的字，今天早上就會出現在待複習
 - **我的**：連續天數、學習日曆、熟練階梯、成就勳章
+- **單字對戰**：登入後優先和積分相近的真人即時對戰，等 10 秒沒有真人就改配電腦，也能用 6 碼房間代碼邀請朋友。5 回合、每題 10 秒，答對越快分數越高，最後一題 1.5 倍。排位賽用 Elo 積分，每 200 分一級，對應單字第 1 到 6 級（400 分是高一程度的第 3 級，1000 分以上是第 6 級），題目難度跟著等級走；朋友對戰不計分
 - **App 捷徑**：對 Siri 說「用 JuanGo 開始今日學習」，或從 Spotlight、捷徑 App、動作按鈕直接開始今天的練習
 - **每日提醒**：設定的時間提醒複習，並說今天有幾個字到期；當天已經練過就不提醒
 - **備份與分享**：設定 › 備份可匯出／還原全部資料；清單頁右上角可把清單分享成檔案或 8 碼分享代碼，別人在「新增 › 匯入檔案／輸入分享代碼」加入
@@ -47,10 +48,11 @@ Android 版有帳號與同步，用同一個 Email 登入後，iPhone 和 Androi
 | `app/` | Android App（Flutter）。`android/` 和字典檔由 `tool/prepare_android.sh` 產生，不進版本控制 |
 | `ios/JuanGo/words.json` | 內建字典（10,492 個字，含分級、標記、例句和相似字詞），兩個平台共用 |
 | `ios/JuanGo/exams.json` | 學測英文考古題，兩個平台共用 |
-| `supabase/` | 雲端同步的資料表與權限規則 |
+| `supabase/` | 雲端同步與單字對戰的資料表、權限規則。對戰要先在 SQL Editor 依序執行 `battle.sql`、`battle_words.sql` |
 | `tools/examples/` | 在 Mac 上用 Apple Intelligence 批次產生例句，產生後用 `merge.py` 併進 `words.json`。比對單字的 `WordMatch.swift` 和 App 裡是同一套規則，修改時兩邊要一起改 |
 | `tools/exams/` | 把大考中心公布的試題和答案 PDF 轉成 `exams.json` |
 | `tools/similar/` | 產生相似字詞，寫進 `words.json` |
+| `tools/battle/` | 從 `words.json` 產生對戰題庫 `supabase/battle_words.sql` |
 | `tools/build_release.sh` | 編譯要發布的 APK 和 IPA |
 | `docs/` | 介面設計規則（`DESIGN.md`） |
 | `.github/workflows/` | 自動化流程：編譯 Android App、編譯 iPhone App |

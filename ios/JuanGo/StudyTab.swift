@@ -13,6 +13,7 @@ struct StudyTab: View {
     @State private var flow: StudyRequest?
     @State private var showHistory = false
     @State private var exam: Exam?
+    @State private var showBattle = false
     /// Switches to the Explore tab when the daily goal needs more words than are saved.
     var onFindWords: () -> Void = {}
 
@@ -46,6 +47,9 @@ struct StudyTab: View {
                         flow = StudyRequest(title: "自由練習", words: h.studyable.filter { !$0.isMastered }.shuffled())
                     }
                     .disabled(h.studyable.isEmpty)
+                    actionRow("單字對戰", "五回合即時對戰，比準也比快", icon: { LIcon("bolt.fill").font(.app(.title3)).foregroundStyle(.tint) }) {
+                        showBattle = true
+                    }
                     actionRow("學習紀錄", "每天練了哪些字", icon: { LIcon("calendar").font(.app(.title3)).foregroundStyle(.tint) }) {
                         showHistory = true
                     }
@@ -89,7 +93,11 @@ struct StudyTab: View {
             .themedBackground()
             .fullScreenCover(item: $flow) { StudyFlow(request: $0) }
             .fullScreenCover(item: $exam) { ExamView(exam: $0) }
+            .fullScreenCover(isPresented: $showBattle) { BattleView() }
             #if DEBUG
+            .task {   // JUANGO_BATTLE=<step> opens the battle screen with sample data
+                if ProcessInfo.processInfo.environment["JUANGO_BATTLE"] != nil { showBattle = true }
+            }
             .task {   // simulator testing: SIMCTL_CHILD_JUANGO_STUDY=setup | q:英翻中 | summary | streak
                 if ProcessInfo.processInfo.environment["JUANGO_STUDY"] != nil, flow == nil {
                     flow = StudyRequest(title: "我的單字", words: words.filter(\.inMyWords).shuffled())

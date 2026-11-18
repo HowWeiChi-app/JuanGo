@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:material_ui/material_ui.dart';
 
+import 'battle.dart';
 import 'dictionary.dart';
 import 'exam.dart';
 import 'models.dart';
@@ -67,6 +68,8 @@ class HomeTab extends StatelessWidget {
               Icon(Icons.all_inclusive_rounded, size: 24, color: p.accent),
               studyable.isEmpty ? null : () => startStudy(context, '自由練習', studyable.where((w) => !w.isMastered).toList()..shuffle()),
             ),
+            _actionRow(p, '單字對戰', '五回合即時對戰，比準也比快', Icon(Icons.bolt_rounded, size: 25, color: p.accent),
+                () => presentFull(context, const BattlePage())),
             _actionRow(p, '學習紀錄', '每天練了哪些字', Icon(Icons.calendar_month_rounded, size: 23, color: p.accent),
                 () => showHistory(context, _store.logs.reversed.toList())),
           ]),

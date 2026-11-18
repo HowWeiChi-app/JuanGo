@@ -226,6 +226,17 @@ final class Cloud {
         return c.count == 8 ? "\(c.prefix(4))-\(c.suffix(4))" : c
     }
 
+    // MARK: Battles
+
+    /// Calls one of the battle_* functions in supabase/battle.sql.
+    func rpc(_ name: String, _ args: [String: Any] = [:]) async throws -> Data {
+        do {
+            return try await send(rest("rpc/" + name), method: "POST", json: args)
+        } catch let f as Failure where f.message.contains("Could not find the function") {
+            throw Failure(message: "對戰伺服器還沒開通")
+        }
+    }
+
     // MARK: HTTP
 
     private func rest(_ path: String) -> URL { CloudConfig.url.appendingPathComponent("rest/v1/" + path) }

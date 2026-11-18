@@ -333,6 +333,19 @@ class Cloud extends ChangeNotifier {
     }
   }
 
+  // MARK: 對戰
+
+  /// 呼叫 supabase/battle.sql 裡的 battle_* 函式
+  Future<Object?> rpc(String name, [Map<String, dynamic> args = const {}]) async {
+    try {
+      final body = await _send(_rest('rpc/$name'), 'POST', json: args);
+      return body.isEmpty ? null : jsonDecode(body);
+    } on _HttpFailure catch (e) {
+      if (e.message.contains('Could not find the function')) throw const CloudFailure('對戰伺服器還沒開通');
+      rethrow;
+    }
+  }
+
   // MARK: 連線
 
   Future<String> _send(Uri url, String method, {Map<String, dynamic>? json, String? prefer, bool auth = true}) async {
