@@ -1,6 +1,6 @@
-# JuanGo
+# 捲字 JuanGo
 
-JuanGo 是一個用 SwiftUI 寫的英文單字複習 App，用間隔複習幫你把單字從「初見」練到「精通」。單字範圍從國小、國中、大考一路到多益、雅思、托福。
+捲字 JuanGo 是英文單字複習 App，用間隔複習幫你把單字從「初見」練到「精通」。單字範圍從國小、國中、大考一路到多益、雅思、托福。iPhone 版用 SwiftUI 製作，Android 版製作中。
 
 ## 功能
 
@@ -35,10 +35,13 @@ JuanGo 是一個用 SwiftUI 寫的英文單字複習 App，用間隔複習幫你
 
 ## 專案結構
 
-- `JuanGo/`：App 原始碼。主頁在 `StudyTab.swift`，練習流程拆成 `StudyFlow`（設定）、`SessionEngine`（出題與排程）、`SessionView`、`Questions`（各題型）、`Summary`（結算、學習紀錄）
-- `JuanGo/words.json`：內建字典（10,492 個字，含分級、標記、例句）
-- `tools/examples/`：在 Mac 上用 Apple Intelligence 批次產生例句的工具，產生後用 `merge.py` 併進 `words.json`；比對單字的 `WordMatch.swift` 和 App 裡的是同一套規則，修改時兩邊要一起改
-- `supabase/`：雲端同步的資料表與權限規則
+| 路徑 | 內容 |
+|---|---|
+| `JuanGo/` | iPhone App（原生 SwiftUI）。主頁在 `StudyTab.swift`，練習流程拆成 `StudyFlow`（設定）、`SessionEngine`（出題與排程）、`SessionView`、`Questions`（各題型）、`Summary`（結算、學習紀錄） |
+| `JuanGo/words.json` | 內建字典（10,492 個字，含分級、標記、例句） |
+| `supabase/` | 雲端同步的資料表與權限規則 |
+| `tools/examples/` | 在 Mac 上用 Apple Intelligence 批次產生例句，產生後用 `merge.py` 併進 `words.json`。比對單字的 `WordMatch.swift` 和 App 裡是同一套規則，修改時兩邊要一起改 |
+| `DESIGN.md` | 介面設計規則 |
 
 ## 安裝
 
