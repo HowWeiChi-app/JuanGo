@@ -290,7 +290,9 @@ struct AddToListSheet: View {
 
     var body: some View {
         NavigationStack {
-            List { Group {
+            List {
+                SearchRow(text: $search, prompt: "搜尋清單")
+                Group {
                 Section {
                     Button { creating = true } label: { Label("建立新清單", pulso: "plus.circle.fill").font(.app(.headline)) }
                 }
@@ -305,7 +307,7 @@ struct AddToListSheet: View {
                 }
             }.listRowBackground(Color.cardFill) }.themedBackground()
             .foregroundStyle(.primary)
-            .appSearch($search, prompt: "搜尋清單")
+            .scrollDismissesKeyboard(.immediately)
             .navigationTitle("加入其他清單")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消", pulso: "xmark") { dismiss() } }

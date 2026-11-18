@@ -27,6 +27,7 @@ struct WordsTab: View {
         NavigationStack {
             // one list for all three, so switching keeps the search field and the picker where they are
             List {
+                SearchRow(text: $search, prompt: "搜尋英文或中文")
                 segmentRow
                 Group {
                     switch segment {
@@ -38,12 +39,12 @@ struct WordsTab: View {
             }
             .listStyle(.insetGrouped)
             .overlay {
-                if segment == 0, !search.isEmpty, filtered.isEmpty {
+                if segment == 0, !words.isEmpty, !search.isEmpty, filtered.isEmpty {
                     EmptyState("沒有「\(search)」", icon: "magnifyingglass", message: "到「新增」可以查字典裡的字。")
                 }
             }
             .task(id: "\(words.count)|\(dismissedDuplicates)") { duplicates = scanDuplicates }
-            .appSearch($search, prompt: "搜尋英文或中文")
+            .scrollDismissesKeyboard(.immediately)
             .navigationTitle("字庫")
             .themedBackground()
             .toolbar {
@@ -136,8 +137,7 @@ struct WordsTab: View {
         return (days, byDay)
     }
 
-    /// 全部／清單／內建字庫, as the first row of each list. A pinned top inset was drawn on top of the
-    /// search field on iOS 27.3 devices, which place the search drawer in the scrolling content.
+    /// 全部／清單／內建字庫, as a row of the list, right under the search field.
     private var segmentPicker: some View {
         Picker("顯示", selection: $segment) {
             Text("全部 \(words.count)").tag(0)
@@ -362,7 +362,10 @@ struct ListWordsView: View {
 
     var body: some View {
         let have = Set(words.map(\.term))   // once, not a scan of every saved word for each of the deck's rows
-        List { Group {
+        List {
+            // built-in decks only: a saved list is short enough to scroll
+            if isDeck { SearchRow(text: $query, prompt: "搜尋英文或中文") }
+            Group {
             switch route {
             case .deck, .level:
                 let shown = onlyNew ? entries.filter { !have.contains($0.w) } : entries
@@ -410,7 +413,7 @@ struct ListWordsView: View {
             Button("好", role: .cancel) {}
         } message: { Text(shareResult ?? "") }
         .fullScreenCover(item: $practice) { StudyFlow(request: $0) }
-        .modifier(DeckSearch(on: isDeck, query: $query))
+        .scrollDismissesKeyboard(.immediately)
         .toolbar {
             if isDeck {
                 ToolbarItem {
@@ -701,17 +704,4 @@ func dueText(_ due: Date) -> String {
     let cal = Calendar.current
     let d = cal.dateComponents([.day], from: cal.startOfDay(for: .now), to: cal.startOfDay(for: due)).day ?? 0
     return d <= 0 ? "今天" : d == 1 ? "明天" : d == 2 ? "後天" : "\(d) 天後"
-}
-
-/// The search drawer for 字庫 › 全部 and for a built-in deck's page (a saved list is short enough to scroll).
-private struct DeckSearch: ViewModifier {
-    let on: Bool
-    @Binding var query: String
-    func body(content: Content) -> some View {
-        if on {
-            content.appSearch($query, prompt: "搜尋英文或中文")
-        } else {
-            content
-        }
-    }
 }

@@ -95,7 +95,7 @@ final class AppFont {
         applyAppearance()
     }
 
-    /// The UIKit-drawn parts (navigation titles, segmented controls, the search field, bar buttons) get the
+    /// The UIKit-drawn parts (navigation titles, segmented controls, bar buttons) get the
     /// same font and theme colours as the SwiftUI text. Alerts, menus and the date picker can't be restyled.
     func applyAppearance() {
         let a = Attrs(self)
@@ -106,7 +106,6 @@ final class AppFont {
         seg.setTitleTextAttributes(a.segment(selected: false), for: .normal)
         seg.setTitleTextAttributes(a.segment(selected: true), for: .selected)
         seg.selectedSegmentTintColor = a.accent
-        UISearchTextField.appearance().font = a.body   // typed text in the app font; the height is set by AppSearch
         for state: UIControl.State in [.normal, .highlighted, .disabled] {
             UIBarButtonItem.appearance().setTitleTextAttributes([.font: a.body], for: state)
         }
@@ -217,102 +216,79 @@ extension Font {
 
 // MARK: search field
 
-extension View {
-    /// The app's one search field: the system search drawer, always shown, at the standard height, in the app font.
-    func appSearch(_ text: Binding<String>, prompt: String) -> some View {
-        modifier(AppSearch(text: text, prompt: prompt))
-    }
-}
-
-/// SwiftUI sizes the search drawer from the font around `.searchable`: a custom font makes it 62pt tall
-/// instead of 44pt. So the drawer sees the system body style; the content inside keeps the app font, and
-/// the field's own text and placeholder are given the app font once, when it's created.
-private struct AppSearch: ViewModifier {
-    @Environment(AppSettings.self) private var settings
+/// The app's one search field: a glass capsule in the app font, as the first row of a List, so it scrolls
+/// with the page and never covers the title or the rows. Pass `focus` when the page moves the keyboard itself.
+struct SearchRow: View {
     @Binding var text: String
     let prompt: String
+    var focus: FocusState<Bool>.Binding?
+    var onSubmit: () -> Void = {}
+    @FocusState private var ownFocus: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    func body(content: Content) -> some View {
-        content
-            .font(.app(.body)).fontDesign(settings.fontDesign)
-            .searchable(text: $text, placement: .navigationBarDrawer(displayMode: .always),
-                        prompt: Text(prompt).font(.app(.body)))
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .font(.body).fontDesign(.default)
-            .background(SearchFieldFont())
-    }
-}
+    private var focused: FocusState<Bool>.Binding { focus ?? $ownFocus }
+    private var isActive: Bool { focused.wrappedValue || !text.isEmpty }
 
-/// Puts the app font on this screen's search field: its text and its placeholder. SwiftUI writes the
-/// placeholder itself, so it's watched and given the font again only if SwiftUI replaces it.
-private struct SearchFieldFont: UIViewRepresentable {
-    final class Hook: UIView {
-        private weak var field: UISearchTextField?
-        private var watch: NSKeyValueObservation?
-
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            guard window != nil, field == nil else { return }
-            DispatchQueue.main.async { [weak self] in self?.attach() }
-        }
-
-        /// the search bar of the navigation controller this view sits in
-        private func attach() {
-            var r: UIResponder? = self
-            while let next = r?.next, !(next is UINavigationController) { r = next }
-            guard let nav = r?.next as? UINavigationController,
-                  let bar = nav.viewControllers.lazy.compactMap({ $0.navigationItem.searchController?.searchBar }).last
-                    ?? Self.firstSearchBar(in: nav.view) else { return }
-            let t = bar.searchTextField
-            field = t
-            apply(to: t)
-            watch = t.observe(\.attributedPlaceholder) { t, _ in
-                MainActor.assumeIsolated { Hook.applyPlaceholder(to: t) }
+    var body: some View {
+        Section {
+            HStack(spacing: 10) {
+                field
+                if isActive { closeButton }
             }
+            .animation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0), value: isActive)
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+            .listRowSeparator(.hidden)
             #if DEBUG
-            if ProcessInfo.processInfo.environment["JUANGO_SEARCHDEMO"] != nil { demo(nav) }
+            .task {   // JUANGO_SEARCHDEMO=1 focuses the field, for screenshots
+                guard ProcessInfo.processInfo.environment["JUANGO_SEARCHDEMO"] != nil else { return }
+                try? await Task.sleep(for: .seconds(1))
+                focused.wrappedValue = true
+            }
             #endif
         }
-
-        private func apply(to t: UISearchTextField) {
-            let font = AppFont.shared.uiFont(style: .body, size: nil, weight: .regular)
-            if t.font != font { t.font = font }
-            Self.applyPlaceholder(to: t)
-        }
-
-        static func applyPlaceholder(to t: UISearchTextField) {
-            let font = AppFont.shared.uiFont(style: .body, size: nil, weight: .regular)
-            guard let p = t.attributedPlaceholder, p.length > 0,
-                  (p.attribute(.font, at: 0, effectiveRange: nil) as? UIFont) != font else { return }
-            let m = NSMutableAttributedString(attributedString: p)
-            m.addAttribute(.font, value: font, range: NSRange(location: 0, length: m.length))
-            t.attributedPlaceholder = m
-        }
-
-        private static func firstSearchBar(in v: UIView) -> UISearchBar? {
-            if let b = v as? UISearchBar { return b }
-            for s in v.subviews { if let b = firstSearchBar(in: s) { return b } }
-            return nil
-        }
-
-        #if DEBUG
-        /// JUANGO_SEARCHDEMO=1: focus the field, then close search the way the ✕ button does, for screen recordings
-        private func demo(_ nav: UINavigationController) {
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(3))
-                self?.field?.becomeFirstResponder()
-                try? await Task.sleep(for: .seconds(3))
-                if let c = nav.viewControllers.lazy.compactMap({ $0.navigationItem.searchController }).last {
-                    c.searchBar.delegate?.searchBarCancelButtonClicked?(c.searchBar)
-                    c.isActive = false
-                } else { self?.field?.resignFirstResponder() }
-            }
-        }
-        #endif
+        .listSectionSpacing(12)
     }
 
-    func makeUIView(context: Context) -> Hook { let v = Hook(); v.isUserInteractionEnabled = false; return v }
-    func updateUIView(_ v: Hook, context: Context) {}
-}
+    private var field: some View {
+        HStack(spacing: 8) {
+            LIcon("magnifyingglass").foregroundStyle(.secondary)
+            TextField(prompt, text: $text)
+                .focused(focused)
+                .submitLabel(.search)
+                .onSubmit(onSubmit)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            if !text.isEmpty {
+                Button { text = "" } label: {
+                    LIcon("xmark.circle.fill").foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("清除")
+            }
+        }
+        .font(.app(.body))
+        .padding(.horizontal, 16)
+        .frame(minHeight: 44)
+        .contentShape(.capsule)
+        .onTapGesture { focused.wrappedValue = true }   // the text field is shorter than the capsule
+        .glassEffect(.regular.interactive(), in: .capsule)
+    }
 
+    private var closeButton: some View {
+        Button {
+            text = ""
+            focused.wrappedValue = false
+        } label: {
+            LIcon("xmark")
+                .font(.app(.body, .medium))
+                .foregroundStyle(.primary)
+                .frame(width: 44, height: 44)
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .circle)
+        .accessibilityLabel("關閉搜尋")
+        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+    }
+}

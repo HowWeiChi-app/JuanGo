@@ -30,7 +30,9 @@ struct ImportTab: View {
 
     var body: some View {
         NavigationStack {
-            List { Group {
+            List {
+                SearchRow(text: $query, prompt: "輸入英文單字或中文意思", focus: $focused) { submit() }
+                Group {
                 if !query.trimmingCharacters(in: .whitespaces).isEmpty {
                     suggestionList
                 } else {
@@ -65,9 +67,7 @@ struct ImportTab: View {
                 }
             }.listRowBackground(Color.cardFill) }.themedBackground()
             .listStyle(.insetGrouped)
-            .appSearch($query, prompt: "輸入英文單字或中文意思")
-            .searchFocused($focused)
-            .onSubmit(of: .search) { submit() }
+            .scrollDismissesKeyboard(.immediately)
             .safeAreaInset(edge: .bottom) {
                 if let toast {
                     Toast(text: toast, action: nil) { withAnimation { self.toast = nil } }.padding(.horizontal, 20)

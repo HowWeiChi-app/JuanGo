@@ -35,7 +35,7 @@ Android 版有帳號與同步，用同一個 Email 登入後，iPhone 和 Androi
 
 ## 設計
 
-- iPhone 版以原生 SwiftUI 元件為主（List、`.searchable`、Liquid Glass 按鈕），規則寫在 `docs/DESIGN.md`
+- iPhone 版以原生 SwiftUI 元件為主（List、Liquid Glass 按鈕），搜尋框是自製的玻璃膠囊，規則寫在 `docs/DESIGN.md`
 - Android 版用 Flutter 照同一套版面製作
 - iPhone 版的圖示使用 Apple 的 SF Symbols，Android 版使用 Material Icons
 
