@@ -30,22 +30,22 @@
 
 ## 設計
 
-- 介面以原生 SwiftUI 元件為主（List、`.searchable`、Liquid Glass 按鈕），規則寫在 `DESIGN.md`
+- 介面以原生 SwiftUI 元件為主（List、`.searchable`、Liquid Glass 按鈕），規則寫在 `docs/DESIGN.md`
 - 圖示全部使用 Apple 的 SF Symbols
 
 ## 專案結構
 
 | 路徑 | 內容 |
 |---|---|
-| `JuanGo/` | iPhone App（原生 SwiftUI）。主頁在 `StudyTab.swift`，練習流程拆成 `StudyFlow`（設定）、`SessionEngine`（出題與排程）、`SessionView`、`Questions`（各題型）、`Summary`（結算、學習紀錄） |
-| `JuanGo/words.json` | 內建字典（10,492 個字，含分級、標記、例句） |
+| `ios/` | iPhone App（原生 SwiftUI），程式碼在 `ios/JuanGo/`。主頁在 `StudyTab.swift`，練習流程拆成 `StudyFlow`（設定）、`SessionEngine`（出題與排程）、`SessionView`、`Questions`（各題型）、`Summary`（結算、學習紀錄） |
+| `ios/JuanGo/words.json` | 內建字典（10,492 個字，含分級、標記、例句） |
 | `supabase/` | 雲端同步的資料表與權限規則 |
 | `tools/examples/` | 在 Mac 上用 Apple Intelligence 批次產生例句，產生後用 `merge.py` 併進 `words.json`。比對單字的 `WordMatch.swift` 和 App 裡是同一套規則，修改時兩邊要一起改 |
-| `DESIGN.md` | 介面設計規則 |
+| `docs/` | 介面設計規則（`DESIGN.md`） |
 
 ## 安裝
 
-- **自己編譯**：用 Xcode 26 打開 `JuanGo.xcodeproj`，在 Signing \& Capabilities 換成自己的 Team，執行到 iPhone 或模擬器。
+- **自己編譯**：用 Xcode 26 打開 `ios/JuanGo.xcodeproj`，在 Signing \& Capabilities 換成自己的 Team，執行到 iPhone 或模擬器。
 - **自己簽名安裝 IPA**：下載 Releases 裡的 IPA，用 [Sideloadly](https://sideloadly.io) 或 [AltStore](https://altstore.io) 以自己的 Apple ID 簽名安裝。iPhone 要打開「設定 › 隱私權與安全性 › 開發者模式」，並在「設定 › 一般 › VPN 與裝置管理」信任自己的 Apple ID。免費 Apple ID 簽的 App 每 7 天要重簽一次（資料不會消失）。
 
 需求：iOS 26、Xcode 26。
