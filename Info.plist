@@ -12,7 +12,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.howweichi.juango.login</string>
+			<string>io.github.howweichi.juango.login</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>juango</string>
