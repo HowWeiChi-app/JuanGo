@@ -31,7 +31,7 @@
 - 7 組主題色，頁面底色與區塊跟著主題色調變化，支援深色模式
 - 支援 VoiceOver（圖示按鈕、圖表、日曆、勳章都有完整說明）、大字體和「減少動態效果」
 
-Android 版目前沒有拍照掃描、帳號同步與分享代碼、AI 翻譯、「換一句」、Siri 捷徑和圓體字型，學習資料只存在裝置上，可以用備份檔搬移。
+Android 版有帳號與同步，用同一個 Email 登入後，iPhone 和 Android 的單字和進度會合併。Android 版目前沒有拍照掃描、分享代碼、AI 翻譯、「換一句」、Siri 捷徑和圓體字型。
 
 ## 設計
 
@@ -51,7 +51,10 @@ Android 版目前沒有拍照掃描、帳號同步與分享代碼、AI 翻譯、
 | `tools/examples/` | 在 Mac 上用 Apple Intelligence 批次產生例句，產生後用 `merge.py` 併進 `words.json`。比對單字的 `WordMatch.swift` 和 App 裡是同一套規則，修改時兩邊要一起改 |
 | `tools/exams/` | 把大考中心公布的試題和答案 PDF 轉成 `exams.json` |
 | `tools/similar/` | 產生相似字詞，寫進 `words.json` |
+| `tools/build_release.sh` | 編譯要發布的 APK 和 IPA |
 | `docs/` | 介面設計規則（`DESIGN.md`） |
+| `.github/workflows/` | 自動化流程：編譯 Android App、編譯 iPhone App |
+| `dist/` | 本機的發版輸出，不進 repo |
 
 ## 安裝
 
@@ -73,6 +76,19 @@ bash tool/prepare_android.sh
 flutter test
 flutter build apk --release
 ```
+
+## 發版
+
+1. 改版本號：`app/pubspec.yaml` 的 `version`（例如 `0.2.0+4`），以及 `ios/JuanGo.xcodeproj` 的 `MARKETING_VERSION` 和 `CURRENT_PROJECT_VERSION`。兩個平台的版本要相同，`+` 後面的數字每版都要變大，手機才能直接更新。
+2. 在 repo 根目錄編譯。指令會跑檢查和測試，再把 APK、IPA 放到 `dist/release/`，最後印出 SHA-256。
+
+   ```bash
+   bash tools/build_release.sh
+   ```
+
+3. 到 GitHub Releases 建立 `v` 開頭的版本，附上這兩個檔案。測試版要勾選 Pre-release。
+
+Android 版要用同一把簽名金鑰編譯，已安裝的手機才能直接更新，所以發版都在同一台電腦上做。
 
 ## 資料來源與授權
 

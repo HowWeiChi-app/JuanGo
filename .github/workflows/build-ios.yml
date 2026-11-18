@@ -1,0 +1,30 @@
+# 編譯 iPhone App（原生 SwiftUI）：ios/ 有變動就會執行，確認程式能編譯成功。
+# 發版用 tools/build_release.sh，見 README。
+
+name: 編譯 iPhone App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - ".github/workflows/build-ios.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Liquid Glass 的 API 是 iOS 26 才有的，需要 Xcode 26 以上
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: 編譯（不簽名）
+        run: |
+          xcodebuild -project ios/JuanGo.xcodeproj -target JuanGo \
+            -configuration Release -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO build

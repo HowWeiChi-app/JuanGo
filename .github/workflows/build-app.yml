@@ -1,0 +1,60 @@
+# 編譯 Android App（Flutter）：app/ 有變動就會執行，確認測試和編譯都通過。
+# 發版用 tools/build_release.sh，見 README。
+
+name: 編譯 Android App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "ios/JuanGo/words.json"
+      - "ios/JuanGo/exams.json"
+      - ".github/workflows/build-app.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # 要用 21：新版 Android lint 用到 Java 21 才有的功能，用 17 會在編譯時當掉
+          java-version: "21"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: 產生 Android 專案檔
+        run: bash tool/prepare_android.sh
+
+      - name: 確認網路權限有加上
+        run: grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml
+
+      - name: 下載套件
+        run: flutter pub get
+
+      - name: 檢查程式碼
+        run: flutter analyze --no-fatal-infos
+
+      - name: 跑測試
+        run: flutter test
+
+      - name: 編譯 APK
+        run: flutter build apk --release
+
+      - name: 上傳 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: juango-apk
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30

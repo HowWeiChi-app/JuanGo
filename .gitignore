@@ -1,17 +1,24 @@
-build/
+# 系統與工具
 .DS_Store
+__pycache__/
 xcuserdata/
-*.ipa
+*.xcuserstate
+DerivedData/
+
+# 編譯和發版輸出
+build/
+dist/
 *.xcarchive
+*.ipa
+*.apk
+
+# 本機文件
 *.docx
 夜間工作報告.md
 
-# example generator outputs
+# 工具產生的檔案
 tools/examples/gen
 tools/examples/log*.txt
 tools/examples/words-source.json
 tools/examples/out*.jsonl
-
-# local files that are not part of the source
-Payload/
 tools/exams/pdf/
