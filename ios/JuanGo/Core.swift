@@ -81,6 +81,8 @@ struct DictEntry: Codable, Hashable, Identifiable {
     var alt: [String]? = nil
     /// word lists the word belongs to besides the 大考 levels: "elem" 國中小 1200, "toeic", "ielts", "toefl"
     var tags: [String]? = nil
+    /// up to 3 similar words (tools/similar): shared meanings first, then near neighbours in meaning
+    var sim: [String]? = nil
     var id: String { w }
     /// "v./(n.)" -> ["v.", "n."]
     var posTags: [String] { pos.split(separator: "/").map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "() ")) } }
@@ -194,6 +196,12 @@ enum Dictionary_ {
             let pa = tags.isDisjoint(with: a.e.posTags) ? 0 : 1, pb = tags.isDisjoint(with: b.e.posTags) ? 0 : 1
             return (pa, a.n, b.e.w) > (pb, b.n, a.e.w)
         }.prefix(limit).map(\.e)
+    }
+
+    /// 相似字詞 for a word: the precomputed list, else the words that share a Chinese meaning.
+    static func similar(to term: String, meanings: [String], pos: String, limit: Int = 3) -> [DictEntry] {
+        let listed = (lookup(term)?.sim ?? []).compactMap(lookup).filter { $0.w.lowercased() != term.lowercased() }
+        return Array((listed.isEmpty ? synonyms(of: term, meanings: meanings, pos: pos, limit: limit) : listed).prefix(limit))
     }
 
     static func lookup(_ term: String) -> DictEntry? {
@@ -467,6 +475,18 @@ extension Color {
     static let unsureInk = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.98, green: 0.86, blue: 0.62, alpha: 1) : UIColor(red: 0.50, green: 0.33, blue: 0.02, alpha: 1) })
     static let againInk = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.99, green: 0.78, blue: 0.78, alpha: 1) : UIColor(red: 0.66, green: 0.10, blue: 0.16, alpha: 1) })
     static let againPink = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.40, green: 0.16, blue: 0.18, alpha: 1) : UIColor(red: 0.97, green: 0.85, blue: 0.84, alpha: 1) })
+
+    /// 附中 colours for answer options (the level test, quiz choices): the school's two colours, 紫紅 and
+    /// 天藍, with the uniform's 深藍 as ink. Colours only; no emblem or flag. Each ink reads 4.5:1 on its fill.
+    static let hsnuMagenta = dyn(light: 0x9C1D5B, dark: 0xF4A3C8)
+    static let hsnuMagentaFill = dyn(light: 0xF8E1EB, dark: 0x4A1A33)
+    static let hsnuSky = dyn(light: 0x0D659F, dark: 0x9DD4F7)
+    static let hsnuSkyFill = dyn(light: 0xDDEFFB, dark: 0x173F5B)
+    static let hsnuNavy = dyn(light: 0x1E3460, dark: 0xC9D6EE)
+    private static func dyn(light: UInt32, dark: UInt32) -> Color {
+        func ui(_ h: UInt32) -> UIColor { UIColor(red: CGFloat((h >> 16) & 0xFF) / 255, green: CGFloat((h >> 8) & 0xFF) / 255, blue: CGFloat(h & 0xFF) / 255, alpha: 1) }
+        return Color(UIColor { $0.userInterfaceStyle == .dark ? ui(dark) : ui(light) })
+    }
 }
 
 /// DESIGN.md radius grammar: compact utility 8, the rare pearl button 11, cards and tiles 18; actions are pills.

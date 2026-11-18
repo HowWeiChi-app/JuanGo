@@ -240,6 +240,34 @@ struct ExploreCard: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(RoundedRectangle(cornerRadius: Radius.md).fill(Color.themeAccent.opacity(0.06)))
     .overlay(alignment: .leading) { Rectangle().fill(Color.themeAccent).frame(width: 3).padding(.vertical, 8) }
+    similarWords
+    }
+
+    /// 相似字詞 under the example: three chips, each with its meaning (a neighbour in meaning can be an
+    /// opposite, and the meaning shows which); a tap looks the word up.
+    @ViewBuilder private var similarWords: some View {
+        let similar = Dictionary_.similar(to: entry.w, meanings: entry.zh, pos: entry.pos)
+        if !similar.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("相似字詞").font(.app(.caption, .bold)).foregroundStyle(.secondary)
+                FlowLayout(spacing: 8, lineSpacing: 8) {
+                    ForEach(similar) { s in
+                        Button { onLookup(s.w) } label: {
+                            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                                Text(s.w).font(.app(.subheadline, .semibold)).foregroundStyle(.primary)
+                                Text(s.zh.first ?? "").font(.app(.caption)).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(Capsule().fill(Color.themeAccent.opacity(0.08)))
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(s.w)，\(s.zh.first ?? "")")
+                        .accessibilityHint("查這個字")
+                    }
+                }
+            }
+        }
     }
 
     /// A dictionary-entry card: level and part of speech on top, a serif headword, meanings, then the example in a quote block.
@@ -248,6 +276,7 @@ struct ExploreCard: View {
             HStack(spacing: 8) {
                 if !entry.lv.isEmpty, entry.lv != "—" { tag(levelLabel(entry.lv), filled: true) }
                 if !entry.pos.isEmpty { tag(entry.pos, filled: false) }
+                ExamYearsTag(term: entry.w)
                 Spacer()
                 if isSaved { Label("已收藏", pulso: "bookmark.fill").font(.app(.caption, .bold)).foregroundStyle(.tint) }
             }

@@ -194,9 +194,10 @@ struct ChoiceQuestion: View {
                 Button { choose(o) } label: {
                     HStack(spacing: 14) {
                         Text(String(UnicodeScalar(65 + k)!)).font(.app(.subheadline, .bold)).monospaced()
-                            .foregroundStyle(picked == nil ? Color.themeAccent : .primary)
+                            .foregroundStyle(picked == nil ? Color.hsnuNavy : .primary)
                             .frame(width: 30, height: 30)
-                            .background(RoundedRectangle(cornerRadius: Radius.sm).fill(picked == nil ? Color.themeAccent.opacity(0.1) : Color.primary.opacity(0.06)))
+                            // an answer-card bubble in the uniform's 深藍
+                            .background(Circle().strokeBorder(Color.hsnuNavy.opacity(picked == nil ? 0.55 : 0.2), lineWidth: 1.5))
                         VStack(alignment: .leading, spacing: 2) {
                             // two lines before shrinking: a long Chinese meaning was cut off with …
                             Text(o).font(.app(.headline)).lineLimit(2).minimumScaleFactor(0.8).foregroundStyle(.primary)
@@ -206,8 +207,8 @@ struct ChoiceQuestion: View {
                             }
                         }
                         Spacer()
-                        if picked != nil && o == correct { LIcon("checkmark.circle.fill").foregroundStyle(Color.knowInk).accessibilityLabel("正確答案") }
-                        else if picked == o { LIcon("xmark.circle.fill").foregroundStyle(Color.themeAccent) }
+                        if picked != nil && o == correct { LIcon("checkmark.circle.fill").foregroundStyle(Color.hsnuSky).accessibilityLabel("正確答案") }
+                        else if picked == o { LIcon("xmark.circle.fill").foregroundStyle(Color.hsnuMagenta) }
                     }
                     .padding(.horizontal, 12)
                     .frame(maxWidth: .infinity, minHeight: 58)
@@ -282,8 +283,8 @@ struct ChoiceQuestion: View {
     private func fill(for o: String) -> Color {
         let idle = Color.cardFill
         guard let picked else { return idle }
-        if o == correct { return .knowGreen }
-        if o == picked { return .againPink }
+        if o == correct { return .hsnuSkyFill }
+        if o == picked { return .hsnuMagentaFill }
         return idle
     }
 

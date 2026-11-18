@@ -43,8 +43,7 @@ struct WordsTab: View {
                 }
             }
             .task(id: "\(words.count)|\(dismissedDuplicates)") { duplicates = scanDuplicates }
-            .keepAppFont().searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜尋英文或中文").systemSearchField()
-            .textInputAutocapitalization(.never).autocorrectionDisabled()
+            .appSearch($search, prompt: "搜尋英文或中文")
             .navigationTitle("字庫")
             .themedBackground()
             .toolbar {
@@ -526,6 +525,7 @@ struct WordDetailView: View {
                         let lv = cefrToExam[word.cefr] ?? word.cefr
                         if !lv.isEmpty, lv != "—" { detailTag(levelLabel(lv)) }
                         detailTag(levelNames[max(0, min(5, word.srsLevel))])
+                        ExamYearsTag(term: word.term)
                     }
                     Divider().padding(.vertical, 4)
                     ForEach(Array(word.meanings.enumerated()), id: \.offset) { k, m in
@@ -638,7 +638,7 @@ struct WordDetailView: View {
     }
 
     private var synonyms: [DictEntry] {
-        Dictionary_.synonyms(of: word.term, meanings: Dictionary_.lookup(word.term)?.zh ?? word.meanings, pos: word.pos, limit: 3)
+        Dictionary_.similar(to: word.term, meanings: Dictionary_.lookup(word.term)?.zh ?? word.meanings, pos: word.pos)
     }
 
     /// Related words as a wrap of tappable chips; the + adds one straight to 我的單字.
@@ -709,8 +709,7 @@ private struct DeckSearch: ViewModifier {
     @Binding var query: String
     func body(content: Content) -> some View {
         if on {
-            content.keepAppFont().searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜尋英文或中文").systemSearchField()
-                .textInputAutocapitalization(.never).autocorrectionDisabled()
+            content.appSearch($query, prompt: "搜尋英文或中文")
         } else {
             content
         }

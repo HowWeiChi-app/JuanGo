@@ -65,10 +65,8 @@ struct ImportTab: View {
                 }
             }.listRowBackground(Color.cardFill) }.themedBackground()
             .listStyle(.insetGrouped)
-            .keepAppFont().searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "輸入英文單字或中文意思").systemSearchField()
+            .appSearch($query, prompt: "輸入英文單字或中文意思")
             .searchFocused($focused)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
             .onSubmit(of: .search) { submit() }
             .safeAreaInset(edge: .bottom) {
                 if let toast {

@@ -3,17 +3,23 @@ import SwiftUI
 struct OnboardingView: View {
     @Environment(AppSettings.self) private var settings
     @State private var page = 0
-    @State private var test = LevelTest(words: LevelTest.basic)
+    @State private var test = LevelTest()
+    /// the option just tapped (-1: 不知道), shown in colour for a moment before the next question
+    @State private var shown: Int?
     @State private var unsupportedLanguage = false
     @State private var customGoal = false
 
     var body: some View {
         @Bindable var settings = settings
         VStack(spacing: 0) {
-            Hero(page: page, word: page == 1 ? test.current?.w : nil)
-                .scaleEffect(page == 4 ? 0.7 : 1)
-                .frame(height: page == 4 ? 200 : 300)
-                .padding(.top, 8)
+            // the test has the whole screen: an answer card, not a word card that hides the meaning
+            if page != 1 {
+                Hero(page: page, word: nil)
+                    .scaleEffect(page == 4 ? 0.7 : 1)
+                    .frame(height: page == 4 ? 200 : 300)
+                    .padding(.top, 8)
+                    .transition(.opacity)
+            }
             Group {
                 switch page {
                 case 0: languagePage
@@ -68,44 +74,119 @@ struct OnboardingView: View {
         }
     }
 
+    /// One tap per question: four options on an answer card, in 附中's 天藍 (right) and 紫紅 (wrong).
+    /// The next word is harder after a right answer and easier after a wrong one.
     private var testPage: some View {
         VStack(spacing: 18) {
-            if let w = test.current {
-                Text("\(test.index + 1) / \(test.words.count)").font(.app(.subheadline).monospacedDigit()).foregroundStyle(.secondary)
-                Text(w.w).font(.app(size: 40, .semibold)).id(w.w)
-                    .transition(.push(from: .trailing))
-                Text(test.revealed ? w.zh.prefix(2).joined(separator: " · ") : " ")
-                    .font(.app(.title3, .semibold)).foregroundStyle(.secondary)
-                Text(test.revealed ? "原本知道這個意思嗎？" : " ").font(.app(.caption)).foregroundStyle(.secondary)
-                // same order and colours as the grade buttons in a round (不會 left, 會 right), with the dark ink
-                // on the pale fills that those use; white text on them was hard to read
-                HStack(spacing: 12) {
-                    Button("不會") { answer(0) }.buttonStyle(PillButtonStyle(fill: .againPink, foreground: .againInk))
-                    Button("不確定") { answer(0.5) }.buttonStyle(PillButtonStyle(fill: .unsureYellow, foreground: .unsureInk))
-                    Button(test.revealed ? "確認" : "會") { answer(test.revealed ? 1 : nil) }
-                        .buttonStyle(PillButtonStyle(fill: .knowGreen, foreground: .knowInk))
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("第 \(min(test.index + 1, LevelTest.length)) 題").font(.app(.headline)).foregroundStyle(Color.hsnuNavy)
+                    Text("/ \(LevelTest.length)").font(.app(.subheadline).monospacedDigit()).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("單字程度測驗").font(.app(.caption, .bold)).foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, 20)
+                AnswerStrip(test: test, live: true)
             }
+            if let item = test.current {
+                VStack(spacing: 14) {
+                    prompt(item)
+                    VStack(spacing: 10) {
+                        ForEach(Array(item.options.enumerated()), id: \.offset) { i, o in optionRow(item, i, o) }
+                    }
+                    Button("不知道") { choose(-1, item) }
+                        .font(.app(.subheadline, .semibold)).foregroundStyle(.secondary)
+                        .frame(minHeight: 44)
+                        .allowsHitTesting(shown == nil)
+                }
+                .id(test.index)
+                .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .opacity))
+            }
+            Spacer(minLength: 0)
         }
+        .padding(.horizontal, 20).padding(.top, 12)
         .animation(.snappy, value: test.index)
-        .animation(.snappy, value: test.revealed)
+        .sensoryFeedback(trigger: shown) { _, new in
+            guard settings.haptics, let new, let item = test.current else { return nil }
+            return new == item.correct ? .success : .error
+        }
+    }
+
+    @ViewBuilder private func prompt(_ item: LevelTest.Item) -> some View {
+        switch item.kind {
+        case .meaning:
+            VStack(spacing: 6) {
+                Text("選出正確的中文意思").font(.app(.caption, .semibold)).foregroundStyle(.secondary)
+                Text(item.entry.w).font(.app(size: 40, .semibold)).lineLimit(1).minimumScaleFactor(0.5)
+                HStack(spacing: 8) {
+                    if !item.entry.ipa.isEmpty { Text("/\(item.entry.ipa)/").font(.app(.footnote)).foregroundStyle(.secondary) }
+                    SpeakButton(text: item.entry.w).font(.app(.footnote))
+                }
+            }
+            .frame(minHeight: 120)
+        case .cloze:
+            VStack(alignment: .leading, spacing: 8) {
+                Text("選出最適合填入空格的字").font(.app(.caption, .semibold)).foregroundStyle(.secondary)
+                Text(item.sentence).font(.app(.title3, .semibold)).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: Radius.md).fill(Color.hsnuNavy.opacity(0.05)))
+            .overlay(alignment: .leading) { Rectangle().fill(Color.hsnuNavy).frame(width: 3).padding(.vertical, 8) }
+        }
+    }
+
+    private func optionRow(_ item: LevelTest.Item, _ i: Int, _ o: String) -> some View {
+        let right = shown != nil && i == item.correct, wrong = shown == i && i != item.correct
+        return Button { choose(i, item) } label: {
+            HStack(spacing: 14) {
+                // an answer-card box: empty until it is marked, then filled like a pencil mark
+                Text(String(UnicodeScalar(65 + i)!)).font(.app(.subheadline, .bold)).monospaced()
+                    .foregroundStyle(right || wrong ? Color.white : Color.hsnuNavy)
+                    .frame(width: 30, height: 34)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(right ? Color.hsnuSky : wrong ? Color.hsnuMagenta : .clear))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.hsnuNavy.opacity(right || wrong ? 0 : 0.5), lineWidth: 1.5))
+                Text(o).font(.app(.headline)).lineLimit(2).minimumScaleFactor(0.8).multilineTextAlignment(.leading)
+                    .foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                if right { LIcon("checkmark").font(.app(.headline)).foregroundStyle(Color.hsnuSky).accessibilityLabel("正確答案") }
+                else if wrong { LIcon("xmark").font(.app(.headline)).foregroundStyle(Color.hsnuMagenta).accessibilityLabel("答錯") }
+            }
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .background(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous)
+                .fill(right ? Color.hsnuSkyFill : wrong ? Color.hsnuMagentaFill : Color.cardFill))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .allowsHitTesting(shown == nil)
+    }
+
+    private func choose(_ i: Int, _ item: LevelTest.Item) {
+        guard shown == nil else { return }
+        withAnimation(.snappy(duration: 0.2)) { shown = i }
+        if item.kind == .meaning || i == item.correct { Speech.say(item.entry.w) }
+        Task {
+            // long enough to see the right answer after a miss
+            try? await Task.sleep(for: .seconds(i == item.correct ? 0.6 : 1.3))
+            test.record(i < 0 ? nil : i)
+            shown = nil
+            if test.isDone { finishTest() }
+        }
     }
 
     private var resultPage: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
             Text("你的推定程度").font(.app(.title2, .bold))
-            Text(levelLabel(test.estimate)).font(.app(size: 72, .semibold))
+            Text(levelLabel(test.estimate)).font(.app(size: 64, .semibold)).foregroundStyle(Color.hsnuNavy)
             Text(LevelTest.blurb(test.estimate)).font(.app(.headline))
-            Text("會從接近你程度的單字開始。").font(.app(.subheadline)).foregroundStyle(.secondary)
-            if !test.didAdvanced {
-                Button("再答 10 題進階測試") {
-                    test.startAdvanced()
-                    page = 1
-                }
-                .buttonStyle(PillButtonStyle())
-                .padding(.horizontal, 20).padding(.top, 8)
+            VStack(spacing: 8) {
+                AnswerStrip(test: test, live: false)
+                Text("答對 \(test.correctCount) / \(test.picks.count) 題・最高答到第\(test.hardestRight)級").font(.app(.subheadline)).foregroundStyle(.secondary)
             }
+            .padding(.horizontal, 20).padding(.top, 4)
+            Text("會從接近你程度的單字開始。").font(.app(.subheadline)).foregroundStyle(.secondary)
+            Button("重新測驗") { test = LevelTest(); page = 1 }
+                .font(.app(.subheadline, .semibold)).frame(minHeight: 44)
         }
     }
 
@@ -185,10 +266,10 @@ struct OnboardingView: View {
             switch page {
             case 0:
                 Button("跳過") { page = 3 }.buttonStyle(PillButtonStyle()).frame(width: 88)
-                Button("15 題單字程度測試") { test = LevelTest(words: LevelTest.basic); page = 1 }
+                Button("\(LevelTest.length) 題程度測驗・約 3 分鐘") { test = LevelTest(); page = 1 }
                     .buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
             case 1:
-                Button("撤銷") { test.undo() }.buttonStyle(PillButtonStyle(foreground: .secondary)).disabled(test.answers.isEmpty)
+                Button("撤銷") { test.undo() }.buttonStyle(PillButtonStyle(foreground: .secondary)).disabled(test.picks.isEmpty || shown != nil)
                 Button("略過") { finishTest() }.buttonStyle(PillButtonStyle()).frame(width: 88)
             case 2:
                 Button("設定學習目標") { page = 3 }.buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
@@ -202,18 +283,12 @@ struct OnboardingView: View {
     }
 
     private func back() {
-        if page == 1, !test.answers.isEmpty { test.undo(); return }
-        page = page == 3 && test.answers.isEmpty ? 0 : page - 1
-    }
-
-    private func answer(_ score: Double?) {
-        guard let score else { test.revealed = true; return }
-        test.record(score)
-        if test.current == nil { finishTest() }
+        if page == 1, !test.picks.isEmpty, shown == nil { test.undo(); return }
+        page = page == 3 && test.picks.isEmpty ? 0 : page - 1
     }
 
     private func finishTest() {
-        if !test.answers.isEmpty { settings.level = test.estimate; page = 2 } else { page = 3 }
+        if !test.picks.isEmpty { settings.level = test.estimate; page = 2 } else { page = 3 }
     }
 }
 
@@ -301,48 +376,123 @@ struct Hero: View {
     }
 }
 
+/// The test's progress as a row of answer-card boxes: 天藍 right, 紫紅 wrong or 不知道, the current one outlined.
+struct AnswerStrip: View {
+    let test: LevelTest
+    let live: Bool
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<(live ? LevelTest.length : max(1, test.picks.count)), id: \.self) { i in
+                let done = i < test.picks.count
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(done ? (test.isCorrect(i) ? Color.hsnuSky : Color.hsnuMagenta) : Color.secondary.opacity(0.14))
+                    .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Color.hsnuNavy, lineWidth: live && i == test.picks.count ? 1.5 : 0))
+                    .frame(maxWidth: .infinity).frame(height: 16)
+            }
+        }
+        .animation(.snappy, value: test.picks.count)
+        .accessibilityElement()
+        .accessibilityLabel("答對 \(test.correctCount) 題，共答 \(test.picks.count) 題")
+    }
+}
+
 // MARK: - Level test model
 
+/// An adaptive test: each answer moves an ability estimate up or down (in steps that shrink as the
+/// test goes on), and the next word is picked one notch above it, so most of the 18 questions land
+/// near the edge of what the learner knows. Distractors share the word's level and part of speech,
+/// and from level 2 up about half the questions are 學測-style sentence blanks with English options.
 struct LevelTest {
-    /// 3 random words from each of levels 1–5 (15 questions), then 5 each from levels 5–6.
-    static var basic: [String] { pick(["1", "2", "3", "4", "5"], 3) }
-    static var advanced: [String] { pick(["5", "6"], 5) }
-    private static func pick(_ levels: [String], _ n: Int) -> [String] {
-        levels.flatMap { lv in Dictionary_.entries(level: lv).filter { !$0.zh.isEmpty && $0.w.count > 3 }.shuffled().prefix(n).map(\.w) }
+    enum Kind { case meaning, cloze }
+    struct Item {
+        let entry: DictEntry
+        let kind: Kind
+        let sentence: String
+        let options: [String]
+        let correct: Int
+        var level: Int { Int(entry.lv) ?? 1 }
+    }
+    static let length = 18
+
+    private(set) var items: [Item] = []
+    /// the option picked for each question; nil for 不知道
+    private(set) var picks: [Int?] = []
+    private var thetas: [Double] = [3]
+    private var theta: Double { thetas[thetas.count - 1] }
+
+    @MainActor init() {
+        if let first = Self.item(level: 3, avoid: []) { items = [first] }
     }
 
-    var words: [DictEntry]
-    var index = 0
-    var revealed = false
-    var answers: [Double] = []
-    var previous: [(DictEntry, Double)] = []
-    var didAdvanced = false
+    var index: Int { picks.count }
+    var current: Item? { index < Self.length && index < items.count ? items[index] : nil }
+    var isDone: Bool { picks.count >= Self.length || current == nil }
+    func isCorrect(_ i: Int) -> Bool { i < picks.count && picks[i] == items[i].correct }
+    var correctCount: Int { picks.indices.filter(isCorrect).count }
+    var hardestRight: Int { picks.indices.filter(isCorrect).map { items[$0].level }.max() ?? 0 }
 
-    @MainActor init(words: [String]) { self.words = words.compactMap(Dictionary_.lookup) }
+    @MainActor mutating func record(_ pick: Int?) {
+        guard let item = current else { return }
+        picks.append(pick)
+        let right = pick == item.correct
+        // chance of a right answer at this level: two in three when the estimate equals it
+        let p = 1 / (1 + exp(-(1.6 * (theta - Double(item.level)) + 0.7)))
+        let step = max(0.45, 2.0 * pow(0.82, Double(picks.count - 1)))
+        thetas.append(min(6.6, max(0.6, theta + (right ? step * (1 - p) : -step * p))))
+        guard picks.count < Self.length else { return }
+        let target = min(6, max(1, Int((theta + 0.4).rounded())))
+        if let next = Self.item(level: target, avoid: Set(items.map(\.entry.w))) { items.append(next) }
+    }
 
-    var current: DictEntry? { index < words.count ? words[index] : nil }
-
-    mutating func record(_ score: Double) { answers.append(score); index += 1; revealed = false }
     mutating func undo() {
-        guard !answers.isEmpty else { return }
-        answers.removeLast(); index -= 1; revealed = false
-    }
-    @MainActor mutating func startAdvanced() {
-        previous = Array(zip(words, answers))
-        words = LevelTest.advanced.compactMap(Dictionary_.lookup)
-        index = 0; answers = []; revealed = false; didAdvanced = true
+        guard !picks.isEmpty else { return }
+        picks.removeLast(); thetas.removeLast()
+        items = Array(items.prefix(picks.count + 1))
     }
 
-    var estimate: String {
-        let all = previous + Array(zip(words, answers))
-        guard !all.isEmpty else { return "1" }
-        var result = "1"
-        for lv in examLevels.dropFirst() {
-            let scores = all.filter { $0.0.lv == lv }.map(\.1)
-            if scores.isEmpty { continue }
-            if scores.reduce(0, +) / Double(scores.count) >= 0.5 { result = lv } else { break }
+    var estimate: String { String(min(6, max(1, Int(theta.rounded())))) }
+
+    @MainActor private static func item(level: Int, avoid: Set<String>) -> Item? {
+        let pool = Dictionary_.entries(level: String(level))
+            .filter { !$0.zh.isEmpty && $0.w.count > 3 && !$0.w.contains(" ") && !avoid.contains($0.w) }
+        for e in pool.shuffled().prefix(30) {
+            if level >= 2, Bool.random(), let s = blanked(e), let (o, c) = options(for: e, level: level, cloze: true) {
+                return Item(entry: e, kind: .cloze, sentence: s, options: o, correct: c)
+            }
+            if let (o, c) = options(for: e, level: level, cloze: false) {
+                return Item(entry: e, kind: .meaning, sentence: "", options: o, correct: c)
+            }
         }
-        return result
+        return nil
+    }
+
+    /// The example with the word blanked, when the example has the word as written (not "decided" for decide).
+    private static func blanked(_ e: DictEntry) -> String? {
+        guard !e.ex.isEmpty, let p = WordMatch.pattern(for: e.w),
+              let r = e.ex.range(of: p, options: [.regularExpression, .caseInsensitive]),
+              e.ex[r].lowercased() == e.w.lowercased() else { return nil }
+        return e.ex.replacingCharacters(in: r, with: "______")
+    }
+
+    /// Three distractors of the same level and part of speech (the next levels when short), none sharing a meaning.
+    @MainActor private static func options(for e: DictEntry, level: Int, cloze: Bool) -> ([String], Int)? {
+        let label: (DictEntry) -> String = { cloze ? $0.w : $0.zh.prefix(2).joined(separator: "；") }
+        let tags = Set(e.posTags), meanings = Set(e.zh), mine = label(e)
+        var picks: [String] = []
+        for lv in [level, level - 1, level + 1] where (1...6).contains(lv) && picks.count < 3 {
+            let pool = Dictionary_.entries(level: String(lv)).filter { o in
+                o.w != e.w && !o.zh.isEmpty && !o.w.contains(" ") && !tags.isDisjoint(with: o.posTags)
+                    && meanings.isDisjoint(with: o.zh) && (!cloze || (o.posTags == e.posTags && abs(o.w.count - e.w.count) <= 3))
+            }
+            for o in pool.shuffled() where picks.count < 3 {
+                let l = label(o)
+                if l != mine, !picks.contains(l) { picks.append(l) }
+            }
+        }
+        guard picks.count == 3 else { return nil }
+        let c = Int.random(in: 0...3)
+        picks.insert(mine, at: c)
+        return (picks, c)
     }
 
     static func blurb(_ lv: String) -> String {

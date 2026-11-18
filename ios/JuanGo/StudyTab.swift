@@ -12,6 +12,7 @@ struct StudyTab: View {
 
     @State private var flow: StudyRequest?
     @State private var showHistory = false
+    @State private var exam: Exam?
     /// Switches to the Explore tab when the daily goal needs more words than are saved.
     var onFindWords: () -> Void = {}
 
@@ -58,6 +59,17 @@ struct StudyTab: View {
                     let missed = recentlyMissed()
                     if !missed.isEmpty { listRow("最近答錯", icon: "exclamationmark.circle.fill", words: missed) }
                 }
+                Section {
+                    ForEach(ExamStore.all) { e in
+                        actionRow(e.title, "\(e.questionCount) 題・詞彙 綜合 文意 篇章 閱讀", icon: {
+                            Text(String(e.year)).font(.app(.subheadline, .bold)).monospacedDigit().foregroundStyle(Color.hsnuNavy)
+                        }) { exam = e }
+                    }
+                } header: {
+                    Text("大考考古題")
+                } footer: {
+                    Text("題目與答案取自大考中心公布的學測英文試題。")
+                }
                 Section { MasteryCard(distribution: Stats(logs: [], words: h.studyable).distribution, boxed: false) }
                 Section {
                     deckRows
@@ -76,6 +88,7 @@ struct StudyTab: View {
             .navigationTitle("主頁")
             .themedBackground()
             .fullScreenCover(item: $flow) { StudyFlow(request: $0) }
+            .fullScreenCover(item: $exam) { ExamView(exam: $0) }
             #if DEBUG
             .task {   // simulator testing: SIMCTL_CHILD_JUANGO_STUDY=setup | q:英翻中 | summary | streak
                 if ProcessInfo.processInfo.environment["JUANGO_STUDY"] != nil, flow == nil {

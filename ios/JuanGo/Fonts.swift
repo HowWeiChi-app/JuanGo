@@ -106,7 +106,7 @@ final class AppFont {
         seg.setTitleTextAttributes(a.segment(selected: false), for: .normal)
         seg.setTitleTextAttributes(a.segment(selected: true), for: .selected)
         seg.selectedSegmentTintColor = a.accent
-        UISearchTextField.appearance().font = a.body
+        UISearchTextField.appearance().font = a.body   // typed text in the app font; the height is set by AppSearch
         for state: UIControl.State in [.normal, .highlighted, .disabled] {
             UIBarButtonItem.appearance().setTitleTextAttributes([.font: a.body], for: state)
         }
@@ -123,8 +123,6 @@ final class AppFont {
             } else if let n = v as? UINavigationBar {
                 n.largeTitleTextAttributes = [.font: a.large]
                 n.titleTextAttributes = [.font: a.inline]
-            } else if let t = v as? UISearchTextField {
-                t.font = a.body
             }
             v.subviews.forEach(visit)
         }
@@ -217,60 +215,104 @@ extension Font {
     }
 }
 
-private struct KeepAppFont: ViewModifier {
-    @Environment(AppSettings.self) private var settings
-    func body(content: Content) -> some View { content.font(.app(.body)).fontDesign(settings.fontDesign) }
-}
+// MARK: search field
 
 extension View {
-    /// Put before `.searchable`: the content keeps the app font.
-    func keepAppFont() -> some View { modifier(KeepAppFont()) }
-    /// Put after `.searchable`. SwiftUI sizes the search drawer from the font it sees here: any custom font
-    /// makes it 62pt tall instead of 44pt. So it sees the system body style, and the field's own text is
-    /// switched to the app font in UIKit (`applyAppearance`), which doesn't change the height.
-    func systemSearchField() -> some View { font(.body).fontDesign(.default).background(SearchFieldStyler()) }
+    /// The app's one search field: the system search drawer, always shown, at the standard height, in the app font.
+    func appSearch(_ text: Binding<String>, prompt: String) -> some View {
+        modifier(AppSearch(text: text, prompt: prompt))
+    }
 }
 
-/// Gives every search field on screen the app's body font, text and placeholder alike. SwiftUI sets both
-/// itself when it builds or updates the field, so this runs again after that and whenever editing starts or ends.
-private struct SearchFieldStyler: UIViewRepresentable {
-    final class Probe: UIView {
-        private var tokens: [NSObjectProtocol] = []
+/// SwiftUI sizes the search drawer from the font around `.searchable`: a custom font makes it 62pt tall
+/// instead of 44pt. So the drawer sees the system body style; the content inside keeps the app font, and
+/// the field's own text and placeholder are given the app font once, when it's created.
+private struct AppSearch: ViewModifier {
+    @Environment(AppSettings.self) private var settings
+    @Binding var text: String
+    let prompt: String
+
+    func body(content: Content) -> some View {
+        content
+            .font(.app(.body)).fontDesign(settings.fontDesign)
+            .searchable(text: $text, placement: .navigationBarDrawer(displayMode: .always),
+                        prompt: Text(prompt).font(.app(.body)))
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .font(.body).fontDesign(.default)
+            .background(SearchFieldFont())
+    }
+}
+
+/// Puts the app font on this screen's search field: its text and its placeholder. SwiftUI writes the
+/// placeholder itself, so it's watched and given the font again only if SwiftUI replaces it.
+private struct SearchFieldFont: UIViewRepresentable {
+    final class Hook: UIView {
+        private weak var field: UISearchTextField?
+        private var watch: NSKeyValueObservation?
+
         override func didMoveToWindow() {
             super.didMoveToWindow()
-            tokens.forEach(NotificationCenter.default.removeObserver)
-            tokens = []
-            guard window != nil else { return }
-            for name in [UITextField.textDidBeginEditingNotification, UITextField.textDidEndEditingNotification] {
-                tokens.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.restyleSoon() }
-                })
-            }
-            restyleSoon()
+            guard window != nil, field == nil else { return }
+            DispatchQueue.main.async { [weak self] in self?.attach() }
         }
-        func restyleSoon() {
-            for delay in [0.0, 0.3] {
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.restyle() }
+
+        /// the search bar of the navigation controller this view sits in
+        private func attach() {
+            var r: UIResponder? = self
+            while let next = r?.next, !(next is UINavigationController) { r = next }
+            guard let nav = r?.next as? UINavigationController,
+                  let bar = nav.viewControllers.lazy.compactMap({ $0.navigationItem.searchController?.searchBar }).last
+                    ?? Self.firstSearchBar(in: nav.view) else { return }
+            let t = bar.searchTextField
+            field = t
+            apply(to: t)
+            watch = t.observe(\.attributedPlaceholder) { t, _ in
+                MainActor.assumeIsolated { Hook.applyPlaceholder(to: t) }
             }
+            #if DEBUG
+            if ProcessInfo.processInfo.environment["JUANGO_SEARCHDEMO"] != nil { demo(nav) }
+            #endif
         }
-        private func restyle() {
-            guard let window else { return }
+
+        private func apply(to t: UISearchTextField) {
             let font = AppFont.shared.uiFont(style: .body, size: nil, weight: .regular)
-            func visit(_ v: UIView) {
-                if let t = v as? UISearchTextField {
-                    if t.font != font { t.font = font }
-                    if let p = t.attributedPlaceholder, p.length > 0, (p.attribute(.font, at: 0, effectiveRange: nil) as? UIFont) != font {
-                        let m = NSMutableAttributedString(attributedString: p)
-                        m.addAttribute(.font, value: font, range: NSRange(location: 0, length: m.length))
-                        t.attributedPlaceholder = m
-                    }
-                    return
-                }
-                v.subviews.forEach(visit)
-            }
-            visit(window)
+            if t.font != font { t.font = font }
+            Self.applyPlaceholder(to: t)
         }
+
+        static func applyPlaceholder(to t: UISearchTextField) {
+            let font = AppFont.shared.uiFont(style: .body, size: nil, weight: .regular)
+            guard let p = t.attributedPlaceholder, p.length > 0,
+                  (p.attribute(.font, at: 0, effectiveRange: nil) as? UIFont) != font else { return }
+            let m = NSMutableAttributedString(attributedString: p)
+            m.addAttribute(.font, value: font, range: NSRange(location: 0, length: m.length))
+            t.attributedPlaceholder = m
+        }
+
+        private static func firstSearchBar(in v: UIView) -> UISearchBar? {
+            if let b = v as? UISearchBar { return b }
+            for s in v.subviews { if let b = firstSearchBar(in: s) { return b } }
+            return nil
+        }
+
+        #if DEBUG
+        /// JUANGO_SEARCHDEMO=1: focus the field, then close search the way the ✕ button does, for screen recordings
+        private func demo(_ nav: UINavigationController) {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(3))
+                self?.field?.becomeFirstResponder()
+                try? await Task.sleep(for: .seconds(3))
+                if let c = nav.viewControllers.lazy.compactMap({ $0.navigationItem.searchController }).last {
+                    c.searchBar.delegate?.searchBarCancelButtonClicked?(c.searchBar)
+                    c.isActive = false
+                } else { self?.field?.resignFirstResponder() }
+            }
+        }
+        #endif
     }
-    func makeUIView(context: Context) -> Probe { let v = Probe(); v.isUserInteractionEnabled = false; return v }
-    func updateUIView(_ v: Probe, context: Context) { v.restyleSoon() }
+
+    func makeUIView(context: Context) -> Hook { let v = Hook(); v.isUserInteractionEnabled = false; return v }
+    func updateUIView(_ v: Hook, context: Context) {}
 }
+
