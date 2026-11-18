@@ -164,10 +164,10 @@ void main() {
       await t.shot('${tag}_tab_profile');
       await t.tapIcon(Icons.tune_rounded);
       await t.shot('${tag}_settings');
-      await t.tapText('練習');
+      await t.tapText('答題與發音');
       await t.shot('${tag}_settings_practice');
       await t.back();
-      await t.tapText('提醒與通知');
+      await t.tapText('每日提醒');
       await t.back();
       await t.tapText('完成');
       await _close(t);

@@ -1,4 +1,4 @@
-// 設定 › 帳號與同步。排版照 iOS 版 AccountView。
+// 設定 › 雲端備份。排版照 iOS 版 AccountView。
 
 import 'package:material_ui/material_ui.dart';
 
@@ -116,7 +116,7 @@ class _AccountPageState extends State<AccountPage> {
       builder: (context, _) {
         final p = Palette.of(context);
         final s = _cloud.session;
-        return NavPage(title: '帳號與同步', safeTop: false, slivers: s == null ? _signedOut(p) : _signedIn(p, s));
+        return NavPage(title: '雲端備份', safeTop: false, slivers: s == null ? _signedOut(p) : _signedIn(p, s));
       },
     );
   }

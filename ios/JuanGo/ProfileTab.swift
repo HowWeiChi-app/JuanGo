@@ -164,12 +164,6 @@ struct SettingsView: View {
         @Bindable var settings = settings
         NavigationStack {
             Form { Group {
-                Section {
-                    NavigationLink { AccountView() } label: {
-                        row("person.crop.circle.fill", "帳號與同步",
-                            Cloud.shared.session.map { "已登入 \($0.email)" } ?? "登入後單字自動備份到雲端")
-                    }
-                }
                 Section("學習") {
                     NavigationLink {
                         Form { Group {
@@ -181,8 +175,8 @@ struct SettingsView: View {
                                     ForEach(examLevels, id: \.self) { Text("\(levelLabel($0))・\(LevelTest.blurb($0))").tag($0) }
                                 }.pickerStyle(.inline).labelsHidden()
                             }
-                        }.listRowBackground(Color.cardFill) }.themedBackground().navigationTitle("學習目標")
-                    } label: { row("smallcircle.filled.circle", "學習目標", "每日新字與單字程度") }
+                        }.listRowBackground(Color.cardFill) }.themedBackground().navigationTitle("每日計畫")
+                    } label: { row("smallcircle.filled.circle", "每日計畫", "每日新字與單字程度") }
                     NavigationLink {
                         Form { Group {
                             Toggle("顯示例句翻譯", isOn: $settings.showTranslation)
@@ -194,30 +188,25 @@ struct SettingsView: View {
                             }
                             Button("試聽") { Speech.say("resilient") }
                             Button("重新顯示學習規則與探索教學") { settings.studyRulesSeen = false; settings.exploreTipsDone = false }
-                        }.listRowBackground(Color.cardFill) }.themedBackground().navigationTitle("練習")
-                    } label: { row("graduationcap.fill", "練習", "例句翻譯、發音與震動") }
+                        }.listRowBackground(Color.cardFill) }.themedBackground().navigationTitle("答題與發音")
+                    } label: { row("graduationcap.fill", "答題與發音", "例句翻譯、發音與震動") }
                     NavigationLink {
                         Form { Group {
                             Toggle("每日提醒", isOn: $settings.reminderOn)
                             if settings.reminderOn {
                                 DatePicker("提醒時間", selection: $settings.reminderDate, displayedComponents: .hourAndMinute)
                             }
-                        }.listRowBackground(Color.cardFill) }.themedBackground().navigationTitle("提醒與通知")
-                    } label: { row("bell.fill", "提醒與通知", settings.reminderOn ? "每天 \(settings.reminderText)" : "關閉") }
+                        }.listRowBackground(Color.cardFill) }.themedBackground().navigationTitle("每日提醒")
+                    } label: { row("bell.fill", "每日提醒", settings.reminderOn ? "每天 \(settings.reminderText)" : "關閉") }
                 }
-                Section("單字與探索") {
-                    NavigationLink {
-                        Form { Group { Toggle("在列表顯示中文意思", isOn: $settings.listShowMeaning) }.listRowBackground(Color.cardFill) }.themedBackground().navigationTitle("單字列表")
-                    } label: { row("list.bullet.rectangle.fill", "單字列表", "單字清單的中文意思") }
-                    NavigationLink {
-                        Form { Group { Toggle("打開單字頁時自動發音", isOn: $settings.detailAutoSpeak) }.listRowBackground(Color.cardFill) }.themedBackground().navigationTitle("單字詳情")
-                    } label: { row("book.closed.fill", "單字詳情", "完整單字頁的自動發音") }
+                Section("單字") {
                     NavigationLink {
                         Form { Group {
-                            Toggle("顯示音標", isOn: $settings.exploreShowIPA)
-                            Toggle("顯示例句翻譯", isOn: $settings.showTranslation)
-                        }.listRowBackground(Color.cardFill) }.themedBackground().navigationTitle("探索")
-                    } label: { row("safari.fill", "探索", "探索卡片的音標與例句翻譯") }
+                            Toggle("清單顯示中文意思", isOn: $settings.listShowMeaning)
+                            Toggle("單字卡顯示音標", isOn: $settings.exploreShowIPA)
+                            Toggle("查看單字時自動發音", isOn: $settings.detailAutoSpeak)
+                        }.listRowBackground(Color.cardFill) }.themedBackground().navigationTitle("單字顯示")
+                    } label: { row("text.book.closed.fill", "單字顯示", "中文意思、音標與自動發音") }
                     NavigationLink { AITranslationSettings() } label: {
                         row("sparkles", "AI 翻譯", WordTranslator.shared.providerName)
                     }
@@ -226,7 +215,7 @@ struct SettingsView: View {
                     Picker("外觀", selection: $settings.appearance) { Text("跟隨系統").tag(0); Text("淺色").tag(1); Text("深色").tag(2) }
                     Picker("字體", selection: $settings.fontStyle) {
                         ForEach(Array(AppFont.options.enumerated()), id: \.offset) { i, o in
-                            Text(o.cjkName == "蘋方" ? o.name : "\(o.name)（中文\(o.cjkName)）").tag(i)
+                            Text(o.name).tag(i)
                         }
                     }
                     ThemeGrid(selection: $settings.themeID).padding(.vertical, 6)
@@ -240,13 +229,17 @@ struct SettingsView: View {
                     }
                 }
                 Section {
+                    NavigationLink { AccountView() } label: {
+                        row("icloud.fill", "雲端備份",
+                            Cloud.shared.session.map { "已登入 \($0.email)" } ?? "登入後單字自動備份到雲端")
+                    }
                     Button("匯出備份") {
                         do { presentShareSheet(try Backup.write(Backup.full(ctx))) }
                         catch { message = "匯出失敗：\(error.localizedDescription)" }
                     }
                     Button("從備份還原") { pickBackup = true }
                 } header: { Text("備份") } footer: {
-                    Text("包含單字、進度、清單和設定（不含 API key）。")
+                    Text("匯出的檔案包含單字、進度、清單和設定（不含 API key）。")
                 }
                 Section("資料") {
                     Button("重設所有學習進度") { confirmReset = true }
@@ -255,7 +248,7 @@ struct SettingsView: View {
                 }
                 Section {
                     LabeledContent("字典", value: "\(Dictionary_.all.count) 個內建單字")
-                    LabeledContent("版本", value: "1.4")
+                    LabeledContent("版本", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
                 } footer: {
                     Text("大考詞彙與分級：大學入學考試中心《高中英文參考詞彙表》（111 學年度起適用），僅供非營利學習使用。國中小 1200：教育部十二年國教英語文課綱附錄五。多益：TOEIC Service List 1.2（CC BY-SA 4.0）。雅思、托福字表與中文解釋、音標整理自 ECDICT（MIT 授權），內容可能有誤，可在單字頁自行編輯。學習資料只存在這台裝置；設定自訂 API 後，字典沒有的字會傳到該 API。")
                 }
@@ -370,7 +363,7 @@ struct AITranslationSettings: View {
     }
 }
 
-/// 設定 › 帳號與同步: sign in with an emailed link; the backup syncs to the cloud, and share codes are listed here.
+/// 設定 › 雲端備份: sign in with an emailed link; the backup syncs to the cloud, and share codes are listed here.
 struct AccountView: View {
     @Environment(\.modelContext) private var ctx
     @State private var email = ""
@@ -435,7 +428,7 @@ struct AccountView: View {
                 }
             }
         }.listRowBackground(Color.cardFill) }.themedBackground()
-        .navigationTitle("帳號與同步")
+        .navigationTitle("雲端備份")
         .task { await loadLists() }
         .onChange(of: cloud.signedIn) { _, _ in Task { await loadLists() } }
         .alert(message ?? "", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {

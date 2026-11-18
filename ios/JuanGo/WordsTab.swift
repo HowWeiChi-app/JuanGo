@@ -440,7 +440,7 @@ struct ListWordsView: View {
     }
 
     private func shareCode() async {
-        guard Cloud.shared.signedIn else { shareResult = "要先到「設定 › 帳號與同步」登入，才能產生分享代碼。也可以改用「分享成檔案」。"; return }
+        guard Cloud.shared.signedIn else { shareResult = "要先到「設定 › 雲端備份」登入，才能產生分享代碼。也可以改用「分享成檔案」。"; return }
         sharing = true; defer { sharing = false }
         do {
             let code = try await Cloud.shared.share(Backup.list(name: title, words: routeWords), key: "\(route)")
