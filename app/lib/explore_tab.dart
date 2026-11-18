@@ -2,6 +2,7 @@
 
 import 'package:material_ui/material_ui.dart';
 
+import 'demo.dart';
 import 'dictionary.dart';
 import 'exam.dart';
 import 'models.dart';
@@ -67,6 +68,10 @@ class _ExploreTabState extends State<ExploreTab> {
       // 還沒收藏的排前面：探索就是為了找新字
       bool mine(DictEntry e) => _store.word(e.w)?.inMyWords ?? false;
       _feed = [...mixed(pool.where((e) => !mine(e))), ...mixed(pool.where(mine))];
+    }
+    if (demoOn) {
+      final i = _feed.indexWhere((e) => e.w == demoFirstWord);
+      if (i > 0) _feed.insert(0, _feed.removeAt(i));
     }
     _index = 0;
     if (_pages?.hasClients ?? false) _pages!.jumpToPage(0);

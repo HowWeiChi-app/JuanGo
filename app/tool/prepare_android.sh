@@ -89,6 +89,9 @@ if "isCoreLibraryDesugaringEnabled" not in g:
     g = g.replace("compileOptions {", "compileOptions {\n        isCoreLibraryDesugaringEnabled = true", 1)
 if "desugar_jdk_libs" not in g:
     g += '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n}\n'
+# 官網截圖用的展示版：編譯時帶 -Pdemo 就換成另一個套件 ID，資料和平常安裝的 App 分開
+if 'hasProperty("demo")' not in g:
+    g = g.replace("defaultConfig {", 'defaultConfig {\n        if (project.hasProperty("demo")) applicationIdSuffix = ".demo"', 1)
 open(path, "w", encoding="utf-8").write(g)
 print("build.gradle.kts 已更新")
 PY

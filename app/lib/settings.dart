@@ -3,6 +3,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'demo.dart';
 import 'services.dart';
 import 'theme.dart';
 
@@ -41,6 +42,12 @@ class AppSettings extends ChangeNotifier {
     fontStyle = p.getInt('fontStyle') ?? 0;
     practiceLimit = p.getInt('practiceLimit') ?? 20;
     speechRate = p.getDouble('speechRate') ?? 0.45;
+    if (demoOn) {
+      onboarded = true;
+      exploreTipsDone = true;
+      muted = true;
+      appearance = 1;
+    }
   }
 
   /// 改設定的共用寫法：s.update((s) => s.level = '4')

@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'add_tab.dart';
 import 'cloud.dart';
+import 'demo.dart';
 import 'dictionary.dart';
 import 'exam.dart';
 import 'explore_tab.dart';
@@ -138,9 +139,9 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
     (Icons.account_circle_rounded, '我的'),
   ];
 
-  int _tab = 0;
+  int _tab = demoOn ? 1 : 0;
   // 沒點開過的分頁先不建立，探索頁才不會一開 App 就念單字
-  final _visited = <int>{0};
+  final _visited = <int>{demoOn ? 1 : 0};
   final _navs = List.generate(5, (_) => GlobalKey<NavigatorState>());
 
   @override
