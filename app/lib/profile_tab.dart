@@ -4,6 +4,8 @@ import 'dart:math';
 
 import 'package:material_ui/material_ui.dart';
 
+import 'account_page.dart';
+import 'cloud.dart';
 import 'dictionary.dart';
 import 'models.dart';
 import 'onboarding.dart';
@@ -374,10 +376,11 @@ class _SettingsRoot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: appData,
+      listenable: Listenable.merge([appData, Cloud.shared]),
       builder: (context, _) {
         final p = Palette.of(context);
         final s = _settings;
+        final account = Cloud.shared.session;
         final fontName = fontOptions.firstWhere((f) => f.$1 == s.fontStyle, orElse: () => fontOptions.first).$2;
         return NavPage(
           title: '設定',
@@ -385,6 +388,10 @@ class _SettingsRoot extends StatelessWidget {
           leading: const SizedBox.shrink(),
           actions: [BarText('完成', onTap: () => _closeSettings(context))],
           slivers: [
+            Sec(children: [
+              _row(context, p, Icons.account_circle_rounded, '帳號與同步',
+                  account == null ? '登入後單字自動備份到雲端' : '已登入 ${account.email}', () => const AccountPage()),
+            ]),
             Sec(header: '學習', children: [
               _row(context, p, Icons.track_changes_rounded, '學習目標', '每日新字與單字程度', _goalPage),
               _row(context, p, Icons.school_rounded, '練習', '例句翻譯、發音與震動', _practicePage),
@@ -457,10 +464,10 @@ class _SettingsRoot extends StatelessWidget {
             Sec(
               footer: '大考詞彙與分級：大學入學考試中心《高中英文參考詞彙表》（111 學年度起適用），僅供非營利學習使用。'
                   '國中小 1200：教育部十二年國教英語文課綱附錄五。多益：TOEIC Service List 1.2（CC BY-SA 4.0）。'
-                  '雅思、托福字表與中文解釋、音標整理自 ECDICT（MIT 授權），內容可能有誤，可在單字頁自行編輯。學習資料只存在這台裝置。',
+                  '雅思、托福字表與中文解釋、音標整理自 ECDICT（MIT 授權），內容可能有誤，可在單字頁自行編輯。學習資料預設只存在這台裝置，登入後會備份到雲端。',
               children: [
                 RowTile(title: '字典', value: '${Dict.all.length} 個內建單字'),
-                const RowTile(title: '版本', value: '1.1.0 (Android)'),
+                const RowTile(title: '版本', value: '0.1.0 (Android)'),
               ],
             ),
           ],

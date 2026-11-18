@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'add_tab.dart';
+import 'cloud.dart';
 import 'dictionary.dart';
 import 'exam.dart';
 import 'explore_tab.dart';
@@ -35,7 +36,9 @@ class JuanGoApp extends StatefulWidget {
 
 class _JuanGoAppState extends State<JuanGoApp> {
   // 字典有 3 MB，等它載入時先顯示主題底色，不讓畫面停在白屏
-  late final Future<void> _ready = Future.wait([Dict.load(), AppStore.shared.load(), ExamStore.load()]);
+  // 資料都載入後才接登入連結，同步才不會蓋到還沒讀進來的資料
+  late final Future<void> _ready = Future.wait([Dict.load(), AppStore.shared.load(), ExamStore.load(), Cloud.shared.load()])
+      .then((_) => Cloud.shared.listenForLinks());
 
   @override
   Widget build(BuildContext context) {
@@ -78,8 +81,34 @@ class _JuanGoAppState extends State<JuanGoApp> {
   }
 }
 
-class RootView extends StatelessWidget {
+class RootView extends StatefulWidget {
   const RootView({super.key});
+  @override
+  State<RootView> createState() => _RootViewState();
+}
+
+class _RootViewState extends State<RootView> {
+  @override
+  void initState() {
+    super.initState();
+    Cloud.shared.addListener(_showNotice);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showNotice());
+  }
+
+  @override
+  void dispose() {
+    Cloud.shared.removeListener(_showNotice);
+    super.dispose();
+  }
+
+  /// 從信件回到 App 時，告訴使用者登入的結果
+  void _showNotice() {
+    final message = Cloud.shared.notice;
+    if (message == null || !mounted) return;
+    Cloud.shared.notice = null;
+    showAlert(context, message);
+  }
+
   @override
   Widget build(BuildContext context) {
     final onboarded = AppSettings.shared.onboarded;
@@ -119,6 +148,7 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     Reminders.sync();
+    Cloud.shared.syncQuietly();
   }
 
   @override
@@ -132,6 +162,9 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
     if (state == AppLifecycleState.paused) {
       AppStore.shared.flush();
       Reminders.sync();
+      Cloud.shared.backgroundPush();
+    } else if (state == AppLifecycleState.resumed) {
+      Cloud.shared.syncQuietly();
     }
   }
 

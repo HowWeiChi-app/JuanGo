@@ -239,6 +239,11 @@ class AppStore extends ChangeNotifier {
     try {
       j = jsonDecode(text) as Map<String, dynamic>;
     } catch (_) {}
+    return parseMap(j);
+  }
+
+  /// 備份檔和雲端的資料是同一種格式
+  static BackupFile parseMap(Map<String, dynamic>? j) {
     if (j == null || j['app'] != 'JuanGo' || j['words'] is! List) {
       throw const FormatException('這不是 JuanGo 的備份或清單檔');
     }

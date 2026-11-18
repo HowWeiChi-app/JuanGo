@@ -1,0 +1,369 @@
+// 帳號與同步：Email 登入連結、把單字和進度備份到雲端。
+// 和 iOS 版共用同一個 Supabase 專案和同一份備份格式，同一個帳號在兩邊的資料會合併。
+
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:app_links/app_links.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'store.dart';
+
+/// 這把 key 本來就要放在 App 裡，能碰到什麼由 supabase/schema.sql 的資料列權限決定
+class CloudConfig {
+  static const url = 'https://zqvxfundqjegjveifqus.supabase.co';
+  static const key = 'sb_publishable_gUOXTGlBLJQPrfEE1edEag_NAo5mI68';
+  static const redirect = 'juango://login-callback';
+}
+
+class CloudFailure implements Exception {
+  const CloudFailure(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
+
+class CloudSession {
+  CloudSession({
+    required this.accessToken,
+    required this.refreshToken,
+    required this.expiresAt,
+    required this.userId,
+    required this.email,
+  });
+
+  factory CloudSession.fromJson(Map<String, dynamic> j) => CloudSession(
+        accessToken: j['accessToken'] as String,
+        refreshToken: j['refreshToken'] as String,
+        expiresAt: DateTime.parse(j['expiresAt'] as String),
+        userId: j['userId'] as String,
+        email: j['email'] as String? ?? '',
+      );
+
+  String accessToken, refreshToken;
+  DateTime expiresAt;
+  final String userId, email;
+
+  Map<String, dynamic> toJson() => {
+        'accessToken': accessToken,
+        'refreshToken': refreshToken,
+        'expiresAt': expiresAt.toUtc().toIso8601String(),
+        'userId': userId,
+        'email': email,
+      };
+}
+
+/// 登入資料放的地方；App 用系統加密儲存，測試換成記憶體
+abstract class CloudVault {
+  Future<String?> read();
+  Future<void> write(String? value);
+}
+
+class _SecureVault implements CloudVault {
+  static const _storage = FlutterSecureStorage();
+  static const _key = 'cloud.session';
+  @override
+  Future<String?> read() => _storage.read(key: _key);
+  @override
+  Future<void> write(String? value) =>
+      value == null ? _storage.delete(key: _key) : _storage.write(key: _key, value: value);
+}
+
+class Cloud extends ChangeNotifier {
+  Cloud._(this._client, this._vault);
+  static Cloud shared = Cloud._(http.Client(), _SecureVault());
+
+  @visibleForTesting
+  static void resetForTest(http.Client client, CloudVault vault) => shared = Cloud._(client, vault);
+
+  static const _lastSyncKey = 'cloud.lastSync';
+
+  final http.Client _client;
+  final CloudVault _vault;
+  StreamSubscription<Uri>? _links;
+  Future<String>? _refreshing;
+  String? _lastLink;
+
+  CloudSession? session;
+  DateTime? lastSync;
+  bool syncing = false;
+
+  /// 登入連結回來時要告訴使用者的話
+  String? notice;
+
+  bool get signedIn => session != null;
+
+  /// 讀不出登入資料（例如換手機還原）就當作沒登入，不影響 App 其他功能
+  Future<void> load() async {
+    try {
+      final saved = await _vault.read();
+      if (saved != null) session = CloudSession.fromJson(jsonDecode(saved) as Map<String, dynamic>);
+      final prefs = await SharedPreferences.getInstance();
+      final last = prefs.getString(_lastSyncKey);
+      lastSync = last == null ? null : DateTime.tryParse(last)?.toLocal();
+    } catch (e) {
+      debugPrint('登入資料讀取失敗：$e');
+      session = null;
+    }
+  }
+
+  /// 開始接收登入連結。App 是被連結打開時，第一筆就是那個連結
+  void listenForLinks() {
+    if (_links != null) return;
+    try {
+      _links = AppLinks().uriLinkStream.listen(open, onError: (Object e) => debugPrint('登入連結讀取失敗：$e'));
+    } catch (e) {
+      debugPrint('登入連結無法使用：$e');
+    }
+  }
+
+  // MARK: 登入
+
+  Future<void> sendLink(String email) async {
+    await _send(
+      Uri.parse('${CloudConfig.url}/auth/v1/otp').replace(queryParameters: {'redirect_to': CloudConfig.redirect}),
+      'POST',
+      json: {'email': email.trim(), 'create_user': true},
+      auth: false,
+    );
+  }
+
+  /// 收到 juango://login-callback：登入成功就同步一次
+  Future<void> open(Uri uri) async {
+    final raw = uri.toString();
+    if (raw == _lastLink) return; // 畫面重建時系統可能再給一次同一個連結
+    _lastLink = raw;
+    if (!handle(uri)) {
+      notifyListeners();
+      return;
+    }
+    final email = session?.email ?? '';
+    try {
+      final result = await sync();
+      notice = '已登入 $email（$result）';
+    } catch (e) {
+      notice = '已登入 $email，但同步失敗：$e';
+    }
+    notifyListeners();
+  }
+
+  /// juango://login-callback#access_token=…&refresh_token=…&expires_in=…（或 #error=…）。
+  /// 這個連結讓使用者完成登入時回傳 true
+  bool handle(Uri uri) {
+    if (uri.scheme != 'juango') return false;
+    final Map<String, String> p;
+    try {
+      p = Uri.splitQueryString(uri.fragment.isNotEmpty ? uri.fragment : uri.query);
+    } catch (_) {
+      notice = '登入失敗：看不懂登入資料';
+      return false;
+    }
+    final error = p['error_description'] ?? p['error'];
+    if (error != null) {
+      notice = error.contains('expired') ? '登入連結已過期，請重新寄一次' : '登入失敗：$error';
+      return false;
+    }
+    final access = p['access_token'], refresh = p['refresh_token'];
+    if (access == null || refresh == null) return false;
+    final claims = _claims(access);
+    final sub = claims?['sub'];
+    if (sub is! String) {
+      notice = '登入失敗：看不懂登入資料';
+      return false;
+    }
+    _store(CloudSession(
+      accessToken: access,
+      refreshToken: refresh,
+      expiresAt: _expiry(num.tryParse(p['expires_in'] ?? '') ?? 3600),
+      userId: sub,
+      email: claims?['email'] as String? ?? '',
+    ));
+    return true;
+  }
+
+  Future<void> signOut() async {
+    final token = session?.accessToken;
+    _store(null);
+    lastSync = null;
+    notifyListeners();
+    try {
+      (await SharedPreferences.getInstance()).remove(_lastSyncKey);
+      if (token != null) {
+        await _client.post(Uri.parse('${CloudConfig.url}/auth/v1/logout'), headers: {
+          'apikey': CloudConfig.key,
+          'Authorization': 'Bearer $token',
+        }).timeout(const Duration(seconds: 10));
+      }
+    } catch (e) {
+      debugPrint('登出時連不上伺服器：$e');
+    }
+  }
+
+  static DateTime _expiry(num seconds) => DateTime.now().add(Duration(seconds: seconds.toInt() - 60));
+
+  void _store(CloudSession? s) {
+    session = s;
+    unawaited(_vault.write(s == null ? null : jsonEncode(s.toJson())).catchError((Object e) {
+      debugPrint('登入資料儲存失敗：$e');
+    }));
+  }
+
+  static Map<String, dynamic>? _claims(String jwt) {
+    final parts = jwt.split('.');
+    if (parts.length < 2) return null;
+    try {
+      return jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(parts[1])))) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String> _accessToken() {
+    final s = session;
+    if (s == null) throw const CloudFailure('請先登入');
+    if (s.expiresAt.isAfter(DateTime.now())) return Future.value(s.accessToken);
+    // refresh token 只能用一次，同時有兩個請求時要共用同一次更新
+    return _refreshing ??= _refresh(s).whenComplete(() => _refreshing = null);
+  }
+
+  Future<String> _refresh(CloudSession s) async {
+    try {
+      final body = await _send(
+        Uri.parse('${CloudConfig.url}/auth/v1/token').replace(queryParameters: {'grant_type': 'refresh_token'}),
+        'POST',
+        json: {'refresh_token': s.refreshToken},
+        auth: false,
+      );
+      final j = jsonDecode(body) as Map<String, dynamic>;
+      final access = j['access_token'], refresh = j['refresh_token'];
+      if (access is! String || refresh is! String) throw const CloudFailure('登入資料更新失敗');
+      s
+        ..accessToken = access
+        ..refreshToken = refresh
+        ..expiresAt = _expiry(j['expires_in'] as num? ?? 3600);
+      _store(s);
+      return access;
+    } on _HttpFailure catch (e) {
+      if (e.status == 400 || e.status == 401) {
+        _store(null);
+        notifyListeners();
+        throw const CloudFailure('登入已過期，請重新登入');
+      }
+      rethrow;
+    }
+  }
+
+  // MARK: 同步
+
+  /// 先把雲端備份合併進這台裝置（不刪任何東西），再把合併後的結果傳回去
+  Future<String> sync() async {
+    if (!signedIn || syncing) return '';
+    syncing = true;
+    notifyListeners();
+    try {
+      var result = '已上傳';
+      final remote = await _download();
+      if (remote != null) result = '已同步（${AppStore.shared.restore(remote, settings: false)}）';
+      await _upload();
+      await _markSynced();
+      return result;
+    } finally {
+      syncing = false;
+      notifyListeners();
+    }
+  }
+
+  /// 回到 App 時的自動同步，失敗了下次再試，不打擾使用者
+  Future<void> syncQuietly() async {
+    try {
+      await sync();
+    } catch (e) {
+      debugPrint('同步失敗：$e');
+    }
+  }
+
+  /// App 進背景時把最新資料傳上去
+  Future<void> backgroundPush() async {
+    if (!signedIn || syncing) return;
+    try {
+      await _upload();
+      await _markSynced();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('上傳失敗：$e');
+    }
+  }
+
+  Future<void> _markSynced() async {
+    lastSync = DateTime.now();
+    (await SharedPreferences.getInstance()).setString(_lastSyncKey, lastSync!.toUtc().toIso8601String());
+  }
+
+  Uri _rest(String path, [Map<String, String>? query]) =>
+      Uri.parse('${CloudConfig.url}/rest/v1/$path').replace(queryParameters: query);
+
+  Future<void> _upload() async {
+    final s = session;
+    if (s == null) return;
+    await _send(
+      _rest('user_backups'),
+      'POST',
+      json: {
+        'user_id': s.userId,
+        'data': AppStore.shared.fullBackup(),
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      prefer: 'resolution=merge-duplicates,return=minimal',
+    );
+  }
+
+  Future<BackupFile?> _download() async {
+    final rows = jsonDecode(await _send(_rest('user_backups', {'select': 'data'}), 'GET')) as List;
+    if (rows.isEmpty) return null;
+    final data = (rows.first as Map<String, dynamic>)['data'];
+    try {
+      return AppStore.parseMap(data as Map<String, dynamic>?);
+    } on FormatException catch (e) {
+      throw CloudFailure(e.message.contains('較新版') ? e.message : '雲端資料格式不對');
+    } on TypeError {
+      throw const CloudFailure('雲端資料格式不對');
+    }
+  }
+
+  // MARK: 連線
+
+  Future<String> _send(Uri url, String method, {Map<String, dynamic>? json, String? prefer, bool auth = true}) async {
+    final bearer = auth ? await _accessToken() : CloudConfig.key;
+    final req = http.Request(method, url)
+      ..headers.addAll({
+        'apikey': CloudConfig.key,
+        'Authorization': 'Bearer $bearer',
+        'Content-Type': 'application/json',
+        if (prefer != null) 'Prefer': prefer,
+      });
+    if (json != null) req.body = jsonEncode(json);
+    final http.Response res;
+    try {
+      res = await http.Response.fromStream(await _client.send(req).timeout(const Duration(seconds: 30)));
+    } catch (_) {
+      throw const CloudFailure('連不上伺服器，請檢查網路');
+    }
+    final body = utf8.decode(res.bodyBytes, allowMalformed: true);
+    if (res.statusCode >= 200 && res.statusCode < 300) return body;
+    if (res.statusCode == 429) throw _HttpFailure(429, '太頻繁了，請稍後再試');
+    String? message;
+    try {
+      final o = jsonDecode(body) as Map<String, dynamic>;
+      message = (o['msg'] ?? o['message'] ?? o['error_description'] ?? o['error']) as String?;
+    } catch (_) {}
+    throw _HttpFailure(res.statusCode, '${message ?? '伺服器錯誤'}（${res.statusCode}）');
+  }
+}
+
+class _HttpFailure extends CloudFailure {
+  const _HttpFailure(this.status, super.message);
+  final int status;
+}

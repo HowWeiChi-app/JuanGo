@@ -22,8 +22,8 @@ import sys
 path = sys.argv[1]
 m = open(path, encoding="utf-8").read()
 
-# 2. 每日提醒要用的權限
-for perm in ["android.permission.POST_NOTIFICATIONS", "android.permission.RECEIVE_BOOT_COMPLETED"]:
+# 2. 帳號同步要連網路，每日提醒要通知權限
+for perm in ["android.permission.INTERNET", "android.permission.POST_NOTIFICATIONS", "android.permission.RECEIVE_BOOT_COMPLETED"]:
     if perm not in m:
         i = m.index(">", m.index("<manifest")) + 1
         m = m[:i] + f'\n    <uses-permission android:name="{perm}"/>' + m[i:]
@@ -50,6 +50,18 @@ receivers = """
         </receiver>"""
 if "ScheduledNotificationReceiver" not in m:
     m = m.replace("</application>", receivers + "\n    </application>", 1)
+
+# 帳號登入：信件裡的連結會回到 juango://login-callback（和 iOS 版相同）
+login = """
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="juango" android:host="login-callback"/>
+            </intent-filter>
+            <meta-data android:name="flutter_deeplinking_enabled" android:value="false"/>"""
+if 'android:scheme="juango"' not in m:
+    m = m.replace("</activity>", login + "\n        </activity>", 1)
 
 # 5. 桌面上顯示的名稱：中文系統是「捲字」，其他語言是 JuanGo（和 iOS 版相同）
 m = re.sub(r'android:label="[^"]*"', 'android:label="@string/app_name"', m, count=1)
