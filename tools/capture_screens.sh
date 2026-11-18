@@ -6,6 +6,7 @@
 #   bash tools/capture_screens.sh           # iPhone 和 Android
 #   bash tools/capture_screens.sh iphone
 #   bash tools/capture_screens.sh android
+#   bash tools/capture_screens.sh themes    # iPhone 的 56 種外觀
 #
 # iPhone 要接上並解鎖。可用 IPHONE_DEVICE 指定裝置。Android 預設用 ANDROID_SERIAL=127.0.0.1:5555。
 
@@ -71,6 +72,8 @@ capture_iphone() {
   trap 'xcrun devicectl device uninstall app --device "$id" "$BUNDLE" --quiet || true' EXIT
   xcrun devicectl device install app --device "$id" "$app" --quiet
 
+  if [ "${1:-}" = themes ]; then capture_themes "$id"; return; fi
+
   mkdir -p "$OUT/iphone"
   for word in "${IPHONE_WORDS[@]}"; do
     echo "== iPhone 探索：$word"
@@ -81,6 +84,35 @@ capture_iphone() {
     xcrun devicectl device capture screenshot --device "$id" --quiet \
       --destination "$OUT/iphone/explore-$word.png"
     check_size "$OUT/iphone/explore-$word.png" 1206 2622
+  done
+}
+
+launch_theme() {  # 裝置 顏色 背景（1 淺色、2 深色） 字體
+  xcrun devicectl device process launch --device "$1" --terminate-existing --quiet \
+    --environment-variables '{"JUANGO_TAB":"explore","JUANGO_EXPLORE_FIRST":"vehicle"}' \
+    -- "$BUNDLE" -onboarded YES -exploreTipsDone YES -muted YES -appearance "$3" -themeID "$2" -fontStyle "$4"
+}
+
+capture_themes() {  # 官網「外觀」用：7 種顏色 x 淺色深色 x 4 種字體，共 56 張；已經有的會跳過
+  local id="$1" theme mode font file
+  mkdir -p "$OUT/themes"
+  # 圓體和宋體是 iOS 隨選下載的系統字型，先各開一次讓手機下載好
+  for font in 1 2; do
+    launch_theme "$id" "phoenix" 1 "$font"
+    sleep 30
+  done
+  for theme in phoenix amber pine ink plum graphite action; do
+    for mode in 1 2; do
+      for font in 0 1 2 3; do
+        file="$OUT/themes/$theme-$mode-$font.png"
+        [ -s "$file" ] && continue
+        echo "== 外觀：$theme 背景$mode 字體$font"
+        launch_theme "$id" "$theme" "$mode" "$font"
+        sleep 7
+        xcrun devicectl device capture screenshot --device "$id" --quiet --destination "$file"
+        check_size "$file" 1206 2622
+      done
+    done
   done
 }
 
@@ -105,7 +137,8 @@ capture_android() {
 case "$TARGET" in
   iphone) capture_iphone ;;
   android) capture_android ;;
+  themes) capture_iphone themes ;;
   all) capture_iphone; capture_android ;;
-  *) echo "用法：bash tools/capture_screens.sh [iphone|android]" >&2; exit 2 ;;
+  *) echo "用法：bash tools/capture_screens.sh [iphone|android|themes]" >&2; exit 2 ;;
 esac
 echo "== 完成：$OUT"
