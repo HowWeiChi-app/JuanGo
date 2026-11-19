@@ -1,5 +1,6 @@
 // 設定 › 帳號登入。排版照 iOS 版 AccountView。
 
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'cloud.dart';
@@ -19,6 +20,35 @@ class _AccountPageState extends State<AccountPage> {
   String? _sentTo;
 
   Cloud get _cloud => Cloud.shared;
+  List<SharedList>? _lists;
+  String? _listsFor;
+
+  /// 登入後讀一次自己分享的清單（換帳號會重讀）
+  Future<void> _loadLists() async {
+    final id = _cloud.session?.userId;
+    _listsFor = id;
+    if (id == null) return;
+    try {
+      final l = await _cloud.myLists();
+      if (mounted && _listsFor == id) setState(() => _lists = l);
+    } catch (_) {}
+  }
+
+  void _openList(SharedList l) {
+    final code = Cloud.pretty(l.code);
+    showAlert(context, l.name, message: '代碼 $code・${l.wordCount} 個字・剩 ${l.hoursLeft} 小時', actions: [
+      AlertAction('拷貝代碼', onTap: () => Clipboard.setData(ClipboardData(text: code))),
+      AlertAction('停止分享', destructive: true, onTap: () async {
+        try {
+          await _cloud.deleteList(l.code);
+        } catch (e) {
+          if (mounted) showAlert(context, '$e');
+        }
+        await _loadLists();
+      }),
+      const AlertAction('好', bold: true),
+    ]);
+  }
 
   @override
   void dispose() {
@@ -66,8 +96,29 @@ class _AccountPageState extends State<AccountPage> {
             onTap: _cloud.syncing ? null : _sync,
           ),
         ]),
+        _sharedLists(p),
         Sec(children: [RowTile(title: '登出', titleColor: p.destructive, onTap: _cloud.signOut)]),
       ];
+
+  Widget _sharedLists(Palette p) {
+    final live = (_lists ?? const <SharedList>[]).where((l) => l.hoursLeft > 0).toList();
+    return Sec(
+      header: '我分享的清單',
+      footer: '代碼 72 小時後失效並從雲端刪除；從清單再分享一次可以延長。點一下可以拷貝或停止分享。',
+      children: [
+        if (live.isEmpty)
+          RowTile(title: _lists == null ? '讀取中…' : '目前沒有分享中的清單', titleColor: p.sec)
+        else
+          for (final l in live)
+            RowTile(
+              title: l.name,
+              subtitle: '${l.wordCount} 個字・剩 ${l.hoursLeft} 小時',
+              value: Cloud.pretty(l.code),
+              onTap: () => _openList(l),
+            ),
+      ],
+    );
+  }
 
   List<Widget> _signedOut(Palette p) {
     final canSend = !_sending && _validEmail;
@@ -116,6 +167,10 @@ class _AccountPageState extends State<AccountPage> {
       builder: (context, _) {
         final p = Palette.of(context);
         final s = _cloud.session;
+        if (s?.userId != _listsFor) {
+          _lists = null;
+          _loadLists();
+        }
         return NavPage(title: '帳號登入', safeTop: false, slivers: s == null ? _signedOut(p) : _signedIn(p, s));
       },
     );

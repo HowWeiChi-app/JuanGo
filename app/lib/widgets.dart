@@ -2,7 +2,6 @@
 // 各畫面就能用和 SwiftUI 差不多的結構來寫。
 
 import 'dart:math';
-import 'dart:ui' show PathMetric;
 
 import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
@@ -1302,47 +1301,126 @@ class MasteryLadder extends StatelessWidget {
   }
 }
 
-class _Hexagon extends CustomPainter {
-  _Hexagon(this.earned, this.fill, this.line, this.inset);
-  final bool earned;
-  final Color fill, line;
-  final double inset;
+/// 勳章本體：外圈的金屬隨等級升級（銅、銀、金、白金、鑽石），中間是主題色和浮起來的圖示；點一下會翻一圈
+class MedalCoin extends StatefulWidget {
+  const MedalCoin({super.key, required this.tier, required this.icon, this.size = 64});
+  final int tier;
+  final IconData icon;
+  final double size;
 
-  Path _path(Size s, double d) {
-    final c = s.center(Offset.zero), r = s.shortestSide / 2 - d;
-    final p = Path();
-    for (var k = 0; k < 6; k++) {
-      final a = k * pi / 3 - pi / 2;
-      final pt = c + Offset(r * cos(a), r * sin(a));
-      k == 0 ? p.moveTo(pt.dx, pt.dy) : p.lineTo(pt.dx, pt.dy);
-    }
-    return p..close();
+  static (Color, Color, Color) metal(int tier) {
+    const m = [
+      (0xFFF2C29A, 0xFFC27C47, 0xFF7A4421), // 銅
+      (0xFFFFFFFF, 0xFFC3C9CF, 0xFF767E87), // 銀
+      (0xFFFFF0A8, 0xFFDDAE34, 0xFF8E6610), // 金
+      (0xFFF2FAFF, 0xFFAFCBD8, 0xFF5F7D8B), // 白金
+      (0xFFF1E7FF, 0xFFB59DEE, 0xFF5A45A3), // 鑽石
+    ];
+    final t = m[tier.clamp(1, m.length) - 1];
+    return (Color(t.$1), Color(t.$2), Color(t.$3));
   }
 
   @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawPath(_path(size, 0), Paint()..color = fill);
-    final stroke = Paint()
-      ..color = line
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    final inner = _path(size, inset);
-    if (earned) {
-      canvas.drawPath(inner, stroke);
-    } else {
-      // 還沒得到的勳章是虛線
-      for (final PathMetric m in inner.computeMetrics()) {
-        var d = 0.0;
-        while (d < m.length) {
-          canvas.drawPath(m.extractPath(d, d + 3), stroke);
-          d += 6;
-        }
-      }
-    }
-  }
+  State<MedalCoin> createState() => _MedalCoinState();
+}
+
+class _MedalCoinState extends State<MedalCoin> with SingleTickerProviderStateMixin {
+  late final AnimationController _spin = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
 
   @override
-  bool shouldRepaint(_Hexagon old) => true;
+  void dispose() {
+    _spin.dispose();
+    super.dispose();
+  }
+
+  Widget _circle(double inset, Decoration d, {Widget? child}) => Positioned.fill(
+        child: Padding(
+          padding: EdgeInsets.all(inset),
+          child: DecoratedBox(decoration: d, child: child),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Palette.of(context);
+    final size = widget.size, earned = widget.tier > 0;
+    final (light, mid, dark) = MedalCoin.metal(widget.tier);
+    final coin = SizedBox(
+      width: size,
+      height: size,
+      child: earned
+          ? Stack(children: [
+              // 外圈：拉絲金屬，兩處反光
+              _circle(0, BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: SweepGradient(colors: [light, mid, dark, mid, light, mid, dark, mid, light]),
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: .25), blurRadius: size * .1, offset: Offset(0, size * .04))],
+              )),
+              _circle(size * .085, BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [dark, light]),
+              )),
+              _circle(size * .105, BoxDecoration(shape: BoxShape.circle, color: p.accent)),
+              _circle(size * .105, BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Colors.white.withValues(alpha: .34), Colors.transparent, Colors.black.withValues(alpha: .24)],
+                ),
+              )),
+              _circle(size * .16, BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: light.withValues(alpha: .65), width: max(1, size * .018)),
+              )),
+              Center(
+                child: ShaderMask(
+                  shaderCallback: (r) => LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.white, light]).createShader(r),
+                  child: Icon(widget.icon, size: size * .36, color: Colors.white, shadows: [
+                    Shadow(color: Colors.black.withValues(alpha: .35), offset: Offset(0, size * .02), blurRadius: 1),
+                  ]),
+                ),
+              ),
+              // 上方一道柔和的反光
+              Positioned(
+                left: size * .17,
+                right: size * .17,
+                top: size * .1,
+                height: size * .36,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.all(Radius.elliptical(size * .33, size * .18)),
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Colors.white.withValues(alpha: .42), Colors.white.withValues(alpha: 0)],
+                    ),
+                  ),
+                ),
+              ),
+            ])
+          : Stack(children: [
+              _circle(0, BoxDecoration(shape: BoxShape.circle, color: p.sec.withValues(alpha: .12))),
+              _circle(size * .1, BoxDecoration(shape: BoxShape.circle, border: Border.all(color: p.sec.withValues(alpha: .3), width: 1.5))),
+              Center(child: Icon(widget.icon, size: size * .36, color: p.sec.withValues(alpha: .55))),
+            ]),
+    );
+    if (!earned) return coin;
+    return GestureDetector(
+      onTap: () => _spin.forward(from: 0),
+      child: AnimatedBuilder(
+        animation: _spin,
+        builder: (context, child) => Transform(
+          alignment: Alignment.center,
+          transform: Matrix4.identity()
+            ..setEntry(3, 2, .002)
+            ..rotateY(Curves.easeOutBack.transform(_spin.value) * 2 * pi),
+          child: child,
+        ),
+        child: coin,
+      ),
+    );
+  }
 }
 
 class BadgeMedal extends StatelessWidget {
@@ -1369,15 +1447,7 @@ class BadgeMedal extends StatelessWidget {
           SizedBox(
             width: size,
             height: size,
-            child: CustomPaint(
-              painter: _Hexagon(
-                earned,
-                earned ? p.accent : p.sec.withValues(alpha: .14),
-                earned ? Colors.white.withValues(alpha: .55) : p.sec.withValues(alpha: .25),
-                size * .09,
-              ),
-              child: Icon(_icons[kind.id], size: size * .36, color: earned ? Colors.white : p.sec.withValues(alpha: .6)),
-            ),
+            child: MedalCoin(tier: tier, icon: _icons[kind.id]!, size: size),
           ),
           const SizedBox(height: 6),
           Row(mainAxisSize: MainAxisSize.min, children: [
@@ -1387,7 +1457,7 @@ class BadgeMedal extends StatelessWidget {
                 height: 3,
                 margin: const EdgeInsets.symmetric(horizontal: 1.5),
                 decoration: BoxDecoration(
-                  color: i < tier ? p.accent : p.sec.withValues(alpha: .25),
+                  color: i < tier ? MedalCoin.metal(i + 1).$2 : p.sec.withValues(alpha: .25),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),

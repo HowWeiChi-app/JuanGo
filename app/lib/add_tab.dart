@@ -1,11 +1,12 @@
 // 新增：查字、匯入檔案、貼上單字清單。排版照 iOS 版 ImportTab。
-// iOS 的拍照掃描靠 Apple 的文字辨識，分享代碼靠雲端，這一版先不放，不留按不了的按鈕。
+// iOS 的拍照掃描靠 Apple 的文字辨識，這一版先不放，不留按不了的按鈕。
 
 import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'cloud.dart';
 import 'dictionary.dart';
 import 'models.dart';
 import 'services.dart';
@@ -60,6 +61,23 @@ class _AddTabState extends State<AddTab> {
     final first = Dict.suggestions(q);
     _lookup(Dict.hasChinese(q) && first.isNotEmpty ? first.first.w : q.toLowerCase());
   }
+
+  /// 用朋友給的 8 碼代碼拿清單，確認後加入
+  void _askCode() => promptText(
+        context,
+        '輸入分享代碼',
+        hint: '例如 K7Q3-P9XM',
+        confirm: '查詢',
+        valid: (t) => Cloud.pretty(t).length == 9,
+        onDone: (t) async {
+          try {
+            final f = await Cloud.shared.fetch(t);
+            if (mounted) await confirmImport(context, f, _showToast);
+          } on CloudFailure catch (e) {
+            _showToast(e.message);
+          }
+        },
+      );
 
   Future<void> _importFile() async {
     try {
@@ -156,7 +174,7 @@ class _AddTabState extends State<AddTab> {
           ),
         ),
       ]),
-      Sec(header: '其他加入方式', children: [
+      Sec(header: '其他加入方式', footer: '分享代碼是朋友分享清單時拿到的 8 碼，72 小時內有效，不用登入也能加入。', children: [
         RowTile(
           leading: Icon(Icons.description_outlined, size: 22, color: p.accent),
           title: '匯入檔案（txt、csv、JuanGo 清單）',
@@ -166,6 +184,11 @@ class _AddTabState extends State<AddTab> {
           leading: Icon(Icons.content_paste_rounded, size: 21, color: p.accent),
           title: '貼上單字清單',
           trailing: PillButton(label: '貼上', height: 32, onTap: _paste),
+        ),
+        RowTile(
+          leading: Icon(Icons.download_rounded, size: 22, color: p.accent),
+          title: '輸入分享代碼',
+          onTap: _askCode,
         ),
       ]),
       if (shown.isEmpty)

@@ -1,8 +1,10 @@
 // 字庫：全部單字、清單、內建字庫，以及單字頁。排版照 iOS 版 WordsTab。
 
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'cloud.dart';
 import 'dictionary.dart';
 import 'exam.dart';
 import 'models.dart';
@@ -360,6 +362,39 @@ class _ListWordsPageState extends State<ListWordsPage> {
     super.dispose();
   }
 
+  bool _sharing = false;
+
+  /// 同一個清單每次分享都用同一個代碼
+  String get _shareKey => '${r.kind.name}:${r.list?.id ?? r.deck?.name ?? r.level ?? ''}';
+
+  Future<void> _shareCode(List<Word> words) async {
+    if (!Cloud.shared.signedIn) {
+      showAlert(context, '分享清單', message: '要先到「設定 › 帳號登入」登入，才能產生分享代碼。也可以改用「分享成檔案」。');
+      return;
+    }
+    if (_sharing) return;
+    setState(() => _sharing = true);
+    final title = _title;
+    try {
+      final code = Cloud.pretty(await Cloud.shared.share(_store.listFile(title, words), _shareKey));
+      if (!mounted) return;
+      showAlert(
+        context,
+        '已建立分享代碼',
+        message: '分享代碼：$code\n別人在「新增 › 輸入分享代碼」輸入就能加入這個清單（${words.length} 個字）。代碼 72 小時後失效，再分享一次會更新內容並重新計算 72 小時。',
+        actions: [
+          AlertAction('拷貝代碼', onTap: () => Clipboard.setData(ClipboardData(text: code))),
+          AlertAction('傳給朋友', onTap: () => SharePlus.instance.share(ShareParams(text: '用 JuanGo 輸入分享代碼 $code，加入我的單字清單「$title」'))),
+          const AlertAction('好', bold: true),
+        ],
+      );
+    } catch (e) {
+      if (mounted) showAlert(context, '$e');
+    } finally {
+      if (mounted) setState(() => _sharing = false);
+    }
+  }
+
   String get _title => switch (r.kind) {
         RouteKind.myWords => '我的單字',
         RouteKind.favorites => '喜歡',
@@ -439,7 +474,16 @@ class _ListWordsPageState extends State<ListWordsPage> {
               ),
             if (words.isNotEmpty) ...[
               BarIcon(icon: Icons.play_arrow_rounded, label: '練習', onTap: () => startStudy(context, _title, List.of(words)..shuffle())),
-              BarIcon(icon: Icons.ios_share_rounded, label: '分享成檔案', onTap: () => shareJson(_store.listFile(_title, words))),
+              Builder(
+                builder: (bc) => BarIcon(
+                  icon: Icons.ios_share_rounded,
+                  label: '分享清單',
+                  onTap: () => showAppMenu(bc, [
+                    MenuEntry('產生分享代碼', icon: Icons.key_rounded, onTap: () => _shareCode(words)),
+                    MenuEntry('分享成檔案', icon: Icons.description_outlined, onTap: () => shareJson(_store.listFile(_title, words))),
+                  ]),
+                ),
+              ),
             ],
           ],
           slivers: _isDeck
