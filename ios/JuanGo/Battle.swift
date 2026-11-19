@@ -67,6 +67,19 @@ final class BattleModel {
         try Self.decoder.decode(T.self, from: await Cloud.shared.rpc(name, args))
     }
 
+    /// Returns what went wrong, or nil once the new name is saved.
+    func rename(_ name: String) async -> String? {
+        #if DEBUG
+        if isDemo { me?.name = name; return nil }
+        #endif
+        do {
+            me = try await call("battle_set_name", ["p_name": name, "p_level": level])
+            return nil
+        } catch {
+            return error.localizedDescription.replacingOccurrences(of: "（\\d+）$", with: "", options: .regularExpression)
+        }
+    }
+
     func load() async {
         #if DEBUG
         if isDemo { return }
@@ -291,6 +304,7 @@ private struct BattleHome: View {
     let model: BattleModel
     let close: () -> Void
     @State private var code = ""
+    @State private var renaming = false
     @FocusState private var typing: Bool
     private var cloud: Cloud { .shared }
     private var cleanCode: String { code.uppercased().filter { $0.isLetter || $0.isNumber } }
@@ -306,7 +320,7 @@ private struct BattleHome: View {
                             .listRowBackground(Color.clear)
                             .listRowInsets(EdgeInsets())
                     } footer: {
-                        Text("優先配對積分相近的真人，沒有人在線就和電腦對戰。5 回合，每題 10 秒，答對越快分數越高，最後一題 1.5 倍。")
+                        Text("優先配對積分相近的真人，等 15 秒沒有真人就和電腦對戰。5 回合，每題 10 秒，答對越快分數越高，最後一題 1.5 倍。")
                     }
                     Section("和朋友對戰") {
                         Button { model.createRoom() } label: { Label("建立房間", pulso: "person.2.fill") }
@@ -322,7 +336,7 @@ private struct BattleHome: View {
                     Section {
                         NavigationLink { AccountView() } label: { Text("登入後就能對戰") }
                     } footer: {
-                        Text("對手只會看到系統產生的暱稱和積分，不會看到你的 Email。")
+                        Text("對手只會看到你的對戰名稱和積分，不會看到 Email。")
                     }
                 }
             }.listRowBackground(Color.cardFill) }
@@ -332,6 +346,7 @@ private struct BattleHome: View {
             .navigationTitle("單字對戰")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button(role: .close, action: close) } }
             .task(id: cloud.signedIn) { await model.load() }
+            .sheet(isPresented: $renaming) { BattleRename(model: model) }
             .alert("無法對戰", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
                 Button("好", role: .cancel) {}
             } message: { Text(model.error ?? "") }
@@ -343,6 +358,11 @@ private struct BattleHome: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(p.name).font(.app(.headline))
+                    Button { renaming = true } label: {
+                        LIcon("pencil").font(.app(.subheadline, .semibold)).foregroundStyle(Color.themeAccent)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("修改對戰名稱")
                     Spacer()
                     Text(levelLabel(String(p.tier))).font(.app(.subheadline, .semibold)).foregroundStyle(Color.themeAccent)
                 }
@@ -350,11 +370,62 @@ private struct BattleHome: View {
                 Text("\(p.wins) 勝　\(p.losses) 敗　\(p.draws) 和").font(.app(.subheadline)).foregroundStyle(.secondary)
             }
             .padding(.vertical, 4)
-            .accessibilityElement(children: .combine)
+            .accessibilityElement(children: .contain)
         } else if model.meFailed {
             Button("讀不到積分，再試一次") { Task { await model.load() } }
         } else {
             HStack { Spacer(); ProgressView(); Spacer() }.padding(.vertical, 24)
+        }
+    }
+}
+
+private struct BattleRename: View {
+    let model: BattleModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    @State private var saving = false
+    @State private var problem: String?
+    @FocusState private var typing: Bool
+
+    init(model: BattleModel) {
+        self.model = model
+        _name = State(initialValue: model.me?.name ?? "")
+    }
+
+    private var clean: String { name.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+    private var valid: Bool { (2...12).contains(clean.unicodeScalars.count) }
+
+    var body: some View {
+        NavigationStack {
+            Form { Group {
+                Section {
+                    TextField("對戰名稱", text: $name)
+                        .autocorrectionDisabled().focused($typing).submitLabel(.done)
+                        .onSubmit(save)
+                } footer: {
+                    Text(problem ?? "2 到 12 個字，對手會看到這個名稱。")
+                }
+            }.listRowBackground(Color.cardFill) }
+            .font(.app(.body))
+            .themedBackground()
+            .navigationTitle("對戰名稱")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button(role: .close) { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button(role: .confirm, action: save).disabled(!valid || saving) }
+            }
+            .onAppear { typing = true }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private func save() {
+        guard valid, !saving else { return }
+        saving = true
+        Task {
+            problem = await model.rename(clean)
+            saving = false
+            if problem == nil { dismiss() }
         }
     }
 }
@@ -366,7 +437,7 @@ private struct BattleSearching: View {
             Spacer()
             ProgressView().controlSize(.large)
             Text("正在尋找對手").font(.app(.title3, .semibold))
-            Text("已等待 \(model.waited) 秒，沒有真人時會改配電腦")
+            Text("已等待 \(model.waited) 秒，15 秒內沒有真人會改配電腦")
                 .font(.app(.subheadline)).foregroundStyle(.secondary).monospacedDigit()
             Spacer()
             Button("取消") { model.leave() }.buttonStyle(PillButtonStyle())

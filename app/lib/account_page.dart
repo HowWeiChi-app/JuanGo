@@ -1,4 +1,4 @@
-// 設定 › 雲端備份。排版照 iOS 版 AccountView。
+// 設定 › 帳號登入。排版照 iOS 版 AccountView。
 
 import 'package:material_ui/material_ui.dart';
 
@@ -75,7 +75,7 @@ class _AccountPageState extends State<AccountPage> {
       Sec(
         header: '登入',
         footer: _sentTo == null
-            ? '用 Email 連結登入，資料會同步到雲端。iPhone 和 Android 用同一個帳號。'
+            ? '用 Email 連結登入，資料會同步到雲端，也能參加單字對戰。iPhone 和 Android 用同一個帳號。'
             : '已寄到 $_sentTo。請在這支手機打開信件，點「Sign in」就會回到捲字完成登入。沒收到請查看垃圾郵件。',
         children: [
           Padding(
@@ -116,7 +116,7 @@ class _AccountPageState extends State<AccountPage> {
       builder: (context, _) {
         final p = Palette.of(context);
         final s = _cloud.session;
-        return NavPage(title: '雲端備份', safeTop: false, slivers: s == null ? _signedOut(p) : _signedIn(p, s));
+        return NavPage(title: '帳號登入', safeTop: false, slivers: s == null ? _signedOut(p) : _signedIn(p, s));
       },
     );
   }

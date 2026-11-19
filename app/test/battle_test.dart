@@ -98,6 +98,23 @@ void main() {
     m.dispose();
   });
 
+  test('改對戰名稱：成功更新畫面資料，失敗顯示原因', () async {
+    var taken = false;
+    await _signIn(MockClient((req) async {
+      final body = jsonDecode(req.body) as Map<String, dynamic>;
+      expect(req.url.pathSegments.last, 'battle_set_name');
+      if (taken) return http.Response.bytes(utf8.encode(jsonEncode({'message': '這個名稱已經有人使用'})), 400);
+      return http.Response.bytes(utf8.encode(jsonEncode({'name': body['p_name'], 'rating': 400, 'tier': 3, 'games': 0, 'wins': 0, 'losses': 0, 'draws': 0})), 200);
+    }));
+    final m = BattleModel(level: '3');
+    expect(await m.rename('單字小王'), isNull);
+    expect(m.me?.name, '單字小王');
+    taken = true;
+    expect(await m.rename('別人的名字'), '這個名稱已經有人使用');
+    expect(m.me?.name, '單字小王');
+    m.dispose();
+  });
+
   test('伺服器還沒裝對戰功能時說清楚', () async {
     await _signIn(MockClient((_) async => http.Response('{"message":"Could not find the function public.battle_me"}', 404)));
     final m = BattleModel(level: '3');

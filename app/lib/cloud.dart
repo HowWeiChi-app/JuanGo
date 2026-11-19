@@ -206,9 +206,15 @@ class Cloud extends ChangeNotifier {
 
   void _store(CloudSession? s) {
     session = s;
-    unawaited(_vault.write(s == null ? null : jsonEncode(s.toJson())).catchError((Object e) {
+    unawaited(_persist(s));
+  }
+
+  Future<void> _persist(CloudSession? s) async {
+    try {
+      await _vault.write(s == null ? null : jsonEncode(s.toJson()));
+    } catch (e) {
       debugPrint('登入資料儲存失敗：$e');
-    }));
+    }
   }
 
   static Map<String, dynamic>? _claims(String jwt) {
@@ -230,30 +236,44 @@ class Cloud extends ChangeNotifier {
   }
 
   Future<String> _refresh(CloudSession s) async {
+    Future<String> request() => _send(
+          Uri.parse('${CloudConfig.url}/auth/v1/token').replace(queryParameters: {'grant_type': 'refresh_token'}),
+          'POST',
+          json: {'refresh_token': s.refreshToken},
+          auth: false,
+        );
     try {
-      final body = await _send(
-        Uri.parse('${CloudConfig.url}/auth/v1/token').replace(queryParameters: {'grant_type': 'refresh_token'}),
-        'POST',
-        json: {'refresh_token': s.refreshToken},
-        auth: false,
-      );
-      final j = jsonDecode(body) as Map<String, dynamic>;
-      final access = j['access_token'], refresh = j['refresh_token'];
-      if (access is! String || refresh is! String) throw const CloudFailure('登入資料更新失敗');
-      s
-        ..accessToken = access
-        ..refreshToken = refresh
-        ..expiresAt = _expiry(j['expires_in'] as num? ?? 3600);
-      _store(s);
-      return access;
+      final String body;
+      try {
+        body = await request();
+      } on _HttpFailure {
+        rethrow;
+      } on CloudFailure {
+        // 沒收到回覆：伺服器幾秒內還接受同一個 token，馬上再問一次才拿得到新的
+        return await _finishRefresh(s, await request());
+      }
+      return await _finishRefresh(s, body);
     } on _HttpFailure catch (e) {
       if (e.status == 400 || e.status == 401) {
-        _store(null);
+        if (identical(session, s)) _store(null);
         notifyListeners();
         throw const CloudFailure('登入已過期，請重新登入');
       }
       rethrow;
     }
+  }
+
+  Future<String> _finishRefresh(CloudSession s, String body) async {
+    final j = jsonDecode(body) as Map<String, dynamic>;
+    final access = j['access_token'], refresh = j['refresh_token'];
+    if (access is! String || refresh is! String) throw const CloudFailure('登入資料更新失敗');
+    s
+      ..accessToken = access
+      ..refreshToken = refresh
+      ..expiresAt = _expiry(j['expires_in'] as num? ?? 3600);
+    // 舊 token 已經失效，新的存好才算完成
+    if (identical(session, s)) await _persist(s);
+    return access;
   }
 
   // MARK: 同步
@@ -285,9 +305,10 @@ class Cloud extends ChangeNotifier {
     }
   }
 
-  /// App 進背景時把最新資料傳上去
+  /// App 進背景時把最新資料傳上去。token 過期就等下次打開，免得更新到一半被系統暫停
   Future<void> backgroundPush() async {
-    if (!signedIn || syncing) return;
+    final s = session;
+    if (s == null || syncing || !s.expiresAt.isAfter(DateTime.now())) return;
     try {
       await _upload();
       await _markSynced();

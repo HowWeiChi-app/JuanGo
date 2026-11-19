@@ -148,6 +148,22 @@ class BattleModel extends ChangeNotifier {
 
   Future<void> _wait(Duration d) => Future<void>.delayed(d);
 
+  /// 改對戰名稱。成功回傳 null，失敗回傳要顯示的原因
+  Future<String?> rename(String name) async {
+    final old = me;
+    if (_demo && old != null) {
+      _set(() => me = BattlePlayer({'name': name, 'rating': old.rating, 'tier': old.tier, 'wins': old.wins, 'losses': old.losses, 'draws': old.draws}));
+      return null;
+    }
+    try {
+      final j = await _cloud.rpc('battle_set_name', {'p_name': name, 'p_level': level}) as Map<String, dynamic>;
+      _set(() => me = BattlePlayer(j));
+      return null;
+    } catch (e) {
+      return '$e'.replaceFirst(RegExp(r'（\d+）$'), '');
+    }
+  }
+
   Future<void> load() async {
     if (_demo) return;
     if (!_cloud.signedIn) {
@@ -475,12 +491,24 @@ class _HomeState extends State<_Home> {
                               children: [
                                 Row(
                                   children: [
-                                    Expanded(
+                                    Flexible(
                                       child: Text(
                                         me.name,
                                         style: ts(F.headline, w: w6, c: p.ink),
                                       ),
                                     ),
+                                    Semantics(
+                                      button: true,
+                                      label: '修改對戰名稱',
+                                      child: Tap(
+                                        onTap: () => pushPage(context, _RenamePage(model: m)),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(8),
+                                          child: Icon(Icons.edit_rounded, size: 18, color: p.accent),
+                                        ),
+                                      ),
+                                    ),
+                                    const Spacer(),
                                     Text(
                                       levelLabel('${me.tier}'),
                                       style: ts(F.sub, w: w6, c: p.accent),
@@ -500,7 +528,7 @@ class _HomeState extends State<_Home> {
                 ],
               ),
               Sec(
-                footer: '優先配對積分相近的真人，沒有人在線就和電腦對戰。5 回合，每題 10 秒，答對越快分數越高，最後一題 1.5 倍。',
+                footer: '優先配對積分相近的真人，等 15 秒沒有真人就和電腦對戰。5 回合，每題 10 秒，答對越快分數越高，最後一題 1.5 倍。',
                 children: [
                   Padding(
                     padding: const EdgeInsets.all(12),
@@ -558,10 +586,80 @@ class _HomeState extends State<_Home> {
             ]
           : [
               Sec(
-                footer: '對手只會看到系統產生的暱稱和積分，不會看到你的 Email。',
+                footer: '對手只會看到你的對戰名稱和積分，不會看到 Email。',
                 children: [RowTile(title: '登入後就能對戰', chevron: true, onTap: () => pushPage(context, const AccountPage()))],
               ),
             ],
+    );
+  }
+}
+
+class _RenamePage extends StatefulWidget {
+  const _RenamePage({required this.model});
+  final BattleModel model;
+  @override
+  State<_RenamePage> createState() => _RenamePageState();
+}
+
+class _RenamePageState extends State<_RenamePage> {
+  late final _name = TextEditingController(text: widget.model.me?.name ?? '');
+  bool _saving = false;
+  String? _problem;
+
+  String get _clean => _name.text.trim().replaceAll(RegExp(r'\s+'), ' ');
+  bool get _valid => _clean.runes.length >= 2 && _clean.runes.length <= 12;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (!_valid || _saving) return;
+    setState(() => _saving = true);
+    final problem = await widget.model.rename(_clean);
+    if (!mounted) return;
+    if (problem == null) {
+      Navigator.of(context).pop();
+      return;
+    }
+    setState(() {
+      _saving = false;
+      _problem = problem;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Palette.of(context);
+    return NavPage(
+      title: '對戰名稱',
+      actions: [BarText(_saving ? '儲存中…' : '儲存', onTap: _valid && !_saving ? () => unawaited(_save()) : null)],
+      slivers: [
+        Sec(
+          footer: _problem ?? '2 到 12 個字，對手會看到這個名稱。',
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TextField(
+                controller: _name,
+                autofocus: true,
+                autocorrect: false,
+                textInputAction: TextInputAction.done,
+                onChanged: (_) => setState(() {}),
+                onSubmitted: (_) => unawaited(_save()),
+                style: ts(F.body, c: p.ink),
+                decoration: InputDecoration(
+                  hintText: '對戰名稱',
+                  hintStyle: ts(F.body, c: p.sec),
+                  border: InputBorder.none,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
@@ -585,7 +683,7 @@ class _Searching extends StatelessWidget {
               style: ts(F.title3, w: w6, c: p.ink),
             ),
             const SizedBox(height: 8),
-            Text('已等待 ${model.waited} 秒，沒有真人時會改配電腦', style: ts(F.sub, c: p.sec)),
+            Text('已等待 ${model.waited} 秒，15 秒內沒有真人會改配電腦', style: ts(F.sub, c: p.sec)),
             const Spacer(),
             PillButton(label: '取消', width: double.infinity, onTap: () => unawaited(model.leave())),
           ],

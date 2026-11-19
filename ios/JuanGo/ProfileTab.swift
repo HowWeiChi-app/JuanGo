@@ -228,11 +228,13 @@ struct SettingsView: View {
                         Text("選單和提示視窗是系統字體。")
                     }
                 }
-                Section {
+                Section("帳號") {
                     NavigationLink { AccountView() } label: {
-                        row("icloud.fill", "雲端備份",
-                            Cloud.shared.session.map { "已登入 \($0.email)" } ?? "登入後單字自動備份到雲端")
+                        row("person.crop.circle.fill", "帳號登入",
+                            Cloud.shared.session.map { "已登入 \($0.email)" } ?? "登入後可雲端備份和單字對戰")
                     }
+                }
+                Section {
                     Button("匯出備份") {
                         do { presentShareSheet(try Backup.write(Backup.full(ctx))) }
                         catch { message = "匯出失敗：\(error.localizedDescription)" }
@@ -363,7 +365,7 @@ struct AITranslationSettings: View {
     }
 }
 
-/// 設定 › 雲端備份: sign in with an emailed link; the backup syncs to the cloud, and share codes are listed here.
+/// 設定 › 帳號登入: sign in with an emailed link; the backup syncs to the cloud, and share codes are listed here.
 struct AccountView: View {
     @Environment(\.modelContext) private var ctx
     @State private var email = ""
@@ -424,11 +426,11 @@ struct AccountView: View {
                             .font(.app(.footnote)).foregroundStyle(.secondary)
                     }
                 } header: { Text("登入") } footer: {
-                    Text("用 Email 連結登入，資料會同步到雲端。")
+                    Text("用 Email 連結登入，資料會同步到雲端，也能參加單字對戰。")
                 }
             }
         }.listRowBackground(Color.cardFill) }.themedBackground()
-        .navigationTitle("雲端備份")
+        .navigationTitle("帳號登入")
         .task { await loadLists() }
         .onChange(of: cloud.signedIn) { _, _ in Task { await loadLists() } }
         .alert(message ?? "", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {

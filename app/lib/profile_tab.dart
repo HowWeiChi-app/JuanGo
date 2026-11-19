@@ -424,9 +424,11 @@ class _SettingsRoot extends StatelessWidget {
                 child: ThemeGrid(selection: s.themeID, onSelect: (id) => s.update((x) => x.themeID = id)),
               ),
             ]),
+            Sec(header: '帳號', children: [
+              _row(context, p, Icons.account_circle_rounded, '帳號登入',
+                  account == null ? '登入後可雲端備份和單字對戰' : '已登入 ${account.email}', () => const AccountPage()),
+            ]),
             Sec(header: '備份', footer: '匯出的檔案包含單字、進度、清單和設定。', children: [
-              _row(context, p, Icons.cloud_rounded, '雲端備份',
-                  account == null ? '登入後單字自動備份到雲端' : '已登入 ${account.email}', () => const AccountPage()),
               RowTile(title: '匯出備份', titleColor: p.accent, onTap: () => _export(context)),
               RowTile(title: '從備份還原', titleColor: p.accent, onTap: () => _restore(context)),
             ]),

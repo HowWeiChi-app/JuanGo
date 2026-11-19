@@ -192,13 +192,13 @@ begin
     perform battle_make_round(p_match, i, case when i <= 3 then tier else least(6, tier + 1) end);
   end loop;
   if m.bot_rating is not null then
-    -- the computer does better on words below its rank and answers them sooner
+    -- the computer is a strong opponent: higher ranks and easier words mean more right answers, sooner
     update battle_rounds b set
-      bot_pick = case when random() < least(0.95, greatest(0.35, 0.7 + 0.15 * g.edge)) then b.answer
+      bot_pick = case when random() < least(0.98, greatest(0.72, 0.84 + 0.02 * g.skill + 0.05 * g.edge)) then b.answer
                       else (b.answer + 1 + floor(random() * 3)::int) % 4 end,
-      bot_ms = least(9000, greatest(1200, (5500 - 300 * g.edge + (random() - 0.5) * 4000)::int))
+      bot_ms = least(6000, greatest(900, (3200 - 120 * g.skill - 200 * g.edge + (random() - 0.5) * 2400)::int))
     from (
-      select r.n, m.bot_rating / 200.0 + 1 - w.lv as edge
+      select r.n, m.bot_rating / 200.0 + 1 - w.lv as edge, battle_tier(m.bot_rating) as skill
       from battle_rounds r join battle_words w on w.term = r.term where r.match_id = p_match
     ) g
     where b.match_id = p_match and b.n = g.n;
@@ -258,7 +258,7 @@ begin
   limit 1 for update skip locked;
 
   if not found then
-    if waited < 10 then return jsonb_build_object('match', null, 'waited', waited); end if;
+    if waited < 15 then return jsonb_build_object('match', null, 'waited', waited); end if;
     -- nobody else is here: play the computer, at about the caller's own rating
     insert into battle_matches (rated, p1, bot_name, bot_rating)
     values (true, me.user_id,
@@ -543,6 +543,26 @@ begin
                             'games', p.games, 'wins', p.wins, 'losses', p.losses, 'draws', p.draws);
 end $$;
 
+-- Lets a player choose the name opponents see.
+create or replace function public.battle_set_name(p_name text, p_level int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  me    public.battle_players := battle_player(p_level);
+  clean text := btrim(regexp_replace(coalesce(p_name, ''), '[[:space:]　]+', ' ', 'g'));
+begin
+  if char_length(clean) not between 2 and 12 then raise exception '名稱要 2 到 12 個字'; end if;
+  if clean ~ '[[:cntrl:]]' or clean ~ U&'[\200B-\200F\202A-\202E\2060-\2069\FEFF]' then
+    raise exception '名稱有不能使用的字元';
+  end if;
+  if clean like '電腦%' then raise exception '名稱不能用「電腦」開頭'; end if;
+  perform pg_advisory_xact_lock(hashtext('battle_set_name'));
+  if exists (select 1 from battle_players where lower(name) = lower(clean) and user_id <> me.user_id) then
+    raise exception '這個名稱已經有人使用';
+  end if;
+  update battle_players set name = clean where user_id = me.user_id;
+  return battle_me(p_level);
+end $$;
+
 -- ------------------------------------------------------------------ access
 
 revoke all on public.battle_players, public.battle_words, public.battle_matches, public.battle_rounds,
@@ -557,6 +577,6 @@ begin
   end loop;
 end $$;
 
-grant execute on function public.battle_me(int), public.battle_find(int), public.battle_cancel_find(),
+grant execute on function public.battle_me(int), public.battle_set_name(text, int), public.battle_find(int), public.battle_cancel_find(),
   public.battle_create_room(int), public.battle_join(text, int), public.battle_state(uuid),
   public.battle_answer(uuid, int, int, int), public.battle_quit(uuid) to authenticated;
