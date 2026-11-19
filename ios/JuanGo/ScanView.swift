@@ -359,7 +359,7 @@ struct ScanView: View {
     private func repaired(_ g: GlossaryEntry) -> GlossaryEntry {
         guard let e = exactEntry(g.term) else { return g }
         var g = g
-        g.meanings = g.meanings.map { m in e.zh.contains(m + "的") ? m + "的" : m }
+        g.meanings = Dictionary_.repairMisread(g.meanings.map { m in e.zh.contains(m + "的") ? m + "的" : m }, term: g.term)
         return g
     }
     private func unique(_ a: [String]) -> [String] { var s = Set<String>(); return a.filter { s.insert($0).inserted } }

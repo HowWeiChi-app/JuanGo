@@ -11,49 +11,100 @@ struct StreakView: View {
 
     var body: some View {
         let streak = stats.streak
-        let next = BadgeKind.all[0].next(for: streak)
-        VStack(spacing: 22) {
+        VStack(spacing: 24) {
             HStack { Spacer(); ShareLink(item: "我在 JuanGo 已經連續學習 \(streak) 天了！") { GlassCircleIcon(systemName: "square.and.arrow.up") }
                 .buttonStyle(.glass).buttonBorderShape(.circle) }
             Spacer()
-            ZStack {
-                LIcon("drop.fill").font(.app(size: 220)).foregroundStyle(Color(white: 0.72))
-                LIcon("flame.fill").font(.app(size: 92))
-                    .foregroundStyle(Color.themeAccent)
-                    .offset(y: 30)
-            }
-            .scaleEffect(appear ? 1 : 0.5)
-            Text("\(streak)").font(.app(size: 80, .semibold)).contentTransition(.numericText())
-            Text("天連續學習").font(.app(.title3, .bold))
-            weekDots
-            Text(streak >= next ? "已解鎖所有連續勳章" : "再 \(next - streak) 天解鎖下一枚連續勳章").font(.app(.subheadline)).opacity(0.7)
+            calendarPage(streak)
+            weekStrip
+            nextMedal(streak)
             Spacer()
             Button("繼續", action: onContinue)
-                .buttonStyle(PillButtonStyle(fill: .white, foreground: .black)).frame(width: 160)
+                .buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
         }
-        .foregroundStyle(.white)
         .padding(24)
-        .background(Color.black.ignoresSafeArea())
-        .onAppear { withAnimation(.spring(duration: 0.8, bounce: 0.4)) { appear = true } }
+        .themedBackground()
+        .onAppear { withAnimation(.spring(duration: 0.9, bounce: 0.35)) { appear = true } }
     }
 
-    private var weekDots: some View {
+    /// JuanGo's own streak mark: a tear-off desk-calendar page that drops into place.
+    private func calendarPage(_ streak: Int) -> some View {
+        VStack(spacing: 0) {
+            ZStack {
+                Color.themeAccent
+                HStack {
+                    ForEach(0..<2, id: \.self) { _ in Circle().fill(Color.onAccent.opacity(0.85)).frame(width: 10, height: 10) }
+                        .frame(maxWidth: .infinity)
+                }
+                .offset(y: -12)
+                Text("連續學習").font(.app(.subheadline, .bold)).foregroundStyle(Color.onAccent).offset(y: 6)
+            }
+            .frame(height: 58)
+            VStack(spacing: 0) {
+                Text("\(streak)").font(.app(size: 96, .bold)).monospacedDigit()
+                    .minimumScaleFactor(0.5).lineLimit(1).contentTransition(.numericText())
+                Text("天").font(.app(.title3, .semibold)).foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 18).padding(.horizontal, 16)
+            .frame(maxWidth: .infinity)
+            .background(Color.cardFill)
+        }
+        .frame(width: 200)
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .shadow(color: .black.opacity(0.12), radius: 18, y: 10)
+        .rotation3DEffect(.degrees(appear ? 0 : -80), axis: (x: 1, y: 0, z: 0), anchor: .top, perspective: 0.6)
+        .opacity(appear ? 1 : 0)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("連續學習 \(streak) 天")
+    }
+
+    /// The last seven days as squares: ticked when studied, today outlined.
+    private var weekStrip: some View {
         let cal = Calendar.current
         let today = cal.startOfDay(for: .now)
         let days = (0..<7).reversed().map { cal.date(byAdding: .day, value: -$0, to: today)! }
         let fmt = Date.FormatStyle().weekday(.narrow).locale(.zh)
-        return HStack(spacing: 12) {
+        return HStack(spacing: 8) {
             ForEach(days, id: \.self) { d in
+                let done = stats.activeDays.contains(d)
                 VStack(spacing: 6) {
-                    if stats.activeDays.contains(d) {
-                        LIcon("flame.fill").font(.app(.title2)).foregroundStyle(Color.themeAccent).frame(width: 30, height: 30)
-                    } else {
-                        Circle().fill(.white.opacity(0.12)).frame(width: 30, height: 30)
-                    }
-                    Text(d.formatted(fmt)).font(.app(.caption2, .bold)).opacity(0.6)
+                    Text(d.formatted(fmt)).font(.app(.caption2, .bold)).foregroundStyle(.secondary)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(done ? Color.themeAccent : Color.secondary.opacity(0.12))
+                        .overlay {
+                            if done { LIcon("checkmark").font(.app(.subheadline, .bold)).foregroundStyle(Color.onAccent) }
+                        }
+                        .overlay {
+                            if d == today && !done {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.themeAccent, lineWidth: 2)
+                            }
+                        }
+                        .frame(width: 34, height: 40)
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(d.formatted(.dateTime.weekday(.wide).locale(.zh)))\(done ? "，有學習" : "")")
             }
         }
+        .card(padding: 14)
+    }
+
+    /// The next streak medal, with how far there is still to go.
+    private func nextMedal(_ streak: Int) -> some View {
+        let kind = BadgeKind.all[0]
+        let next = kind.next(for: streak)
+        let tier = kind.earned(for: streak)
+        let all = tier >= kind.tiers.count
+        let previous = tier == 0 ? 0 : kind.tiers[tier - 1]
+        let progress = all ? 1 : Double(streak - previous) / Double(max(1, next - previous))
+        return HStack(spacing: 14) {
+            MedalCoin(tier: all ? tier : tier + 1, symbol: kind.symbol, size: 44).opacity(all ? 1 : 0.55)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(all ? "已拿到所有連續勳章" : "再 \(next - streak) 天拿到第 \(tier + 1) 級連續勳章")
+                    .font(.app(.subheadline, .semibold))
+                ProgressView(value: progress).tint(Color.themeAccent)
+            }
+        }
+        .frame(maxWidth: 320)
     }
 }
 

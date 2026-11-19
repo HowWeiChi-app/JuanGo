@@ -210,7 +210,7 @@ class ReviewLog {
 }
 
 enum Deck {
-  recommended('推薦探索', '依你的程度推薦', examLevels, null),
+  recommended('為你精選', '依你的程度推薦', examLevels, null),
   basic('基礎 2000', '大考詞彙第 1–2 級', ['1', '2'], null),
   middle('進階 4000', '大考詞彙第 3–4 級', ['3', '4'], null),
   advanced('學測 6000+', '大考詞彙第 5–6 級', ['5', '6'], null),

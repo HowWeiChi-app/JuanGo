@@ -94,7 +94,7 @@ struct DictEntry: Codable, Hashable, Identifiable {
 }
 
 enum Deck: String, CaseIterable, Identifiable {
-    case recommended = "推薦探索", basic = "基礎 2000", middle = "進階 4000", advanced = "學測 6000+"
+    case recommended = "為你精選", basic = "基礎 2000", middle = "進階 4000", advanced = "學測 6000+"
     case elementary = "國中小 1200", toeic = "多益 TOEIC", ielts = "雅思 IELTS", toefl = "托福 TOEFL"
     var id: String { rawValue }
     var subtitle: String {
@@ -202,6 +202,38 @@ enum Dictionary_ {
     static func similar(to term: String, meanings: [String], pos: String, limit: Int = 3) -> [DictEntry] {
         let listed = (lookup(term)?.sim ?? []).compactMap(lookup).filter { $0.w.lowercased() != term.lowercased() }
         return Array((listed.isEmpty ? synonyms(of: term, meanings: meanings, pos: pos, limit: limit) : listed).prefix(limit))
+    }
+
+    /// Every Chinese meaning in the dictionary, to tell a real word from an OCR slip.
+    private static let allMeanings: String = all.flatMap(\.zh).joined(separator: "|")
+
+    /// Fixes characters a word-list photo was misread with, against the dictionary's meanings for the
+    /// same word: "(明令)蔡止" becomes "(明令)禁止" because 禁止 is one character away and 蔡止 is not a
+    /// meaning anywhere in the dictionary. Meanings joined with 、 are split.
+    static func repairMisread(_ meanings: [String], term: String) -> [String] {
+        guard let e = lookup(term), e.w == term.lowercased() else { return meanings }
+        var out: [String] = []
+        for raw in meanings {
+            let parts = e.zh.contains(raw) ? [raw] : raw.components(separatedBy: "、")
+            for p in parts {
+                var m = p.trimmingCharacters(in: .whitespaces)
+                guard !m.isEmpty else { continue }
+                // keep a leading note like (明令) and compare what follows it
+                var note = ""
+                if let r = m.range(of: #"^[(（][^)）]*[)）]\s*"#, options: .regularExpression) { note = String(m[r]); m = String(m[r.upperBound...]) }
+                let core = Array(m)
+                if core.count >= 2, !e.zh.contains(m), !allMeanings.contains(m),
+                   let fix = e.zh.first(where: { z in
+                       let a = Array(z)
+                       return a.count == core.count && zip(a, core).filter { $0 != $1 }.count == 1
+                   }) {
+                    m = fix
+                }
+                let fixed = note + m
+                if !out.contains(fixed) { out.append(fixed) }
+            }
+        }
+        return out
     }
 
     static func lookup(_ term: String) -> DictEntry? {
