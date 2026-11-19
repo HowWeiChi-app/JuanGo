@@ -267,7 +267,7 @@ class _SettingsRoot extends StatelessWidget {
   void _pickReminder(BuildContext c) =>
       showTimeWheel(c, _settings.reminderMinutes, (m) => _settings.update((x) => x.reminderMinutes = m));
 
-  Widget _goalPage() => _SubPage('學習目標', (p) {
+  Widget _goalPage() => _SubPage('每日計畫', (p) {
         final s = _settings;
         return [
           Sec(header: '每日新字', children: [
@@ -291,7 +291,7 @@ class _SettingsRoot extends StatelessWidget {
         ];
       });
 
-  Widget _practicePage() => _SubPage('練習', (p) {
+  Widget _practicePage() => _SubPage('答題與發音', (p) {
         final s = _settings;
         return [
           Sec(children: [
@@ -332,7 +332,7 @@ class _SettingsRoot extends StatelessWidget {
         ];
       });
 
-  Widget _reminderPage() => _SubPage('提醒與通知', (p) {
+  Widget _reminderPage() => _SubPage('每日提醒', (p) {
         final s = _settings;
         return [
           Sec(children: [
@@ -388,30 +388,17 @@ class _SettingsRoot extends StatelessWidget {
           leading: const SizedBox.shrink(),
           actions: [BarText('完成', onTap: () => _closeSettings(context))],
           slivers: [
-            Sec(children: [
-              _row(context, p, Icons.account_circle_rounded, '帳號與同步',
-                  account == null ? '登入後單字自動備份到雲端' : '已登入 ${account.email}', () => const AccountPage()),
-            ]),
             Sec(header: '學習', children: [
-              _row(context, p, Icons.track_changes_rounded, '學習目標', '每日新字與單字程度', _goalPage),
-              _row(context, p, Icons.school_rounded, '練習', '例句翻譯、發音與震動', _practicePage),
-              _row(context, p, Icons.notifications_rounded, '提醒與通知', s.reminderOn ? '每天 ${s.reminderText}' : '關閉', _reminderPage),
+              _row(context, p, Icons.track_changes_rounded, '每日計畫', '每日新字與單字程度', _goalPage),
+              _row(context, p, Icons.school_rounded, '答題與發音', '例句翻譯、發音與震動', _practicePage),
+              _row(context, p, Icons.notifications_rounded, '每日提醒', s.reminderOn ? '每天 ${s.reminderText}' : '關閉', _reminderPage),
             ]),
-            Sec(header: '單字與探索', children: [
-              _row(context, p, Icons.view_list_rounded, '單字列表', '單字清單的中文意思', () {
-                return _togglePage('單字列表', (s) => [
-                      SwitchRow(title: '在列表顯示中文意思', value: s.listShowMeaning, onChanged: (v) => s.update((x) => x.listShowMeaning = v)),
-                    ]);
-              }),
-              _row(context, p, Icons.menu_book_rounded, '單字詳情', '完整單字頁的自動發音', () {
-                return _togglePage('單字詳情', (s) => [
-                      SwitchRow(title: '打開單字頁時自動發音', value: s.detailAutoSpeak, onChanged: (v) => s.update((x) => x.detailAutoSpeak = v)),
-                    ]);
-              }),
-              _row(context, p, Icons.explore_rounded, '探索', '探索卡片的音標與例句翻譯', () {
-                return _togglePage('探索', (s) => [
-                      SwitchRow(title: '顯示音標', value: s.exploreShowIPA, onChanged: (v) => s.update((x) => x.exploreShowIPA = v)),
-                      SwitchRow(title: '顯示例句翻譯', value: s.showTranslation, onChanged: (v) => s.update((x) => x.showTranslation = v)),
+            Sec(header: '單字', children: [
+              _row(context, p, Icons.text_fields_rounded, '單字顯示', '中文意思、音標與自動發音', () {
+                return _togglePage('單字顯示', (s) => [
+                      SwitchRow(title: '清單顯示中文意思', value: s.listShowMeaning, onChanged: (v) => s.update((x) => x.listShowMeaning = v)),
+                      SwitchRow(title: '單字卡顯示音標', value: s.exploreShowIPA, onChanged: (v) => s.update((x) => x.exploreShowIPA = v)),
+                      SwitchRow(title: '查看單字時自動發音', value: s.detailAutoSpeak, onChanged: (v) => s.update((x) => x.detailAutoSpeak = v)),
                     ]);
               }),
             ]),
@@ -437,7 +424,9 @@ class _SettingsRoot extends StatelessWidget {
                 child: ThemeGrid(selection: s.themeID, onSelect: (id) => s.update((x) => x.themeID = id)),
               ),
             ]),
-            Sec(header: '備份', footer: '包含單字、進度、清單和設定。', children: [
+            Sec(header: '備份', footer: '匯出的檔案包含單字、進度、清單和設定。', children: [
+              _row(context, p, Icons.cloud_rounded, '雲端備份',
+                  account == null ? '登入後單字自動備份到雲端' : '已登入 ${account.email}', () => const AccountPage()),
               RowTile(title: '匯出備份', titleColor: p.accent, onTap: () => _export(context)),
               RowTile(title: '從備份還原', titleColor: p.accent, onTap: () => _restore(context)),
             ]),
@@ -467,7 +456,7 @@ class _SettingsRoot extends StatelessWidget {
                   '雅思、托福字表與中文解釋、音標整理自 ECDICT（MIT 授權），內容可能有誤，可在單字頁自行編輯。學習資料預設只存在這台裝置，登入後會備份到雲端。',
               children: [
                 RowTile(title: '字典', value: '${Dict.all.length} 個內建單字'),
-                const RowTile(title: '版本', value: '0.1.0 (Android)'),
+                const RowTile(title: '版本', value: '0.1.0'),
               ],
             ),
           ],
