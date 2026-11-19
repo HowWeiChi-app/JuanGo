@@ -192,11 +192,14 @@ begin
     perform battle_make_round(p_match, i, case when i <= 3 then tier else least(6, tier + 1) end);
   end loop;
   if m.bot_rating is not null then
-    -- the computer is a strong opponent: higher ranks and easier words mean more right answers, sooner
+    -- the computer plays like a decent human: right about 6 to 8 times in 10, and each answer
+    -- takes its own time around a typical pace, with the odd slow round
     update battle_rounds b set
-      bot_pick = case when random() < least(0.98, greatest(0.72, 0.84 + 0.02 * g.skill + 0.05 * g.edge)) then b.answer
+      bot_pick = case when random() < least(0.85, greatest(0.55, 0.62 + 0.025 * g.skill + 0.03 * g.edge)) then b.answer
                       else (b.answer + 1 + floor(random() * 3)::int) % 4 end,
-      bot_ms = least(6000, greatest(900, (3200 - 120 * g.skill - 200 * g.edge + (random() - 0.5) * 2400)::int))
+      bot_ms = least(9000, greatest(1500, (least(4600, greatest(2600, 4200 - 120 * g.skill - 100 * g.edge))
+                 + (random() - 0.5) * 2600
+                 + case when random() < 0.2 then 1200 + random() * 2000 else 0 end)::int))
     from (
       select r.n, m.bot_rating / 200.0 + 1 - w.lv as edge, battle_tier(m.bot_rating) as skill
       from battle_rounds r join battle_words w on w.term = r.term where r.match_id = p_match
