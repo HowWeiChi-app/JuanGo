@@ -60,6 +60,8 @@ class HomeTab extends StatelessWidget {
               ]),
             ),
           ]),
+          // 單字對戰有自己的一張卡片，才不會像清單裡多一列
+          SliverPadding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 26), sliver: SliverToBoxAdapter(child: _battleCard(context, p))),
           Sec(children: [
             _actionRow(
               p,
@@ -68,8 +70,6 @@ class HomeTab extends StatelessWidget {
               Icon(Icons.all_inclusive_rounded, size: 24, color: p.accent),
               studyable.isEmpty ? null : () => startStudy(context, '自由練習', studyable.where((w) => !w.isMastered).toList()..shuffle()),
             ),
-            _actionRow(p, '單字對戰', '五回合即時對戰，比準也比快', Icon(Icons.bolt_rounded, size: 25, color: p.accent),
-                () => presentFull(context, const BattlePage())),
             _actionRow(p, '學習紀錄', '每天練了哪些字', Icon(Icons.calendar_month_rounded, size: 23, color: p.accent),
                 () => showHistory(context, _store.logs.reversed.toList())),
           ]),
@@ -178,6 +178,45 @@ class HomeTab extends StatelessWidget {
       ),
       if (hint != null) ...[const SizedBox(height: 8), Text(hint, style: ts(F.cap, c: p.sec))],
     ]);
+  }
+
+  /// 進入單字對戰：主題色的卡片，一眼看出一場對戰是什麼樣子
+  Widget _battleCard(BuildContext context, Palette p) {
+    final fg = p.onAccent;
+    Widget chip(String t) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(color: fg.withValues(alpha: .18), borderRadius: BorderRadius.circular(20)),
+          child: Text(t, style: ts(F.cap, w: w6, c: fg)),
+        );
+    return Tap(
+      label: '單字對戰，五回合即時對戰，比準也比快',
+      onTap: () => presentFull(context, const BattlePage()),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(Radii.lg),
+          gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [p.accent, p.accent.withValues(alpha: .82)]),
+        ),
+        child: Row(children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('單字對戰', style: ts(F.title2, w: w7, c: fg)),
+              const SizedBox(height: 8),
+              Text('即時配對，比準也比快', style: ts(F.sub, c: fg.withValues(alpha: .85))),
+              const SizedBox(height: 10),
+              Wrap(spacing: 6, runSpacing: 6, children: [chip('5 回合'), chip('每題 10 秒'), chip('積分配對')]),
+            ]),
+          ),
+          const SizedBox(width: 14),
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: fg.withValues(alpha: .18)),
+            child: Icon(Icons.bolt_rounded, size: 36, color: fg),
+          ),
+        ]),
+      ),
+    );
   }
 
   Widget _actionRow(Palette p, String title, String sub, Widget icon, VoidCallback? onTap) => Opacity(
