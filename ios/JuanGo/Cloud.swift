@@ -1,6 +1,7 @@
 import Foundation
 import SwiftData
 import Security
+import UIKit
 
 /// JuanGo's Supabase project. The publishable key is meant to ship inside apps: what it can reach is limited by
 /// the row-level security in supabase/schema.sql (each account sees only its own backup; shared lists only by code).
@@ -25,6 +26,8 @@ final class Cloud {
     }
     struct Failure: LocalizedError {
         let message: String
+        /// HTTP status when the server answered; nil when the request never got a reply
+        var status: Int? = nil
         var errorDescription: String? { message }
     }
     struct SharedList: Decodable, Identifiable {
@@ -38,6 +41,7 @@ final class Cloud {
     private(set) var session: Session?
     private(set) var syncing = false
     private(set) var lastSync: Date?
+    private var refreshing: Task<String, Error>?
     /// set when a sign-in link comes back, so the UI can show what happened
     var notice: String?
 
@@ -109,21 +113,42 @@ final class Cloud {
     }
 
     private func accessToken() async throws -> String {
-        guard var s = session else { throw Failure(message: "請先登入") }
+        guard let s = session else { throw Failure(message: "請先登入") }
         if s.expiresAt > .now { return s.accessToken }
+        // A refresh token works only once, so requests that arrive together share one refresh.
+        if let refreshing { return try await refreshing.value }
+        let task = Task { try await refresh(s) }
+        refreshing = task
+        defer { refreshing = nil }
+        return try await task.value
+    }
+
+    private func refresh(_ old: Session) async throws -> String {
+        // The server replaces the token as soon as it gets this request, so the reply must not be lost
+        // if the app leaves the screen.
+        let background = UIApplication.shared.beginBackgroundTask(withName: "JuanGo.refresh", expirationHandler: nil)
+        defer { if background != .invalid { UIApplication.shared.endBackgroundTask(background) } }
         var c = URLComponents(url: CloudConfig.url.appendingPathComponent("auth/v1/token"), resolvingAgainstBaseURL: false)!
         c.queryItems = [URLQueryItem(name: "grant_type", value: "refresh_token")]
+        let url = c.url!
+        let body: [String: Any] = ["refresh_token": old.refreshToken]
         do {
-            let d = try await send(c.url!, method: "POST", json: ["refresh_token": s.refreshToken], auth: false)
+            let d: Data
+            do { d = try await send(url, method: "POST", json: body, auth: false) }
+            catch let f as Failure where f.status == nil {
+                // No reply: the server still accepts this token for a few seconds, so ask again right away.
+                d = try await send(url, method: "POST", json: body, auth: false)
+            }
             guard let o = try JSONSerialization.jsonObject(with: d) as? [String: Any],
                   let access = o["access_token"] as? String, let refresh = o["refresh_token"] as? String
             else { throw Failure(message: "登入資料更新失敗") }
+            var s = old
             s.accessToken = access; s.refreshToken = refresh
             s.expiresAt = .now.addingTimeInterval((o["expires_in"] as? Double ?? 3600) - 60)
-            store(s)
+            if session?.refreshToken == old.refreshToken { store(s) }
             return access
-        } catch let f as Failure where f.message.contains("401") || f.message.contains("400") || f.message.contains("無效") {
-            store(nil)
+        } catch let f as Failure where f.status == 400 || f.status == 401 {
+            if session?.refreshToken == old.refreshToken { store(nil) }
             throw Failure(message: "登入已過期，請重新登入")
         }
     }
@@ -147,9 +172,10 @@ final class Cloud {
         return result
     }
 
-    /// Quiet push when the app goes to the background.
+    /// Quiet push when the app goes to the background. An expired token waits for the next launch,
+    /// because iOS may suspend the app before the refreshed token comes back.
     func backgroundPush(_ ctx: ModelContext) {
-        guard signedIn, !syncing else { return }
+        guard let s = session, s.expiresAt > .now, !syncing else { return }
         let file = Backup.full(ctx)
         Task {
             try? await upload(file)
@@ -246,8 +272,8 @@ final class Cloud {
         guard (200..<300).contains(status) else {
             let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             let msg = (o?["msg"] ?? o?["message"] ?? o?["error_description"] ?? o?["error"]) as? String
-            if status == 429 { throw Failure(message: "太頻繁了，請稍後再試") }
-            throw Failure(message: "\(msg ?? "伺服器錯誤")（\(status)）")
+            if status == 429 { throw Failure(message: "太頻繁了，請稍後再試", status: status) }
+            throw Failure(message: "\(msg ?? "伺服器錯誤")（\(status)）", status: status)
         }
         return data
     }
@@ -276,6 +302,9 @@ nonisolated enum Keychain {
         return SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess ? item as? Data : nil
     }
     static func write(_ account: String, _ data: Data) {
+        // Update in place, so being killed halfway never leaves the item missing.
+        let change = [kSecValueData as String: data]
+        if SecItemUpdate(query(account) as CFDictionary, change as CFDictionary) == errSecSuccess { return }
         delete(account)
         var q = query(account); q[kSecValueData as String] = data
         q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock

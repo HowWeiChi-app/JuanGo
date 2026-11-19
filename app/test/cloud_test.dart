@@ -171,6 +171,50 @@ void main() {
     expect(c.syncing, isFalse);
   });
 
+  test('更新 token 沒收到回覆會馬上重試，並把新 token 存好', () async {
+    var refreshes = 0;
+    final vault = _MemoryVault();
+    final c = cloud((r) async {
+      if (r.url.path == '/auth/v1/token') {
+        refreshes += 1;
+        if (refreshes == 1) throw http.ClientException('connection lost');
+        return http.Response(jsonEncode({'access_token': 'new', 'refresh_token': 'r2', 'expires_in': 3600}), 200);
+      }
+      return http.Response(r.method == 'GET' ? '[]' : '', r.method == 'GET' ? 200 : 201);
+    }, vault);
+    c.handle(_link(expiresIn: 0));
+    await c.sync();
+    expect(refreshes, 2);
+    expect(c.session?.refreshToken, 'r2');
+    expect(vault.value, contains('r2'));
+  });
+
+  test('連不上或伺服器出錯時不會登出', () async {
+    for (final fail in <Future<http.Response> Function()>[
+      () async => throw http.ClientException('offline'),
+      () async => http.Response('{}', 500),
+    ]) {
+      final vault = _MemoryVault();
+      final c = cloud((_) => fail(), vault);
+      c.handle(_link(expiresIn: 0));
+      await expectLater(c.sync(), throwsA(isA<CloudFailure>()));
+      expect(c.signedIn, isTrue);
+      expect(vault.value, contains('r1'));
+    }
+  });
+
+  test('進背景時 token 已過期就不更新，留到下次打開', () async {
+    var requests = 0;
+    final c = cloud((_) async {
+      requests += 1;
+      return http.Response('', 201);
+    });
+    c.handle(_link(expiresIn: 0));
+    await c.backgroundPush();
+    expect(requests, 0);
+    expect(c.session?.refreshToken, 'r1');
+  });
+
   test('比 App 新的備份格式不會被硬讀', () async {
     final c = cloud((_) async => _rows({..._iosBackup(), 'format': 2}));
     c.handle(_link());
