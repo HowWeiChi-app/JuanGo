@@ -563,7 +563,6 @@ class _SessionViewState extends State<SessionView> {
                   label: '更多',
                   entries: () => [
                     MenuEntry('學習規則', icon: Icons.help_outline_rounded, onTap: () => showRules(context)),
-                    if (w != null) MenuEntry('單字詳情', icon: Icons.menu_book_outlined, onTap: () => showWordDetail(context, w)),
                     MenuEntry('設定', icon: Icons.tune_rounded, onTap: () => presentSheet(context, (_) => const SettingsPage())),
                   ],
                   child: const AbsorbPointer(child: CircleBtn(icon: Icons.more_horiz_rounded)),

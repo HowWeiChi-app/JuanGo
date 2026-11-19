@@ -20,16 +20,132 @@ class StreakView extends StatelessWidget {
   final Stats stats;
   final VoidCallback onContinue;
 
+  /// JuanGo 自己的連續學習記號：一張撕頁桌曆，從上面翻下來
+  Widget _calendarPage(Palette p, int streak) => TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: 1),
+        duration: const Duration(milliseconds: 900),
+        curve: Curves.easeOutBack,
+        builder: (_, v, child) => Opacity(
+          opacity: v.clamp(0, 1),
+          child: Transform(
+            alignment: Alignment.topCenter,
+            transform: Matrix4.identity()
+              ..setEntry(3, 2, .0015)
+              ..rotateX(-1.4 * (1 - v)),
+            child: child,
+          ),
+        ),
+        child: Semantics(
+          label: '連續學習 $streak 天',
+          excludeSemantics: true,
+          child: Container(
+            width: 200,
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: p.card,
+              borderRadius: BorderRadius.circular(26),
+              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: .12), blurRadius: 36, offset: const Offset(0, 10))],
+            ),
+            child: Column(children: [
+              Container(
+                height: 58,
+                color: p.accent,
+                child: Stack(alignment: Alignment.center, children: [
+                  Positioned(
+                    top: 10,
+                    left: 0,
+                    right: 0,
+                    child: Row(children: [
+                      for (var i = 0; i < 2; i++)
+                        Expanded(
+                          child: Center(
+                            child: Container(width: 10, height: 10, decoration: BoxDecoration(shape: BoxShape.circle, color: p.onAccent.withValues(alpha: .85))),
+                          ),
+                        ),
+                    ]),
+                  ),
+                  Positioned(bottom: 10, child: Text('連續學習', style: ts(F.sub, w: w7, c: p.onAccent))),
+                ]),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 16),
+                child: Column(children: [
+                  FittedBox(child: Text('$streak', style: ts(96, w: w7, h: 1.1))),
+                  Text('天', style: ts(F.title3, w: w6, c: p.sec)),
+                ]),
+              ),
+            ]),
+          ),
+        ),
+      );
+
+  /// 最近七天：有學習的格子打勾，今天加外框
+  Widget _weekStrip(Palette p) {
+    final today = startOfDay(DateTime.now());
+    final days = [for (var i = 6; i >= 0; i--) addDays(today, -i)];
+    return CardBox(
+      padding: 14,
+      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        for (final d in days)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 3),
+            child: Column(children: [
+              Text(weekdayNames[d.weekday - 1], style: ts(F.cap2, w: w7, c: p.sec)),
+              const SizedBox(height: 6),
+              Container(
+                width: 32,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: stats.activeDays.contains(d) ? p.accent : p.sec.withValues(alpha: .12),
+                  borderRadius: BorderRadius.circular(10),
+                  border: d == today && !stats.activeDays.contains(d) ? Border.all(color: p.accent, width: 2) : null,
+                ),
+                child: stats.activeDays.contains(d) ? Icon(Icons.check_rounded, size: 20, color: p.onAccent) : null,
+              ),
+            ]),
+          ),
+      ]),
+    );
+  }
+
+  /// 下一枚連續勳章，還差幾天
+  Widget _nextMedal(Palette p, int streak) {
+    final kind = BadgeKind.all.first;
+    final next = kind.next(streak);
+    final tier = kind.earned(streak);
+    final all = tier >= kind.tiers.length;
+    final previous = tier == 0 ? 0 : kind.tiers[tier - 1];
+    final progress = all ? 1.0 : ((streak - previous) / (next - previous).clamp(1, 1 << 30)).clamp(0.0, 1.0);
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 320),
+      child: Row(children: [
+        Opacity(opacity: all ? 1 : .55, child: MedalCoin(tier: all ? tier : tier + 1, icon: Icons.local_fire_department_rounded, size: 44)),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(all ? '已拿到所有連續勳章' : '再 ${next - streak} 天拿到第 ${tier + 1} 級連續勳章', style: ts(F.sub, w: w6)),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: Container(
+                height: 5,
+                color: p.sec.withValues(alpha: .15),
+                alignment: Alignment.centerLeft,
+                child: FractionallySizedBox(widthFactor: progress, child: Container(color: p.accent)),
+              ),
+            ),
+          ]),
+        ),
+      ]),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = Palette.of(context);
     final streak = stats.streak;
-    final next = BadgeKind.all.first.next(streak);
-    final today = startOfDay(DateTime.now());
-    final days = [for (var i = 6; i >= 0; i--) addDays(today, -i)];
-    const white = Colors.white;
     return ColoredBox(
-      color: Colors.black,
+      color: p.bg,
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -42,52 +158,19 @@ class StreakView extends StatelessWidget {
                 child: Container(
                   width: 44,
                   height: 44,
-                  decoration: BoxDecoration(shape: BoxShape.circle, color: white.withValues(alpha: .14)),
-                  child: const Icon(Icons.ios_share_rounded, size: 21, color: white),
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: p.fill),
+                  child: Icon(Icons.ios_share_rounded, size: 21, color: p.ink),
                 ),
               ),
             ),
             const Spacer(),
-            TweenAnimationBuilder<double>(
-              tween: Tween(begin: .5, end: 1),
-              duration: const Duration(milliseconds: 800),
-              curve: Curves.elasticOut,
-              builder: (_, s, child) => Transform.scale(scale: s, child: child),
-              child: SizedBox(
-                width: 220,
-                height: 220,
-                child: Stack(alignment: Alignment.center, children: [
-                  const Icon(Icons.water_drop_rounded, size: 220, color: Color(0xFFB8B8B8)),
-                  Transform.translate(offset: const Offset(0, 30), child: Icon(Icons.local_fire_department_rounded, size: 92, color: p.accent)),
-                ]),
-              ),
-            ),
-            const SizedBox(height: 22),
-            Text('$streak', style: ts(80, w: w6, c: white, h: 1)),
-            const SizedBox(height: 10),
-            Text('天連續學習', style: ts(F.title3, w: w7, c: white)),
-            const SizedBox(height: 22),
-            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              for (final d in days)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  child: Column(children: [
-                    SizedBox(
-                      width: 30,
-                      height: 30,
-                      child: stats.activeDays.contains(d)
-                          ? Icon(Icons.local_fire_department_rounded, size: 26, color: p.accent)
-                          : DecoratedBox(decoration: BoxDecoration(shape: BoxShape.circle, color: white.withValues(alpha: .12))),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(weekdayNames[d.weekday - 1], style: ts(F.cap2, w: w7, c: white.withValues(alpha: .6))),
-                  ]),
-                ),
-            ]),
-            const SizedBox(height: 22),
-            Text(streak >= next ? '已解鎖所有連續勳章' : '再 ${next - streak} 天解鎖下一枚連續勳章', style: ts(F.sub, c: white.withValues(alpha: .7))),
+            _calendarPage(p, streak),
+            const SizedBox(height: 24),
+            _weekStrip(p),
+            const SizedBox(height: 24),
+            _nextMedal(p, streak),
             const Spacer(),
-            PillButton(label: '繼續', fill: white, fg: Colors.black, width: 160, onTap: onContinue),
+            PrimaryButton(label: '繼續', onTap: onContinue),
           ]),
         ),
       ),

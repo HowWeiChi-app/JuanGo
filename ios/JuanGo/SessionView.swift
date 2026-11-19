@@ -29,7 +29,6 @@ struct SessionView: View {
                     progressTrack
                     Menu {
                         Button("學習規則", pulso: "questionmark.circle") { showRules = true }
-                        Button("單字詳情", pulso: "text.book.closed") { detail = engine.current?.word }
                         Button("設定", pulso: "slider.horizontal.3") { showSettings = true }
                     } label: {
                         LIcon("ellipsis").font(.app(.headline)).frame(width: 36, height: 36)

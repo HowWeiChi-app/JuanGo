@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import Translation
 
 @main
 struct JuanGoApp: App {
@@ -53,6 +54,7 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.4), value: settings.onboarded)
+        .modifier(WordRepair())
         // the emailed sign-in link comes back as juango://login-callback#access_token=…
         .onOpenURL { url in
             if cloud.handle(url), cloud.signedIn {
@@ -215,5 +217,56 @@ extension View { func themedBackground() -> some View { modifier(ThemedBackgroun
         if let t = vc as? UITabBarController { return t }
         for c in vc.children { if let t = find(c) { return t } }
         return nil
+    }
+}
+
+/// Tidies saved words once the app opens:
+/// - meanings a word-list photo was misread with are fixed against the dictionary (once per repair version)
+/// - words saved with no meaning at all get one, from the AI translator when it's on, otherwise from
+///   Apple Translation when its English→Chinese files are already on the device (no download prompt)
+struct WordRepair: ViewModifier {
+    @Environment(\.modelContext) private var ctx
+    @State private var config: TranslationSession.Configuration?
+    @State private var empty: [Word] = []
+    private static let version = 1
+
+    func body(content: Content) -> some View {
+        content
+            .task { await start() }
+            .translationTask(config) { session in
+                let words = empty
+                let requests = words.map { TranslationSession.Request(sourceText: $0.term, clientIdentifier: $0.term) }
+                guard let replies = try? await session.translations(from: requests) else { return }
+                var done: [Word] = []
+                for r in replies {
+                    let m = r.targetText.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "。.")))
+                    guard !m.isEmpty, m.lowercased() != r.sourceText.lowercased(),
+                          let w = words.first(where: { $0.term == r.clientIdentifier }), w.meanings.isEmpty else { continue }
+                    w.meanings = [m]
+                    done.append(w)
+                }
+                try? ctx.save()
+                if !done.isEmpty { ExampleStore.shared.backfill(done) }
+            }
+    }
+
+    private func start() async {
+        guard let words = try? ctx.fetch(FetchDescriptor<Word>()) else { return }
+        let key = "wordRepair.misread"
+        if UserDefaults.standard.integer(forKey: key) < Self.version {
+            for w in words {
+                let fixed = Dictionary_.repairMisread(w.meanings, term: w.term)
+                if fixed != w.meanings && !fixed.isEmpty { w.meanings = fixed }
+            }
+            try? ctx.save()
+            UserDefaults.standard.set(Self.version, forKey: key)
+        }
+        let missing = words.filter { $0.meanings.isEmpty }
+        guard !missing.isEmpty else { return }
+        if WordTranslator.shared.provider != .none { WordTranslator.shared.fill(missing, in: ctx); return }
+        let from = Locale.Language(identifier: "en"), to = Locale.Language(identifier: "zh-Hant")
+        guard await LanguageAvailability().status(from: from, to: to) == .installed else { return }
+        empty = missing
+        config = .init(source: from, target: to)
     }
 }

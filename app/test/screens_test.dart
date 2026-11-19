@@ -14,6 +14,7 @@ import 'package:juango/settings.dart';
 import 'package:juango/sheets.dart';
 import 'package:juango/store.dart';
 import 'package:juango/study_flow.dart';
+import 'package:juango/summary.dart';
 import 'package:juango/theme.dart';
 import 'package:juango/widgets.dart';
 import 'package:material_ui/material_ui.dart';
@@ -191,6 +192,16 @@ void main() {
       await _close(t);
     });
 
+    testWidgets('連續學習畫面（$label螢幕）', (t) async {
+      await _open(t, size);
+      final context = t.element(find.byType(MainTabs));
+      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => Material(child: StreakView(stats: AppStore.shared.stats, onContinue: () {}))));
+      await t.settle();
+      expect(find.text('連續學習'), findsOneWidget);
+      await t.shot('${tag}_streak');
+      await _close(t);
+    });
+
     testWidgets('練習一整輪（$label螢幕）', (t) async {
       await _open(t, size);
       AppSettings.shared.studyRulesSeen = true;
@@ -215,7 +226,7 @@ void main() {
         if (has('這一輪完成了')) {
           await once('summary');
           finished = true;
-        } else if (has('天連續學習') && has('繼續')) {
+        } else if (has('連續學習') && has('繼續')) {
           await once('streak');
           await t.tapText('繼續');
         } else if (has('下一題')) {
