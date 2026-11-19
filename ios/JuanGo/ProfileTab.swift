@@ -386,12 +386,12 @@ struct AccountView: View {
                     Text("同一個 Email 的裝置會互相同步。")
                 }
                 Section {
-                    if lists.isEmpty { Text("還沒有分享過清單").foregroundStyle(.secondary) }
-                    ForEach(lists) { l in
+                    if lists.allSatisfy({ $0.hoursLeft == 0 }) { Text("目前沒有分享中的清單").foregroundStyle(.secondary) }
+                    ForEach(lists.filter { $0.hoursLeft > 0 }) { l in
                         HStack {
                             VStack(alignment: .leading) {
                                 Text(l.name).font(.app(.headline))
-                                Text("\(l.word_count) 個字").font(.app(.footnote)).foregroundStyle(.secondary)
+                                Text("\(l.word_count) 個字・剩 \(l.hoursLeft) 小時").font(.app(.footnote)).foregroundStyle(.secondary)
                             }
                             Spacer()
                             Text(Cloud.pretty(l.code)).font(.body.monospaced()).textSelection(.enabled)
@@ -404,7 +404,7 @@ struct AccountView: View {
                         .contextMenu { Button("拷貝代碼") { UIPasteboard.general.string = Cloud.pretty(l.code) } }
                     }
                 } header: { Text("我分享的清單") } footer: {
-                    Text("左滑停止分享。")
+                    Text("代碼 72 小時後失效並從雲端刪除；從清單再分享一次可以延長。左滑停止分享。")
                 }
                 Section { Button("登出", role: .destructive) { cloud.signOut(); lists = [] } }
             } else {

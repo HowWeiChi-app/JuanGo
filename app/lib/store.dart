@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'dictionary.dart';
 import 'models.dart';
 import 'settings.dart';
 
@@ -169,31 +170,41 @@ class AppStore extends ChangeNotifier {
 
   // MARK: 備份與分享清單
 
-  static Map<String, dynamic> _record(Word w, {required bool progress}) => {
-        'term': w.term,
-        'ipa': w.ipa,
-        'pos': w.pos,
-        'meanings': w.meanings,
-        'definition': w.definition,
-        'example': w.example,
-        'exampleZh': w.exampleZh,
-        'cefr': w.cefr,
-        if (progress) ...{
-          'srsLevel': w.srsLevel,
-          if (w.dueDate != null) 'dueDate': dateJson(w.dueDate),
-          if (w.lastReviewed != null) 'lastReviewed': dateJson(w.lastReviewed),
-          'addedAt': dateJson(w.addedAt),
-          'favorite': w.favorite,
-          'inMyWords': w.inMyWords,
-          'reviewCount': w.reviewCount,
-        },
-      };
+  /// 內建字典裡拼法完全相同的字，備份會省略和它一樣的內容
+  static DictEntry? _dictionary(String term) {
+    final e = Dict.lookup(term);
+    return e != null && e.w == term ? e : null;
+  }
+
+  /// 備份（有進度）省略字典已有的內容和預設值，大小能少掉大半；分享的清單照舊全部寫出，舊版也讀得懂
+  static Map<String, dynamic> _record(Word w, {required bool progress}) {
+    final d = progress ? _dictionary(w.term) : null;
+    return {
+      'term': w.term,
+      if (d?.ipa != w.ipa) 'ipa': w.ipa,
+      if (d?.pos != w.pos) 'pos': w.pos,
+      if (d == null || !listEquals(d.zh, w.meanings)) 'meanings': w.meanings,
+      if (d?.def != w.definition) 'definition': w.definition,
+      if (d?.ex != w.example) 'example': w.example,
+      if (d?.exZh != w.exampleZh) 'exampleZh': w.exampleZh,
+      if (d?.lv != w.cefr) 'cefr': w.cefr,
+      if (progress) ...{
+        'srsLevel': w.srsLevel,
+        if (w.dueDate != null) 'dueDate': dateJson(w.dueDate),
+        if (w.lastReviewed != null) 'lastReviewed': dateJson(w.lastReviewed),
+        'addedAt': dateJson(w.addedAt),
+        if (w.favorite) 'favorite': true,
+        if (!w.inMyWords) 'inMyWords': false,
+        'reviewCount': w.reviewCount,
+      },
+    };
+  }
 
   Map<String, dynamic> fullBackup() {
     final sorted = wordList..sort((a, b) => a.addedAt.compareTo(b.addedAt));
     return {
       'app': 'JuanGo',
-      'format': 1,
+      'format': 2,
       'kind': 'backup',
       'exportedAt': dateJson(DateTime.now()),
       'words': sorted.map((w) => _record(w, progress: true)).toList(),
@@ -247,7 +258,25 @@ class AppStore extends ChangeNotifier {
     if (j == null || j['app'] != 'JuanGo' || j['words'] is! List) {
       throw const FormatException('這不是 JuanGo 的備份或清單檔');
     }
-    if ((j['format'] as int? ?? 1) > 1) throw const FormatException('這個檔案來自較新版的 JuanGo，請先更新 App');
+    if ((j['format'] as int? ?? 1) > 2) throw const FormatException('這個檔案來自較新版的 JuanGo，請先更新 App');
+    // 第 2 版的備份省略了字典裡就有的內容和預設值，先補回來
+    for (final raw in j['words'] as List) {
+      if (raw is! Map<String, dynamic>) continue;
+      final d = _dictionary(raw['term'] as String? ?? '');
+      if (d != null) {
+        raw.putIfAbsent('ipa', () => d.ipa);
+        raw.putIfAbsent('pos', () => d.pos);
+        raw.putIfAbsent('meanings', () => List.of(d.zh));
+        raw.putIfAbsent('definition', () => d.def);
+        raw.putIfAbsent('example', () => d.ex);
+        raw.putIfAbsent('exampleZh', () => d.exZh);
+        raw.putIfAbsent('cefr', () => d.lv);
+      }
+      if (raw['addedAt'] != null) {
+        raw.putIfAbsent('favorite', () => false);
+        raw.putIfAbsent('inMyWords', () => true);
+      }
+    }
     return BackupFile(j);
   }
 

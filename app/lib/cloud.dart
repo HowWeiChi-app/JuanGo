@@ -354,6 +354,66 @@ class Cloud extends ChangeNotifier {
     }
   }
 
+  // MARK: 分享代碼
+
+  static const _shareCodesKey = 'cloud.shareCodes';
+
+  /// 上傳一個清單，回傳代碼；同一個清單再分享一次會更新同一個代碼，並重新計算 72 小時（由伺服器決定）
+  Future<String> share(Map<String, dynamic> listFile, String key) async {
+    final lists = listFile['lists'] as List;
+    final raw = lists.isEmpty ? '清單' : (lists.first as Map)['name'] as String? ?? '清單';
+    final name = raw.length > 60 ? raw.substring(0, 60) : raw;
+    final body = {'name': name, 'data': listFile, 'word_count': (listFile['words'] as List).length};
+    final prefs = await SharedPreferences.getInstance();
+    final codes = Map<String, String>.from(jsonDecode(prefs.getString(_shareCodesKey) ?? '{}') as Map);
+    final old = codes[key];
+    if (old != null) {
+      final rows = jsonDecode(await _send(_rest('shared_lists', {'code': 'eq.$old'}), 'PATCH', json: body, prefer: 'return=representation')) as List;
+      if (rows.isNotEmpty) return old;
+    }
+    final rows = jsonDecode(await _send(_rest('shared_lists'), 'POST', json: body, prefer: 'return=representation')) as List;
+    final code = rows.isEmpty ? null : (rows.first as Map)['code'] as String?;
+    if (code == null) throw const CloudFailure('建立分享代碼失敗');
+    codes[key] = code;
+    await prefs.setString(_shareCodesKey, jsonEncode(codes));
+    return code;
+  }
+
+  /// 不用登入也能用代碼拿清單
+  Future<BackupFile> fetch(String code) async {
+    final rows = jsonDecode(await _send(_rest('rpc/get_shared_list'), 'POST', json: {'p_code': code}, auth: signedIn)) as List;
+    if (rows.isEmpty) throw CloudFailure('找不到代碼「${pretty(code)}」的清單，可能打錯了，或已經超過 72 小時');
+    try {
+      return AppStore.parseMap((rows.first as Map)['data'] as Map<String, dynamic>?);
+    } on FormatException catch (e) {
+      throw CloudFailure(e.message);
+    } on TypeError {
+      throw const CloudFailure('清單的格式不對');
+    }
+  }
+
+  Future<List<SharedList>> myLists() async {
+    final rows = jsonDecode(await _send(
+      _rest('shared_lists', {'select': 'code,name,word_count,expires_at', 'order': 'updated_at.desc'}),
+      'GET',
+    )) as List;
+    return rows.map((r) => SharedList.fromJson(r as Map<String, dynamic>)).toList();
+  }
+
+  Future<void> deleteList(String code) async {
+    await _send(_rest('shared_lists', {'code': 'eq.$code'}), 'DELETE');
+    final prefs = await SharedPreferences.getInstance();
+    final codes = Map<String, String>.from(jsonDecode(prefs.getString(_shareCodesKey) ?? '{}') as Map)
+      ..removeWhere((_, v) => v == code);
+    await prefs.setString(_shareCodesKey, jsonEncode(codes));
+  }
+
+  /// "K7Q3P9XM" → "K7Q3-P9XM"
+  static String pretty(String code) {
+    final c = code.toUpperCase().replaceAll(RegExp('[^A-Z0-9]'), '');
+    return c.length == 8 ? '${c.substring(0, 4)}-${c.substring(4)}' : c;
+  }
+
   // MARK: 連線
 
   Future<String> _send(Uri url, String method, {Map<String, dynamic>? json, String? prefer, bool auth = true}) async {
@@ -387,4 +447,26 @@ class Cloud extends ChangeNotifier {
 class _HttpFailure extends CloudFailure {
   const _HttpFailure(this.status, super.message);
   final int status;
+}
+
+/// 自己分享出去的清單
+class SharedList {
+  SharedList({required this.code, required this.name, required this.wordCount, this.expiresAt});
+  factory SharedList.fromJson(Map<String, dynamic> j) => SharedList(
+        code: j['code'] as String,
+        name: j['name'] as String? ?? '',
+        wordCount: j['word_count'] as int? ?? 0,
+        expiresAt: DateTime.tryParse(j['expires_at'] as String? ?? ''),
+      );
+  final String code, name;
+  final int wordCount;
+  final DateTime? expiresAt;
+
+  /// 還剩幾小時失效（無條件進位，過期是 0）
+  int get hoursLeft {
+    final e = expiresAt;
+    if (e == null) return 72;
+    final m = e.difference(DateTime.now()).inMinutes;
+    return m <= 0 ? 0 : (m + 59) ~/ 60;
+  }
 }

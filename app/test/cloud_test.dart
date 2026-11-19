@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:juango/cloud.dart';
 import 'package:juango/dictionary.dart';
+import 'package:juango/models.dart';
 import 'package:juango/store.dart';
 
 import 'harness.dart';
@@ -215,8 +216,46 @@ void main() {
     expect(c.session?.refreshToken, 'r1');
   });
 
+  test('分享代碼：第一次建立，同一個清單再分享就更新同一個代碼', () async {
+    final sent = <String>[];
+    final c = cloud((r) async {
+      sent.add('${r.method} ${r.url.path}?${r.url.query}');
+      if (r.method == 'POST') {
+        expect((jsonDecode(r.body) as Map)['name'], '期中考');
+        return http.Response.bytes(utf8.encode(jsonEncode([{'code': 'K7Q3P9XM'}])), 201);
+      }
+      return http.Response.bytes(utf8.encode(jsonEncode([{'code': 'K7Q3P9XM'}])), 200);
+    });
+    c.handle(_link());
+    AppStore.shared.add(Dict.all.first);
+    final file = AppStore.shared.listFile('期中考', AppStore.shared.wordList);
+    expect(await c.share(file, 'custom:1'), 'K7Q3P9XM');
+    expect(await c.share(file, 'custom:1'), 'K7Q3P9XM');
+    expect(sent.first, startsWith('POST /rest/v1/shared_lists'));
+    expect(sent.last, startsWith('PATCH /rest/v1/shared_lists?code=eq.K7Q3P9XM'));
+    expect(Cloud.pretty('k7q3p9xm'), 'K7Q3-P9XM');
+  });
+
+  test('過期或打錯的代碼給看得懂的訊息；拿得到的清單能讀', () async {
+    final list = AppStore.shared.listFile('朋友的', [Word.fromEntry(Dict.all.first)]);
+    var rows = <Object>[];
+    final c = cloud((_) async => http.Response.bytes(utf8.encode(jsonEncode(rows)), 200));
+    await expectLater(c.fetch('K7Q3-P9XM'), throwsA(predicate((e) => '$e'.contains('72 小時'))));
+    rows = [{'data': list}];
+    final f = await c.fetch('K7Q3-P9XM');
+    expect(f.isBackup, isFalse);
+    expect(f.listName, '朋友的');
+  });
+
+  test('分享中的清單顯示還剩幾小時，過期的是 0', () {
+    final now = DateTime.now();
+    expect(SharedList(code: 'A', name: 'a', wordCount: 1, expiresAt: now.add(const Duration(hours: 71, minutes: 10))).hoursLeft, 72);
+    expect(SharedList(code: 'A', name: 'a', wordCount: 1, expiresAt: now.add(const Duration(minutes: 5))).hoursLeft, 1);
+    expect(SharedList(code: 'A', name: 'a', wordCount: 1, expiresAt: now.subtract(const Duration(minutes: 1))).hoursLeft, 0);
+  });
+
   test('比 App 新的備份格式不會被硬讀', () async {
-    final c = cloud((_) async => _rows({..._iosBackup(), 'format': 2}));
+    final c = cloud((_) async => _rows({..._iosBackup(), 'format': 3}));
     c.handle(_link());
     await expectLater(c.sync(), throwsA(predicate((e) => '$e'.contains('較新版'))));
     expect(AppStore.shared.word('resilient'), isNull);

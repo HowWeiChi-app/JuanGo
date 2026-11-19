@@ -112,6 +112,33 @@ void main() {
     expect(restored.wordsIn(restored.lists.single).map((w) => w.term), ['maintain']);
   });
 
+  test('備份省略字典裡就有的內容，還原時補回來；自己改過的意思照樣保留', () {
+    final s = AppStore.shared;
+    final e = Dict.all.firstWhere((e) => e.zh.isNotEmpty && e.ex.isNotEmpty && Dict.lookup(e.w)?.w == e.w);
+    final mine = Dict.all.firstWhere((x) => x.w != e.w && x.zh.isNotEmpty && Dict.lookup(x.w)?.w == x.w);
+    s.add(e);
+    s.add(mine);
+    s.word(mine.w)!.meanings = ['我自己的意思'];
+    final backup = s.fullBackup();
+    final words = (backup['words'] as List).cast<Map<String, dynamic>>();
+    final plain = words.firstWhere((r) => r['term'] == e.w);
+    expect(plain.keys, isNot(contains('meanings')));
+    expect(plain.keys, isNot(contains('example')));
+    expect(plain.keys, isNot(contains('inMyWords')));
+    expect(words.firstWhere((r) => r['term'] == mine.w)['meanings'], ['我自己的意思']);
+
+    final text = jsonEncode(backup);
+    AppStore.resetForTest();
+    final restored = AppStore.shared;
+    restored.restore(AppStore.parseFile(text), settings: false);
+    final w = restored.word(e.w)!;
+    expect(w.meanings, e.zh);
+    expect(w.example, e.ex);
+    expect(w.ipa, e.ipa);
+    expect(w.inMyWords, isTrue);
+    expect(restored.word(mine.w)!.meanings, ['我自己的意思']);
+  });
+
   test('壞掉的備份檔會被擋下來', () {
     expect(() => AppStore.parseFile('not json'), throwsFormatException);
     expect(() => AppStore.parseFile('{"app":"Other"}'), throwsFormatException);

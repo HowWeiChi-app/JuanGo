@@ -35,7 +35,15 @@ final class Cloud {
         var name: String
         var word_count: Int
         var updated_at: String?
+        var expires_at: String?
         var id: String { code }
+        /// Whole hours left before the code stops working (0 once it has expired).
+        var hoursLeft: Int {
+            guard let s = expires_at else { return 72 }
+            let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            guard let d = f.date(from: s) ?? ISO8601DateFormatter().date(from: s) else { return 72 }
+            return max(0, Int((d.timeIntervalSinceNow / 3600).rounded(.up)))
+        }
     }
 
     private(set) var session: Session?
@@ -201,7 +209,8 @@ final class Cloud {
 
     // MARK: Share codes
 
-    /// Uploads a list and returns its code; sharing the same list again updates it under the same code.
+    /// Uploads a list and returns its code; sharing the same list again updates it under the same code
+    /// and gives it another 72 hours (the server sets the expiry).
     func share(_ f: BackupFile, key: String) async throws -> String {
         let name = String((f.lists.first?.name ?? "清單").prefix(60))
         let body: [String: Any] = ["name": name, "data": try Self.json(f), "word_count": f.words.count,
@@ -225,14 +234,14 @@ final class Cloud {
     func fetch(code: String) async throws -> BackupFile {
         let d = try await send(rest("rpc/get_shared_list"), method: "POST", json: ["p_code": code], auth: session != nil)
         guard let rows = try JSONSerialization.jsonObject(with: d) as? [[String: Any]], let data = rows.first?["data"] else {
-            throw Failure(message: "找不到代碼「\(Self.pretty(code))」的清單")
+            throw Failure(message: "找不到代碼「\(Self.pretty(code))」的清單，可能打錯了，或已經超過 72 小時")
         }
         return try Self.decode(data)
     }
 
     func myLists() async throws -> [SharedList] {
         var c = URLComponents(url: rest("shared_lists"), resolvingAgainstBaseURL: false)!
-        c.queryItems = [URLQueryItem(name: "select", value: "code,name,word_count,updated_at"),
+        c.queryItems = [URLQueryItem(name: "select", value: "code,name,word_count,updated_at,expires_at"),
                         URLQueryItem(name: "order", value: "updated_at.desc")]
         return try JSONDecoder().decode([SharedList].self, from: try await send(c.url!, method: "GET"))
     }
@@ -287,6 +296,7 @@ final class Cloud {
         let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
         guard let f = try? d.decode(BackupFile.self, from: JSONSerialization.data(withJSONObject: any)), f.app == "JuanGo"
         else { throw Failure(message: "雲端資料格式不對") }
+        guard f.format <= 2 else { throw Failure(message: "雲端的備份來自較新版的 JuanGo，請先更新 App") }
         return f
     }
 }

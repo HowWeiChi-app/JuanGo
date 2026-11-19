@@ -445,7 +445,7 @@ struct ListWordsView: View {
         do {
             let code = try await Cloud.shared.share(Backup.list(name: title, words: routeWords), key: "\(route)")
             shareCodeValue = Cloud.pretty(code)
-            shareResult = "分享代碼：\(Cloud.pretty(code))\n別人在「新增 › 輸入分享代碼」輸入就能加入這個清單（\(routeWords.count) 個字）。之後再分享一次會更新同一個代碼的內容。"
+            shareResult = "分享代碼：\(Cloud.pretty(code))\n別人在「新增 › 輸入分享代碼」輸入就能加入這個清單（\(routeWords.count) 個字）。代碼 72 小時後失效，再分享一次會更新內容並重新計算 72 小時。"
         } catch { shareResult = error.localizedDescription }
     }
 

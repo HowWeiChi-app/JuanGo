@@ -41,13 +41,40 @@ create policy "owner manages" on public.shared_lists
   for all to authenticated
   using (owner = auth.uid()) with check (owner = auth.uid());
 
--- fetching by code goes through this function only, so lists can't be listed or searched
-create or replace function public.get_shared_list(p_code text)
-returns table (code text, name text, data jsonb, word_count int, updated_at timestamptz)
+-- 3. Codes last 72 hours from when the list was last shared. Sharing it again restarts the clock;
+--    the app can't choose its own expiry because the trigger always sets it.
+alter table public.shared_lists add column if not exists expires_at timestamptz not null default now() + interval '72 hours';
+
+create or replace function public.shared_list_expiry() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  new.expires_at := now() + interval '72 hours';
+  new.updated_at := now();
+  return new;
+end $$;
+drop trigger if exists shared_list_expiry on public.shared_lists;
+create trigger shared_list_expiry before insert or update on public.shared_lists
+  for each row execute function public.shared_list_expiry();
+
+-- fetching by code goes through this function only, so lists can't be listed or searched;
+-- an expired code finds nothing even before the hourly clean-up removes it
+drop function if exists public.get_shared_list(text);
+create function public.get_shared_list(p_code text)
+returns table (code text, name text, data jsonb, word_count int, updated_at timestamptz, expires_at timestamptz)
 language sql stable security definer set search_path = public as $$
-  select s.code, s.name, s.data, s.word_count, s.updated_at
+  select s.code, s.name, s.data, s.word_count, s.updated_at, s.expires_at
   from public.shared_lists s
-  where s.code = upper(replace(trim(p_code), '-', ''))
+  where s.code = upper(replace(trim(p_code), '-', '')) and s.expires_at > now()
 $$;
 revoke all on function public.get_shared_list(text) from public;
 grant execute on function public.get_shared_list(text) to anon, authenticated;
+
+-- 4. Expired lists are deleted every hour so they stop taking space.
+create or replace function public.delete_expired_shared_lists() returns void
+language sql security definer set search_path = public as $$
+  delete from public.shared_lists where expires_at <= now()
+$$;
+revoke all on function public.delete_expired_shared_lists() from public, anon, authenticated;
+
+create extension if not exists pg_cron;
+select cron.schedule('delete-expired-shared-lists', '17 * * * *', 'select public.delete_expired_shared_lists()');

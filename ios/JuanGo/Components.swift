@@ -446,22 +446,8 @@ struct MasteryCard: View {
 
 // MARK: - Achievement badge
 
-/// Regular hexagon, pointy top.
-struct Hexagon: Shape {
-    func path(in r: CGRect) -> Path {
-        var p = Path()
-        let c = CGPoint(x: r.midX, y: r.midY), rad = min(r.width, r.height) / 2
-        for k in 0..<6 {
-            let a = CGFloat(k) * .pi / 3 - .pi / 2
-            let pt = CGPoint(x: c.x + rad * cos(a), y: c.y + rad * sin(a))
-            if k == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
-        }
-        p.closeSubpath()
-        return p
-    }
-}
-
-/// JuanGo's achievement: a flat hexagon in the flame colour with tier pips underneath.
+/// JuanGo's achievement: a struck metal medal. The rim's metal climbs with the tier
+/// (bronze, silver, gold, platinum, diamond); the face is the theme colour with a raised icon.
 struct BadgeMedal: View {
     let kind: BadgeKind
     let value: Int
@@ -470,18 +456,10 @@ struct BadgeMedal: View {
         let tier = kind.earned(for: value)
         let earned = tier > 0
         VStack(spacing: 6) {
-            ZStack {
-                Hexagon().fill(earned ? AnyShapeStyle(Color.themeAccent)
-                                      : AnyShapeStyle(Color.secondary.opacity(0.14)))
-                Hexagon().inset(size * 0.09).stroke(earned ? Color.white.opacity(0.55) : Color.secondary.opacity(0.25),
-                                                     style: StrokeStyle(lineWidth: 1.5, dash: earned ? [] : [3, 3]))
-                LIcon(kind.symbol).font(.app(size: size * 0.34, .bold))
-                    .foregroundStyle(earned ? Color.white : Color.secondary.opacity(0.6))
-            }
-            .frame(width: size, height: size)
+            MedalCoin(tier: tier, symbol: kind.symbol, size: size)
             HStack(spacing: 3) {
                 ForEach(0..<kind.tiers.count, id: \.self) { i in
-                    Capsule().fill(i < tier ? Color.themeAccent : Color.secondary.opacity(0.25)).frame(width: 8, height: 3)
+                    Capsule().fill(i < tier ? MedalCoin.metal(i + 1).mid : Color.secondary.opacity(0.25)).frame(width: 8, height: 3)
                 }
             }
             Text(kind.title).font(.app(.caption2, .semibold)).foregroundStyle(.secondary)
@@ -493,12 +471,60 @@ struct BadgeMedal: View {
     }
 }
 
-private extension Hexagon {
-    func inset(_ d: CGFloat) -> some Shape { InsetHexagon(d: d) }
-}
-private struct InsetHexagon: Shape {
-    let d: CGFloat
-    func path(in r: CGRect) -> Path { Hexagon().path(in: r.insetBy(dx: d, dy: d)) }
+/// The medal itself. Tapping an earned one flips it round once.
+struct MedalCoin: View {
+    let tier: Int
+    let symbol: String
+    var size: CGFloat = 64
+    @State private var spin = 0.0
+
+    static func metal(_ tier: Int) -> (light: Color, mid: Color, dark: Color) {
+        let m: [(UInt32, UInt32, UInt32)] = [
+            (0xF2C29A, 0xC27C47, 0x7A4421),   // bronze
+            (0xFFFFFF, 0xC3C9CF, 0x767E87),   // silver
+            (0xFFF0A8, 0xDDAE34, 0x8E6610),   // gold
+            (0xF2FAFF, 0xAFCBD8, 0x5F7D8B),   // platinum
+            (0xF1E7FF, 0xB59DEE, 0x5A45A3),   // diamond
+        ]
+        let t = m[min(max(tier, 1), m.count) - 1]
+        return (Color(hex: t.0), Color(hex: t.1), Color(hex: t.2))
+    }
+
+    var body: some View {
+        let m = Self.metal(tier)
+        ZStack {
+            if tier > 0 {
+                // rim: brushed metal catching the light at two points
+                Circle().fill(AngularGradient(colors: [m.light, m.mid, m.dark, m.mid, m.light, m.mid, m.dark, m.mid, m.light], center: .center))
+                // bevel down into the face
+                Circle().inset(by: size * 0.085).fill(LinearGradient(colors: [m.dark, m.light], startPoint: .top, endPoint: .bottom))
+                Circle().inset(by: size * 0.105).fill(Color.themeAccent)
+                Circle().inset(by: size * 0.105)
+                    .fill(LinearGradient(colors: [.white.opacity(0.34), .clear, .black.opacity(0.24)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                Circle().inset(by: size * 0.16).stroke(m.light.opacity(0.65), lineWidth: max(1, size * 0.018))
+                LIcon(symbol).font(.app(size: size * 0.34, .bold))
+                    .foregroundStyle(LinearGradient(colors: [.white, m.light], startPoint: .top, endPoint: .bottom))
+                    .shadow(color: .black.opacity(0.35), radius: 0.5, x: 0, y: size * 0.02)
+                // a soft highlight across the top
+                Ellipse().fill(LinearGradient(colors: [.white.opacity(0.42), .white.opacity(0)], startPoint: .top, endPoint: .bottom))
+                    .frame(width: size * 0.66, height: size * 0.36).offset(y: -size * 0.22)
+            } else {
+                Circle().fill(Color.secondary.opacity(0.12))
+                Circle().inset(by: size * 0.1).stroke(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+                LIcon(symbol).font(.app(size: size * 0.34, .bold)).foregroundStyle(Color.secondary.opacity(0.55))
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .compositingGroup()
+        .shadow(color: .black.opacity(tier > 0 ? 0.25 : 0), radius: size * 0.05, y: size * 0.04)
+        .rotation3DEffect(.degrees(spin), axis: (x: 0, y: 1, z: 0), perspective: 0.5)
+        .contentShape(Circle())
+        .onTapGesture {
+            guard tier > 0 else { return }
+            withAnimation(.spring(duration: 0.9, bounce: 0.2)) { spin += 360 }
+        }
+    }
 }
 
 /// Square label for round icon buttons (back, close, share).

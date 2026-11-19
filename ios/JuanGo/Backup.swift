@@ -10,6 +10,7 @@ struct BackupFile: Codable {
     enum Kind: String, Codable { case backup, list }
 
     var app = "JuanGo"
+    /// 1: every word written out in full. 2: backups leave out what the built-in dictionary already has.
     var format = 1
     var kind: Kind
     var exportedAt = Date()
@@ -30,6 +31,39 @@ struct BackupFile: Codable {
         var favorite: Bool? = nil
         var inMyWords: Bool? = nil
         var reviewCount: Int? = nil
+
+        private enum CodingKeys: String, CodingKey {
+            case term, ipa, pos, meanings, definition, example, exampleZh, cefr
+            case srsLevel, dueDate, lastReviewed, addedAt, favorite, inMyWords, reviewCount
+        }
+
+        /// The built-in entry with exactly this spelling, whose text a backup leaves out.
+        private static func dictionary(_ term: String) -> DictEntry? {
+            Dictionary_.lookup(term).flatMap { $0.w == term ? $0 : nil }
+        }
+
+        /// Backup records (they carry progress) skip what the dictionary already has and the usual values,
+        /// which takes most of the size; shared lists keep everything so any version can read them.
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            let compact = addedAt != nil
+            let d = compact ? Self.dictionary(term) : nil
+            try c.encode(term, forKey: .term)
+            if d?.ipa != ipa { try c.encode(ipa, forKey: .ipa) }
+            if d?.pos != pos { try c.encode(pos, forKey: .pos) }
+            if d?.zh != meanings { try c.encode(meanings, forKey: .meanings) }
+            if d?.def != definition { try c.encode(definition, forKey: .definition) }
+            if d?.ex != example { try c.encode(example, forKey: .example) }
+            if d?.exZh != exampleZh { try c.encode(exampleZh, forKey: .exampleZh) }
+            if d?.lv != cefr { try c.encode(cefr, forKey: .cefr) }
+            try c.encodeIfPresent(srsLevel, forKey: .srsLevel)
+            try c.encodeIfPresent(dueDate, forKey: .dueDate)
+            try c.encodeIfPresent(lastReviewed, forKey: .lastReviewed)
+            try c.encodeIfPresent(addedAt, forKey: .addedAt)
+            try c.encodeIfPresent(reviewCount, forKey: .reviewCount)
+            if !compact || favorite == true { try c.encodeIfPresent(favorite, forKey: .favorite) }
+            if !compact || inMyWords == false { try c.encodeIfPresent(inMyWords, forKey: .inMyWords) }
+        }
     }
     struct ListRecord: Codable {
         var name: String
@@ -80,6 +114,34 @@ struct BackupFile: Codable {
     }
 }
 
+// Decoding lives in an extension so the struct keeps its memberwise initializer.
+extension BackupFile.WordRecord {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        term = try c.decode(String.self, forKey: .term)
+        // format 2 backups leave out text that matches the built-in dictionary
+        let d = Self.dictionary(term)
+        ipa = try c.decodeIfPresent(String.self, forKey: .ipa) ?? d?.ipa ?? ""
+        pos = try c.decodeIfPresent(String.self, forKey: .pos) ?? d?.pos ?? ""
+        meanings = try c.decodeIfPresent([String].self, forKey: .meanings) ?? d?.zh ?? []
+        definition = try c.decodeIfPresent(String.self, forKey: .definition) ?? d?.def ?? ""
+        example = try c.decodeIfPresent(String.self, forKey: .example) ?? d?.ex ?? ""
+        exampleZh = try c.decodeIfPresent(String.self, forKey: .exampleZh) ?? d?.exZh ?? ""
+        cefr = try c.decodeIfPresent(String.self, forKey: .cefr) ?? d?.lv ?? ""
+        srsLevel = try c.decodeIfPresent(Int.self, forKey: .srsLevel)
+        dueDate = try c.decodeIfPresent(Date.self, forKey: .dueDate)
+        lastReviewed = try c.decodeIfPresent(Date.self, forKey: .lastReviewed)
+        addedAt = try c.decodeIfPresent(Date.self, forKey: .addedAt)
+        reviewCount = try c.decodeIfPresent(Int.self, forKey: .reviewCount)
+        favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite)
+        inMyWords = try c.decodeIfPresent(Bool.self, forKey: .inMyWords)
+        if addedAt != nil {   // a backup record: the usual values are left out
+            favorite = favorite ?? false
+            inMyWords = inMyWords ?? true
+        }
+    }
+}
+
 // MARK: - Export / restore
 
 @MainActor
@@ -94,7 +156,7 @@ enum Backup {
         let words = (try? ctx.fetch(FetchDescriptor<Word>(sortBy: [SortDescriptor(\.addedAt)]))) ?? []
         let lists = (try? ctx.fetch(FetchDescriptor<WordList>(sortBy: [SortDescriptor(\.createdAt)]))) ?? []
         let logs = (try? ctx.fetch(FetchDescriptor<ReviewLog>(sortBy: [SortDescriptor(\.date)]))) ?? []
-        return BackupFile(kind: .backup,
+        return BackupFile(format: 2, kind: .backup,
                           words: words.map { record($0, progress: true) },
                           lists: lists.map { .init(name: $0.name, createdAt: $0.createdAt, terms: $0.words.map(\.term)) },
                           logs: logs.map { .init(term: $0.term, date: $0.date, result: $0.result, wasNew: $0.wasNew) },
@@ -150,7 +212,7 @@ enum Backup {
         guard let f = try? d.decode(BackupFile.self, from: data), f.app == "JuanGo" else {
             throw Failure(message: "這不是 JuanGo 的備份或清單檔")
         }
-        guard f.format <= 1 else { throw Failure(message: "這個檔案來自較新版的 JuanGo，請先更新 App") }
+        guard f.format <= 2 else { throw Failure(message: "這個檔案來自較新版的 JuanGo，請先更新 App") }
         return f
     }
 

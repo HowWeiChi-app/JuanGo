@@ -95,7 +95,7 @@ struct ImportTab: View {
                         catch { withAnimation { toast = error.localizedDescription } }
                     }
                 }
-            } message: { Text("朋友分享清單時拿到的 8 碼代碼，不用登入也能加入。") }
+            } message: { Text("朋友分享清單時拿到的 8 碼代碼，72 小時內有效，不用登入也能加入。") }
             .task {   // simulator testing: SIMCTL_CHILD_JUANGO_LOOKUP=word opens the 確認單字 sheet
                 if let t = ProcessInfo.processInfo.environment["JUANGO_LOOKUP"] { lookup = LookupTerm(term: t) }
             }
