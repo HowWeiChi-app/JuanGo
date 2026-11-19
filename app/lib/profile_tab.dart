@@ -456,7 +456,7 @@ class _SettingsRoot extends StatelessWidget {
                   '雅思、托福字表與中文解釋、音標整理自 ECDICT（MIT 授權），內容可能有誤，可在單字頁自行編輯。學習資料預設只存在這台裝置，登入後會備份到雲端。',
               children: [
                 RowTile(title: '字典', value: '${Dict.all.length} 個內建單字'),
-                const RowTile(title: '版本', value: '0.1.0'),
+                const RowTile(title: '版本', value: '0.1.1'),
               ],
             ),
           ],
