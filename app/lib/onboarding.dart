@@ -18,13 +18,17 @@ import 'widgets.dart';
 AppSettings get _settings => AppSettings.shared;
 
 class OnboardingView extends StatefulWidget {
-  const OnboardingView({super.key});
+  const OnboardingView({super.key, this.testOnly = false, this.onTested});
+
+  /// 只有程度測驗和結果（對戰前用）：不能略過，結果頁的按鈕把程度交回去
+  final bool testOnly;
+  final ValueChanged<String>? onTested;
   @override
   State<OnboardingView> createState() => _OnboardingViewState();
 }
 
 class _OnboardingViewState extends State<OnboardingView> {
-  int _page = 0;
+  late int _page = widget.testOnly ? 1 : 0;
   LevelTest _test = LevelTest();
 
   /// 剛點的選項（-1 是不知道），下一題出現前先顯示對錯
@@ -53,6 +57,8 @@ class _OnboardingViewState extends State<OnboardingView> {
   }
 
   void _finishTest() {
+    // 只有 18 題全部作答才算做完測驗（不知道也算作答，略過不算）
+    if (_test.isDone) _settings.update((s) => s.levelTested = true);
     if (_test.picks.isNotEmpty) {
       _settings.update((s) => s.level = _test.estimate);
       _go(2);
@@ -386,7 +392,7 @@ class _OnboardingViewState extends State<OnboardingView> {
     final p = Palette.of(context);
     Widget primary(String label, VoidCallback onTap) => Expanded(child: PrimaryButton(label: label, onTap: onTap));
     return Row(children: [
-      if (_page > 0) ...[
+      if (_page > 0 && !widget.testOnly) ...[
         PillButton(icon: Icons.chevron_left_rounded, width: 64, semantic: '上一步', onTap: _back),
         const SizedBox(width: 10),
       ],
@@ -404,9 +410,12 @@ class _OnboardingViewState extends State<OnboardingView> {
                 onTap: _test.picks.isEmpty || _shown != null ? null : () => setState(_test.undo),
               ),
             ),
-            const SizedBox(width: 10),
-            PillButton(label: '略過', width: 88, onTap: _finishTest),
+            if (!widget.testOnly) ...[
+              const SizedBox(width: 10),
+              PillButton(label: '略過', width: 88, onTap: _finishTest),
+            ],
           ],
+        2 when widget.testOnly => [primary('開始對戰', () => widget.onTested?.call(_test.estimate))],
         2 => [primary('設定學習目標', () => _go(3))],
         3 => [primary('繼續', () => _go(4))],
         _ => [primary('完成並開始使用', () => _settings.update((s) => s.onboarded = true))],
@@ -418,7 +427,7 @@ class _OnboardingViewState extends State<OnboardingView> {
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
     return PopScope(
-      canPop: _page == 0,
+      canPop: _page == 0 || widget.testOnly,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _back();
       },
@@ -455,10 +464,13 @@ class _OnboardingViewState extends State<OnboardingView> {
               ),
             ),
             Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: _bottomBar()),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
-              child: PageDots(count: 5, index: _page),
-            ),
+            if (widget.testOnly)
+              const SizedBox(height: 14)
+            else
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
+                child: PageDots(count: 5, index: _page),
+              ),
           ]),
         ),
       ),

@@ -16,6 +16,8 @@ class AppSettings extends ChangeNotifier {
   bool onboarded = false, reminderOn = false, reminderAsked = false, muted = false;
   bool showTranslation = true, haptics = true, exploreTipsDone = false, studyRulesSeen = false;
   bool listShowMeaning = true, detailAutoSpeak = false, exploreShowIPA = true;
+  /// 18 題程度測驗有做完才是 true；線上對戰要先做完
+  bool levelTested = false;
   String language = 'zh-Hant', level = '3', themeID = 'phoenix';
   int dailyGoal = 10, reminderMinutes = 20 * 60, appearance = 0, fontStyle = 0, practiceLimit = 20;
   double speechRate = 0.45;
@@ -23,6 +25,7 @@ class AppSettings extends ChangeNotifier {
   Future<void> load() async {
     final p = _p = await SharedPreferences.getInstance();
     onboarded = p.getBool('onboarded') ?? false;
+    levelTested = p.getBool('levelTested') ?? false;
     reminderOn = p.getBool('reminderOn') ?? false;
     reminderAsked = p.getBool('reminderAsked') ?? false;
     muted = p.getBool('muted') ?? false;
@@ -63,6 +66,7 @@ class AppSettings extends ChangeNotifier {
     final p = _p;
     if (p == null) return;
     p.setBool('onboarded', onboarded);
+    p.setBool('levelTested', levelTested);
     p.setBool('reminderOn', reminderOn);
     p.setBool('reminderAsked', reminderAsked);
     p.setBool('muted', muted);

@@ -123,18 +123,42 @@ language sql volatile set search_path = public as $$
       || lpad(floor(random() * 100)::int::text, 2, '0')
 $$;
 
--- Creates the caller's player on first use, starting from the level the placement test gave them.
+-- Creates the caller's player on first use. p_level is the 18-question level test's result, or null when the
+-- app hasn't had the test done yet. The first time a level comes in it is recorded, and the rating is raised to
+-- that level's start if it was lower (players from before the test was required started from 第 3 級).
+alter table public.battle_players add column if not exists placed_level smallint;
+
+create or replace function public.battle_start_rating(p_level int) returns int
+language sql immutable set search_path = public as $$
+  select greatest(100, 200 * (least(6, greatest(1, coalesce(p_level, 3))) - 1))
+$$;
+
 create or replace function public.battle_player(p_level int) returns public.battle_players
 language plpgsql security definer set search_path = public as $$
 declare
   me uuid := auth.uid();
+  -- greatest() skips nulls, so an untested player (null) has to be kept null by hand
+  lv int := case when p_level is null then null else least(6, greatest(1, p_level)) end;
   p  public.battle_players;
 begin
   if me is null then raise exception '請先登入'; end if;
-  insert into battle_players (user_id, name, rating)
-  values (me, battle_new_name(), greatest(100, 200 * (least(6, greatest(1, coalesce(p_level, 3))) - 1)))
+  insert into battle_players (user_id, name, rating, placed_level)
+  values (me, battle_new_name(), battle_start_rating(lv), lv)
   on conflict (user_id) do nothing;
+  if lv is not null then
+    update battle_players set placed_level = lv, rating = greatest(rating, battle_start_rating(lv))
+    where user_id = me and placed_level is null;
+  end if;
   select * into p from battle_players where user_id = me;
+  return p;
+end $$;
+
+-- Matching, rooms and joining need the level test done.
+create or replace function public.battle_ready(p_level int) returns public.battle_players
+language plpgsql security definer set search_path = public as $$
+declare p public.battle_players := battle_player(p_level);
+begin
+  if p.placed_level is null then raise exception '請先完成 18 題程度測驗'; end if;
   return p;
 end $$;
 
@@ -214,7 +238,7 @@ end $$;
 create or replace function public.battle_find(p_level int) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
-  me     public.battle_players := battle_player(p_level);
+  me     public.battle_players := battle_ready(p_level);
   t      timestamptz := clock_timestamp();
   q      public.battle_queue;
   other  public.battle_queue;
@@ -293,7 +317,7 @@ $$;
 create or replace function public.battle_create_room(p_level int) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
-  me public.battle_players := battle_player(p_level);
+  me public.battle_players := battle_ready(p_level);
   c  text;
   mid uuid;
 begin
@@ -313,7 +337,7 @@ end $$;
 create or replace function public.battle_join(p_code text, p_level int) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
-  me public.battle_players := battle_player(p_level);
+  me public.battle_players := battle_ready(p_level);
   m  public.battle_matches;
 begin
   select * into m from battle_matches

@@ -2,11 +2,20 @@ import SwiftUI
 
 struct OnboardingView: View {
     @Environment(AppSettings.self) private var settings
-    @State private var page = 0
+    /// Only the level test and its result, for battles: no skipping, and the result page hands the level back.
+    var testOnly = false
+    var onTested: (String) -> Void = { _ in }
+    @State private var page: Int
     @State private var test = LevelTest()
     /// the option just tapped (-1: 不知道), shown in colour for a moment before the next question
     @State private var shown: Int?
     @State private var unsupportedLanguage = false
+
+    init(testOnly: Bool = false, onTested: @escaping (String) -> Void = { _ in }) {
+        self.testOnly = testOnly
+        self.onTested = onTested
+        _page = State(initialValue: testOnly ? 1 : 0)
+    }
 
     var body: some View {
         @Bindable var settings = settings
@@ -24,7 +33,7 @@ struct OnboardingView: View {
             .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
                                     removal: .move(edge: .leading).combined(with: .opacity)))
             bottomBar.padding(.horizontal, 20)
-            PageDots(count: 5, index: page).padding(.vertical, 14)
+            if testOnly { Color.clear.frame(height: 14) } else { PageDots(count: 5, index: page).padding(.vertical, 14) }
         }
         .animation(.spring(duration: 0.45), value: page)
         #if DEBUG
@@ -305,7 +314,7 @@ struct OnboardingView: View {
 
     @ViewBuilder private var bottomBar: some View {
         HStack(spacing: 10) {
-            if page > 0 {
+            if page > 0 && !testOnly {
                 Button { back() } label: { LIcon("chevron.left").font(.app(.headline)) }.accessibilityLabel("上一步")
                     .buttonStyle(PillButtonStyle()).frame(width: 64)
             }
@@ -316,7 +325,9 @@ struct OnboardingView: View {
                     .buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
             case 1:
                 Button("撤銷") { test.undo() }.buttonStyle(PillButtonStyle(foreground: .secondary)).disabled(test.picks.isEmpty || shown != nil)
-                Button("略過") { finishTest() }.buttonStyle(PillButtonStyle()).frame(width: 88)
+                if !testOnly { Button("略過") { finishTest() }.buttonStyle(PillButtonStyle()).frame(width: 88) }
+            case 2 where testOnly:
+                Button("開始對戰") { onTested(test.estimate) }.buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
             case 2:
                 Button("設定學習目標") { page = 3 }.buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
             case 3:
@@ -334,34 +345,38 @@ struct OnboardingView: View {
     }
 
     private func finishTest() {
+        // only a test answered to the end counts for battles; 不知道 is an answer, 略過 is not
+        if test.isDone { settings.levelTested = true }
         if !test.picks.isEmpty { settings.level = test.estimate; page = 2 } else { page = 3 }
     }
 }
 
 struct ThemeGrid: View {
     @Binding var selection: String
-    /// A row of colour dots, the chosen one ringed and ticked, with its name underneath.
+    /// Swatches: a paper square with the theme colour as a band along the bottom (the same picker as BanGo).
+    /// The name is written in the paper colour, which stays readable when dark mode lightens the band.
     var body: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 0) {
-                ForEach(AppTheme.all) { t in
-                    let on = selection == t.id
-                    Button { selection = t.id } label: {
-                        Circle().fill(t.accent).frame(width: 32, height: 32)
-                            .overlay { if on { LIcon("checkmark").font(.app(size: 13, .bold)).foregroundStyle(.white) } }
-                            .padding(4)
-                            .overlay(Circle().strokeBorder(on ? t.accent : .clear, lineWidth: 2))
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                            .contentShape(Rectangle())
+        StackGrid(items: AppTheme.all, columns: 3, spacing: 10) { t in
+                Button { selection = t.id } label: {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Aa").font(.app(.title3, .bold)).foregroundStyle(t.accent)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                        Spacer(minLength: 0)
+                        HStack {
+                            Text(t.name).font(.app(.caption, .bold)).foregroundStyle(t.swatch)
+                            Spacer()
+                            if selection == t.id { LIcon("checkmark").font(.app(.caption, .bold)).foregroundStyle(t.swatch) }
+                        }
+                        .padding(.horizontal, 10).frame(height: 28).background(t.accent)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(t.name)
-                    .accessibilityAddTraits(on ? .isSelected : [])
-                }
-            }
-            Text(AppTheme.all.first { $0.id == selection }?.name ?? "").font(.app(.subheadline)).foregroundStyle(.secondary)
+                    .frame(height: 76)
+                    .background(t.swatch)
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
+                        .strokeBorder(selection == t.id ? Color.primary : .clear, lineWidth: 2))
+                }.buttonStyle(.plain)
+                .accessibilityAddTraits(selection == t.id ? .isSelected : [])
         }
-        .animation(.snappy, value: selection)
     }
 }
 

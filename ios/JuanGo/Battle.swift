@@ -52,14 +52,16 @@ final class BattleModel {
     private var clockOffset: Double = 0
     private var bestTrip = Double.infinity
     private var loop: Task<Void, Never>?
-    private let level: Int
+    /// nil until the 18-question level test is done; the server then refuses to match the player
+    private let level: Int?
+    private var levelArg: Any { level.map { $0 as Any } ?? NSNull() }
     private static let decoder: JSONDecoder = {
         let d = JSONDecoder()
         d.keyDecodingStrategy = .convertFromSnakeCase
         return d
     }()
 
-    init(level: String) { self.level = Int(level) ?? 3 }
+    init(level: String, tested: Bool) { self.level = tested ? Int(level) ?? 3 : nil }
 
     var serverNow: Double { Date.now.timeIntervalSince1970 * 1000 + clockOffset }
 
@@ -73,7 +75,7 @@ final class BattleModel {
         if isDemo { me?.name = name; return nil }
         #endif
         do {
-            me = try await call("battle_set_name", ["p_name": name, "p_level": level])
+            me = try await call("battle_set_name", ["p_name": name, "p_level": levelArg])
             return nil
         } catch {
             return error.localizedDescription.replacingOccurrences(of: "（\\d+）$", with: "", options: .regularExpression)
@@ -86,7 +88,7 @@ final class BattleModel {
         #endif
         guard Cloud.shared.signedIn else { me = nil; return }
         do {
-            me = try await call("battle_me", ["p_level": level])
+            me = try await call("battle_me", ["p_level": levelArg])
             meFailed = false
         } catch {
             meFailed = true
@@ -100,7 +102,7 @@ final class BattleModel {
             var failures = 0
             while !Task.isCancelled {
                 do {
-                    let t: BattleTicket = try await call("battle_find", ["p_level": level])
+                    let t: BattleTicket = try await call("battle_find", ["p_level": levelArg])
                     failures = 0
                     waited = t.waited ?? waited
                     if let id = t.match { play(id); return }
@@ -117,7 +119,7 @@ final class BattleModel {
         reset(.searching)
         loop = Task {
             do {
-                let t: BattleTicket = try await call("battle_create_room", ["p_level": level])
+                let t: BattleTicket = try await call("battle_create_room", ["p_level": levelArg])
                 guard let id = t.match, let code = t.code else { return }
                 phase = .room(code)
                 await poll(id)
@@ -129,7 +131,7 @@ final class BattleModel {
         reset(.searching)
         loop = Task {
             do {
-                let t: BattleTicket = try await call("battle_join", ["p_code": code, "p_level": level])
+                let t: BattleTicket = try await call("battle_join", ["p_code": code, "p_level": levelArg])
                 if let id = t.match { play(id) }
             } catch { fail(error) }
         }
@@ -270,23 +272,52 @@ struct BattleView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(\.dismiss) private var dismiss
     @State private var model: BattleModel?
+    /// showing the level test (kept up through its result page, after levelTested is already set)
+    @State private var placing = false
 
     var body: some View {
         Group {
-            if let model { content(model) } else { Color.clear }
+            if placing {
+                placement
+            } else if let model { content(model) } else { Color.clear }
         }
         .themedBackground()
         .onAppear {
-            guard model == nil else { return }
-            let m = BattleModel(level: settings.level)
-            model = m
+            placing = !settings.levelTested
             #if DEBUG
-            if let step = ProcessInfo.processInfo.environment["JUANGO_BATTLE"] { m.demo(step); return }
+            if ProcessInfo.processInfo.environment["JUANGO_BATTLE"] != nil { placing = false }
             #endif
-            Task { await m.load() }
+            if !placing { start() }
         }
         .onChange(of: model?.phase) { _, p in UIApplication.shared.isIdleTimerDisabled = p == .playing }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+    }
+
+    /// Everyone takes the 18-question level test once before their first battle, so ratings start where they belong.
+    private var placement: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("對戰前先測程度").font(.app(.title2, .bold))
+                    Text("做完 18 題，積分會從你的程度開始。").font(.app(.subheadline)).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button { dismiss() } label: { GlassCircleIcon(systemName: "xmark") }
+                    .buttonStyle(.glass).buttonBorderShape(.circle)
+            }
+            .padding(.horizontal, 20).padding(.top, 16)
+            OnboardingView(testOnly: true) { _ in placing = false; start() }
+        }
+    }
+
+    private func start() {
+        guard model == nil else { return }
+        let m = BattleModel(level: settings.level, tested: settings.levelTested)
+        model = m
+        #if DEBUG
+        if let step = ProcessInfo.processInfo.environment["JUANGO_BATTLE"] { m.demo(step); return }
+        #endif
+        Task { await m.load() }
     }
 
     @ViewBuilder private func content(_ m: BattleModel) -> some View {

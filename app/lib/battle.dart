@@ -12,6 +12,7 @@ import 'cloud.dart';
 import 'dictionary.dart';
 import 'exam.dart' show AnswerOption, AnswerState;
 import 'models.dart';
+import 'onboarding.dart';
 import 'settings.dart';
 import 'store.dart';
 import 'theme.dart';
@@ -102,10 +103,11 @@ class BattleState {
 enum BattlePhase { home, searching, room, playing, finished }
 
 class BattleModel extends ChangeNotifier {
-  BattleModel({String? level, this.resultDelay = const Duration(seconds: 3), this.pollEvery = const Duration(milliseconds: 500)})
-    : level = int.tryParse(level ?? AppSettings.shared.level) ?? 3;
+  /// 沒做完 18 題程度測驗時 level 是 null，伺服器就不讓這個人配對
+  BattleModel({String? level, bool? tested, this.resultDelay = const Duration(seconds: 3), this.pollEvery = const Duration(milliseconds: 500)})
+    : level = (tested ?? (level != null || AppSettings.shared.levelTested)) ? int.tryParse(level ?? AppSettings.shared.level) ?? 3 : null;
 
-  final int level;
+  final int? level;
   final Duration resultDelay, pollEvery;
 
   BattlePhase phase = BattlePhase.home;
@@ -389,24 +391,67 @@ class BattlePage extends StatefulWidget {
 }
 
 class _BattlePageState extends State<BattlePage> {
-  late final BattleModel _m = widget.model ?? BattleModel();
+  /// 第一次對戰前每個人都要做完 18 題程度測驗，積分才會從自己的程度開始
+  late bool _placing = widget.model == null && !AppSettings.shared.levelTested;
+  BattleModel? _model;
+  BattleModel get _m => _model!;
 
   @override
   void initState() {
     super.initState();
     Cloud.shared.addListener(_signedInChanged);
+    if (!_placing) _start();
+  }
+
+  void _start() {
+    _model = widget.model ?? BattleModel();
     unawaited(_m.load());
   }
 
   void _signedInChanged() {
-    if (_m.phase == BattlePhase.home) unawaited(_m.load());
+    if (_model?.phase == BattlePhase.home) unawaited(_m.load());
   }
 
   @override
   void dispose() {
     Cloud.shared.removeListener(_signedInChanged);
-    _m.dispose();
+    _model?.dispose();
     super.dispose();
+  }
+
+  Widget _placement() {
+    final p = Palette.of(context);
+    return ColoredBox(
+      color: p.bg,
+      child: Column(children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(20, MediaQuery.of(context).padding.top + 16, 20, 0),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('對戰前先測程度', style: ts(F.title2, w: w7)),
+                const SizedBox(height: 4),
+                Text('做完 18 題，積分會從你的程度開始。', style: ts(F.sub, c: p.sec)),
+              ]),
+            ),
+            CircleBtn(icon: Icons.close_rounded, label: '關閉', onTap: () => Navigator.of(context).maybePop()),
+          ]),
+        ),
+        Expanded(
+          child: MediaQuery.removePadding(
+            context: context,
+            removeTop: true,
+            child: OnboardingView(
+              testOnly: true,
+              onTested: (_) => setState(() {
+                _placing = false;
+                _start();
+              }),
+            ),
+          ),
+        ),
+      ]),
+    );
   }
 
   void _askLeave() => showAlert(
@@ -420,7 +465,7 @@ class _BattlePageState extends State<BattlePage> {
   );
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
+  Widget build(BuildContext context) => _placing ? _placement() : ListenableBuilder(
     listenable: _m,
     builder: (context, _) {
       final err = _m.error;
