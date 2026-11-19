@@ -340,28 +340,30 @@ struct OnboardingView: View {
 
 struct ThemeGrid: View {
     @Binding var selection: String
-    /// A row of colour dots, the chosen one ringed and ticked, with its name underneath.
+    /// Swatches: a paper square with the theme colour as a band along the bottom (the same picker as BanGo).
+    /// The name is written in the paper colour, which stays readable when dark mode lightens the band.
     var body: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 0) {
-                ForEach(AppTheme.all) { t in
-                    let on = selection == t.id
-                    Button { selection = t.id } label: {
-                        Circle().fill(t.accent).frame(width: 32, height: 32)
-                            .overlay { if on { LIcon("checkmark").font(.app(size: 13, .bold)).foregroundStyle(.white) } }
-                            .padding(4)
-                            .overlay(Circle().strokeBorder(on ? t.accent : .clear, lineWidth: 2))
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                            .contentShape(Rectangle())
+        StackGrid(items: AppTheme.all, columns: 3, spacing: 10) { t in
+                Button { selection = t.id } label: {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Aa").font(.app(.title3, .bold)).foregroundStyle(t.accent)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                        Spacer(minLength: 0)
+                        HStack {
+                            Text(t.name).font(.app(.caption, .bold)).foregroundStyle(t.swatch)
+                            Spacer()
+                            if selection == t.id { LIcon("checkmark").font(.app(.caption, .bold)).foregroundStyle(t.swatch) }
+                        }
+                        .padding(.horizontal, 10).frame(height: 28).background(t.accent)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(t.name)
-                    .accessibilityAddTraits(on ? .isSelected : [])
-                }
-            }
-            Text(AppTheme.all.first { $0.id == selection }?.name ?? "").font(.app(.subheadline)).foregroundStyle(.secondary)
+                    .frame(height: 76)
+                    .background(t.swatch)
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
+                        .strokeBorder(selection == t.id ? Color.primary : .clear, lineWidth: 2))
+                }.buttonStyle(.plain)
+                .accessibilityAddTraits(selection == t.id ? .isSelected : [])
         }
-        .animation(.snappy, value: selection)
     }
 }
 
