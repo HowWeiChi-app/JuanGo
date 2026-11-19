@@ -284,12 +284,13 @@ begin
   limit 1 for update skip locked;
 
   if not found then
-    if waited < 15 then return jsonb_build_object('match', null, 'waited', waited); end if;
-    -- nobody else is here: play the computer, at about the caller's own rating
+    -- nobody else is here: play the computer, at about the caller's own rating. It isn't announced: it gets a
+    -- player-style name, and the wait before it differs from search to search (6 to 12 seconds).
+    if waited < 6 + abs(hashtext(me.user_id::text || q.joined_at::text)) % 7 then
+      return jsonb_build_object('match', null, 'waited', waited);
+    end if;
     insert into battle_matches (rated, p1, bot_name, bot_rating)
-    values (true, me.user_id,
-            '電腦' || (array['水獺','石虎','黑熊','貓頭鷹','海豚','藍鵲','穿山甲','梅花鹿'])[1 + floor(random() * 8)::int],
-            greatest(100, me.rating + floor(random() * 121)::int - 60))
+    values (true, me.user_id, battle_new_name(), greatest(100, me.rating + floor(random() * 121)::int - 60))
     returning id into mid;
     perform battle_start(mid);
     delete from battle_queue where user_id = me.user_id;
@@ -580,7 +581,6 @@ begin
   if clean ~ '[[:cntrl:]]' or clean ~ U&'[\200B-\200F\202A-\202E\2060-\2069\FEFF]' then
     raise exception '名稱有不能使用的字元';
   end if;
-  if clean like '電腦%' then raise exception '名稱不能用「電腦」開頭'; end if;
   perform pg_advisory_xact_lock(hashtext('battle_set_name'));
   if exists (select 1 from battle_players where lower(name) = lower(clean) and user_id <> me.user_id) then
     raise exception '這個名稱已經有人使用';

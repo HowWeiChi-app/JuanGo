@@ -235,7 +235,7 @@ final class BattleModel {
     /// JUANGO_BATTLE=home | search | room | count | question | reveal | result draws a screen without the server.
     func demo(_ step: String) {
         isDemo = true
-        let opp = BattleState.Side(name: "電腦石虎", rating: 668, tier: 4, score: step == "result" ? 332 : 170)
+        let opp = BattleState.Side(name: "好奇的石虎42", rating: 668, tier: 4, score: step == "result" ? 332 : 170)
         let you = BattleState.Side(name: "勇敢的水獺08", rating: 640, tier: 4, score: step == "result" ? 405 : 188)
         let q = BattleState.Question(n: 3, toZh: true, prompt: "persuade", options: ["說服", "猶豫", "承認", "避免"])
         let now = Date.now.timeIntervalSince1970 * 1000
@@ -351,7 +351,7 @@ private struct BattleHome: View {
                             .listRowBackground(Color.clear)
                             .listRowInsets(EdgeInsets())
                     } footer: {
-                        Text("優先配對積分相近的真人，等 15 秒沒有真人就和電腦對戰。5 回合，每題 10 秒，答對越快分數越高，最後一題 1.5 倍。")
+                        Text("配對積分相近的對手。5 回合，每題 10 秒，答對越快分數越高，最後一題 1.5 倍。")
                     }
                     Section("和朋友對戰") {
                         Button { model.createRoom() } label: { Label("建立房間", pulso: "person.2.fill") }
@@ -468,7 +468,7 @@ private struct BattleSearching: View {
             Spacer()
             ProgressView().controlSize(.large)
             Text("正在尋找對手").font(.app(.title3, .semibold))
-            Text("已等待 \(model.waited) 秒，15 秒內沒有真人會改配電腦")
+            Text("已等待 \(model.waited) 秒")
                 .font(.app(.subheadline)).foregroundStyle(.secondary).monospacedDigit()
             Spacer()
             Button("取消") { model.leave() }.buttonStyle(PillButtonStyle())

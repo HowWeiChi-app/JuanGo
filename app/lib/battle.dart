@@ -357,7 +357,7 @@ class BattleModel extends ChangeNotifier {
       'round': reveal ? 4 : 3,
       'now': now,
       'you': {'name': '勇敢的水獺08', 'rating': 640, 'tier': 4, 'score': result ? 405 : 188},
-      'opponent': {'name': '電腦石虎', 'rating': 668, 'tier': 4, 'score': result ? 332 : 170},
+      'opponent': {'name': '好奇的石虎42', 'rating': 668, 'tier': 4, 'score': result ? 332 : 170},
       'starts': reveal ? now + 60000 : now - 3200,
       'ends': reveal ? now + 70000 : now + 600000,
       'opponent_answered': true,
@@ -574,7 +574,7 @@ class _HomeState extends State<_Home> {
                 ],
               ),
               Sec(
-                footer: '優先配對積分相近的真人，等 15 秒沒有真人就和電腦對戰。5 回合，每題 10 秒，答對越快分數越高，最後一題 1.5 倍。',
+                footer: '配對積分相近的對手。5 回合，每題 10 秒，答對越快分數越高，最後一題 1.5 倍。',
                 children: [
                   Padding(
                     padding: const EdgeInsets.all(12),
@@ -729,7 +729,7 @@ class _Searching extends StatelessWidget {
               style: ts(F.title3, w: w6, c: p.ink),
             ),
             const SizedBox(height: 8),
-            Text('已等待 ${model.waited} 秒，15 秒內沒有真人會改配電腦', style: ts(F.sub, c: p.sec)),
+            Text('已等待 ${model.waited} 秒', style: ts(F.sub, c: p.sec)),
             const Spacer(),
             PillButton(label: '取消', width: double.infinity, onTap: () => unawaited(model.leave())),
           ],
