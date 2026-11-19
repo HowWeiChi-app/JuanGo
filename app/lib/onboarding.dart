@@ -80,21 +80,52 @@ class _OnboardingViewState extends State<OnboardingView> {
 
   // MARK: 各頁
 
-  Widget _languagePage() {
-    const langs = [('zh-Hant', '繁體中文'), ('en', 'English'), ('ja', '日本語'), ('ko', '한국어')];
+  /// 頁面標題靠左，像作業單的題目，下面一行說明這個選擇做什麼
+  Widget _header(String title, String note) {
     final p = Palette.of(context);
-    return Column(children: [
-      Text('選擇解釋語言', style: ts(F.title, w: w7)),
-      const SizedBox(height: 22),
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: StackGrid(columns: 2, spacing: 14, children: [
-          for (final (code, name) in langs)
-            PillButton(
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 28, 24, 22),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(title, style: ts(34, w: w7, h: 1.2)),
+        const SizedBox(height: 6),
+        Text(note, style: ts(F.sub, c: p.sec)),
+      ]),
+    );
+  }
+
+  /// 同一張卡上的幾列選項，每列前面是答案卡方格
+  Widget _sheet(List<Widget> rows) {
+    final p = Palette.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Container(
+        decoration: BoxDecoration(color: p.card, borderRadius: BorderRadius.circular(Radii.lg)),
+        child: Column(children: [
+          for (final (i, r) in rows.indexed) ...[
+            if (i > 0) Divider(height: 1, thickness: .5, indent: 54, color: p.separator),
+            r,
+          ],
+        ]),
+      ),
+    );
+  }
+
+  Widget _languagePage() {
+    const langs = [
+      ('zh-Hant', '繁體中文', '有韌性的'),
+      ('en', 'English', 'able to recover quickly'),
+      ('ja', '日本語', '回復力のある'),
+      ('ko', '한국어', '회복력 있는'),
+    ];
+    final p = Palette.of(context);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _header('解釋語言', '單字的意思會用這個語言顯示。'),
+      _sheet([
+        for (final (code, name, sample) in langs)
+          Opacity(
+            opacity: code == 'zh-Hant' ? 1 : .55,
+            child: Tap(
               label: name,
-              icon: _settings.language == code ? Icons.check_rounded : null,
-              fill: _settings.language == code ? p.accent : null,
-              fg: _settings.language == code ? p.onAccent : null,
               onTap: () {
                 if (code == 'zh-Hant') {
                   _settings.update((s) => s.language = code);
@@ -102,9 +133,27 @@ class _OnboardingViewState extends State<OnboardingView> {
                   showAlert(context, '目前只支援繁體中文解釋', message: '其他語言的解釋會在之後的版本加入。');
                 }
               },
+              child: Container(
+                constraints: const BoxConstraints(minHeight: 70),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(children: [
+                  MarkBox(on: _settings.language == code),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Row(children: [
+                        Text(name, style: ts(F.headline, w: w6)),
+                        if (code != 'zh-Hant') ...[const SizedBox(width: 8), const SoonTag()],
+                      ]),
+                      const SizedBox(height: 3),
+                      Text('resilient  $sample', maxLines: 1, overflow: TextOverflow.ellipsis, style: ts(F.sub, c: p.sec)),
+                    ]),
+                  ),
+                ]),
+              ),
             ),
-        ]),
-      ),
+          ),
+      ]),
     ]);
   }
 
@@ -203,6 +252,7 @@ class _OnboardingViewState extends State<OnboardingView> {
   Widget _resultPage() {
     final p = Palette.of(context);
     return Column(children: [
+      const SizedBox(height: 56),
       Text('你的推定程度', style: ts(F.title2, w: w7)),
       const SizedBox(height: 8),
       Text(levelLabel(_test.estimate), style: ts(64, w: w6, c: p.hsnuNavy, h: 1.15)),
@@ -226,76 +276,57 @@ class _OnboardingViewState extends State<OnboardingView> {
     ]);
   }
 
-  void _customGoal() => presentSheet(
-        context,
-        height: 320,
-        (_) => ListenableBuilder(
-          listenable: AppSettings.shared,
-          builder: (c, _) {
-            final s = _settings;
-            return Padding(
-              padding: const EdgeInsets.all(28),
-              child: Column(children: [
-                Text('自訂每日新字', style: ts(F.title2, w: w7)),
-                const SizedBox(height: 20),
-                Text('${s.dailyGoal} 個 / 天', style: ts(44, w: w6)),
-                const SizedBox(height: 20),
-                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  CircleBtn(icon: Icons.remove_rounded, label: '減少', size: 44, onTap: s.dailyGoal > 1 ? () => s.update((x) => x.dailyGoal -= 1) : null),
-                  const SizedBox(width: 18),
-                  CircleBtn(icon: Icons.add_rounded, label: '增加', size: 44, onTap: s.dailyGoal < 100 ? () => s.update((x) => x.dailyGoal += 1) : null),
-                ]),
-                const Spacer(),
-                PrimaryButton(label: '完成', width: double.infinity, onTap: () => Navigator.of(c).pop()),
-              ]),
-            );
-          },
-        ),
-      );
-
+  /// 一個數字用 − 和 + 調，下面寫加起來是多少，再放三個快速選項
   Widget _goalPage() {
     final p = Palette.of(context);
     final s = _settings;
-    const goals = [(5, '輕鬆', ''), (10, '標準', '約 10 分鐘'), (20, '衝刺', '')];
-    return Column(children: [
-      Text('設定學習目標', style: ts(F.title, w: w7)),
-      const SizedBox(height: 18),
+    final goal = s.dailyGoal;
+    void set(int n) => s.update((x) => x.dailyGoal = n.clamp(1, 100));
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _header('每日新字', '每天學幾個新字？要複習的字會另外排進來，之後隨時能改。'),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Row(children: [
-          for (final (i, (n, name, sub)) in goals.indexed) ...[
-            if (i > 0) const SizedBox(width: 10),
-            Expanded(
-              child: ChoiceTile(
-                selected: s.dailyGoal == n,
-                onTap: () => s.update((x) => x.dailyGoal = n),
-                child: SizedBox(
-                  height: 96,
-                  child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Text(name, style: ts(F.headline, w: w6)),
-                    const SizedBox(height: 4),
-                    Text.rich(TextSpan(children: [
-                      TextSpan(text: '$n', style: ts(30, w: w6, h: 1.1)),
-                      TextSpan(text: ' 個 / 天', style: ts(F.cap2)),
-                    ]), maxLines: 1),
-                    const SizedBox(height: 2),
-                    Text(sub, maxLines: 1, style: ts(F.cap2)),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(16, 22, 16, 22),
+          decoration: BoxDecoration(color: p.card, borderRadius: BorderRadius.circular(Radii.lg)),
+          child: Column(children: [
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              CircleBtn(icon: Icons.remove_rounded, label: '少一個', size: 48, onTap: goal > 1 ? () => set(goal - 1) : null),
+              SizedBox(
+                width: 150,
+                child: Semantics(
+                  label: '每天 $goal 個新字',
+                  excludeSemantics: true,
+                  child: Column(children: [
+                    Text('$goal', style: ts(64, w: w7, h: 1.1).copyWith(fontFeatures: const [FontFeature.tabularFigures()])),
+                    Text('個新字／天', style: ts(F.sub, c: p.sec)),
                   ]),
                 ),
               ),
-            ),
-          ],
-        ]),
-      ),
-      Tap(
-        onTap: _customGoal,
-        child: SizedBox(
-          height: 44,
-          child: Center(
-            child: Text(const [5, 10, 20].contains(s.dailyGoal) ? '自訂數量' : '自訂數量：${s.dailyGoal} 個 / 天', style: ts(F.sub, w: w6, c: p.sec)),
-          ),
+              CircleBtn(icon: Icons.add_rounded, label: '多一個', size: 48, onTap: goal < 100 ? () => set(goal + 1) : null),
+            ]),
+            const SizedBox(height: 14),
+            Text('約 $goal 分鐘・30 天約 ${goal * 30} 字', style: ts(F.sub, w: w6, c: p.accent)),
+            const SizedBox(height: 14),
+            Row(children: [
+              for (final (i, (n, name)) in const [(5, '輕鬆'), (10, '標準'), (20, '衝刺')].indexed) ...[
+                if (i > 0) const SizedBox(width: 8),
+                Expanded(
+                  child: PillButton(
+                    label: '$name $n',
+                    height: 44,
+                    fill: goal == n ? p.accent : null,
+                    fg: goal == n ? p.onAccent : null,
+                    onTap: () => set(n),
+                  ),
+                ),
+              ],
+            ]),
+          ]),
         ),
       ),
+      const SizedBox(height: 18),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: CardBox(
@@ -314,46 +345,41 @@ class _OnboardingViewState extends State<OnboardingView> {
     ]);
   }
 
+  /// 上面是 App 的小樣本，接著淺色深色、字體（打勾的列）、主題色（色點）
   Widget _themePage() {
     final s = _settings;
-    final p = Palette.of(context);
-    String family(int style) => switch (style) { 2 => 'serif', 3 => 'monospace', _ => 'sans-serif' };
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Center(child: Text('選擇主題', style: ts(F.title, w: w7))),
-        const SizedBox(height: 14),
-        Segmented<int>(items: appearanceOptions, value: s.appearance, onChanged: (v) => s.update((x) => x.appearance = v)),
-        const SizedBox(height: 14),
-        Text('字體', style: ts(F.headline, w: w6)),
-        const SizedBox(height: 14),
-        Row(children: [
-          for (final (i, (v, name)) in fontOptions.indexed) ...[
-            if (i > 0) const SizedBox(width: 8),
-            Expanded(
-              child: ChoiceTile(
-                selected: s.fontStyle == v,
-                onTap: () => s.update((x) => x.fontStyle = v),
-                child: SizedBox(
-                  height: 50,
-                  child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Text('Aa', style: ts(F.title3, w: w7).copyWith(fontFamily: family(v))),
-                    Text(name, style: ts(F.cap).copyWith(fontFamily: family(v))),
-                  ]),
-                ),
-              ),
+    Widget label(String t) => Padding(padding: const EdgeInsets.fromLTRB(24, 18, 24, 10), child: Text(t, style: ts(F.headline, w: w6)));
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _header('外觀', '字體和顏色會套用到整個 App，之後在設定也能改。'),
+      const Padding(padding: EdgeInsets.symmetric(horizontal: 20), child: ThemePreview()),
+      const SizedBox(height: 16),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Segmented<int>(items: appearanceOptions, value: s.appearance, onChanged: (v) => s.update((x) => x.appearance = v)),
+      ),
+      label('字體'),
+      _sheet([
+        for (final (v, name) in fontOptions)
+          Tap(
+            label: name,
+            onTap: () => s.update((x) => x.fontStyle = v),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 52),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(children: [
+                MarkBox(on: s.fontStyle == v),
+                const SizedBox(width: 14),
+                Expanded(child: Text(name, style: ts(F.headline, w: w6))),
+              ]),
             ),
-          ],
-        ]),
-        const SizedBox(height: 14),
-        Row(children: [
-          Expanded(child: Text('主題色', style: ts(F.headline, w: w6))),
-          Text(s.theme.name, style: ts(F.body, c: p.sec)),
-        ]),
-        const SizedBox(height: 14),
-        ThemeGrid(selection: s.themeID, onSelect: (id) => s.update((x) => x.themeID = id)),
+          ),
       ]),
-    );
+      label('主題色'),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: ThemeGrid(selection: s.themeID, onSelect: (id) => s.update((x) => x.themeID = id)),
+      ),
+    ]);
   }
 
   Widget _bottomBar() {
@@ -391,10 +417,6 @@ class _OnboardingViewState extends State<OnboardingView> {
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
-    final h = media.size.height;
-    // 小螢幕把插圖縮小，下面的內容才放得下
-    final heroHeight = _page == 1 ? 0.0 : min(_page == 4 ? 200.0 : 300.0, h * (_page == 4 ? .22 : .34));
-    final heroScale = heroHeight / 300 * (_page == 4 ? 1.05 : 1);
     return PopScope(
       canPop: _page == 0,
       onPopInvokedWithResult: (didPop, _) {
@@ -405,28 +427,13 @@ class _OnboardingViewState extends State<OnboardingView> {
         builder: (context, _) => Padding(
           padding: EdgeInsets.only(top: media.padding.top + 8, bottom: media.padding.bottom),
           child: Column(children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 420),
-              curve: Curves.easeOutCubic,
-              height: heroHeight,
-              child: ClipRect(
-                child: OverflowBox(
-                  maxHeight: 300,
-                  minHeight: 300,
-                  child: AnimatedScale(
-                    scale: heroScale,
-                    duration: const Duration(milliseconds: 420),
-                    curve: Curves.easeOutCubic,
-                    child: JuanHero(page: _page),
-                  ),
-                ),
-              ),
-            ),
             Expanded(
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 380),
                 switchInCurve: Curves.easeOutCubic,
                 switchOutCurve: Curves.easeInCubic,
+                // 各頁從上面排下來，不要置中
+                layoutBuilder: (current, previous) => Stack(alignment: Alignment.topCenter, children: [...previous, ?current]),
                 transitionBuilder: (child, a) => FadeTransition(
                   opacity: a,
                   child: SlideTransition(position: Tween(begin: const Offset(.12, 0), end: Offset.zero).animate(a), child: child),
@@ -436,7 +443,7 @@ class _OnboardingViewState extends State<OnboardingView> {
                   child: _page == 1
                       ? _testPage()
                       : SingleChildScrollView(
-                          padding: const EdgeInsets.only(top: 8, bottom: 12),
+                          padding: const EdgeInsets.only(bottom: 12),
                           child: switch (_page) {
                             0 => _languagePage(),
                             2 => _resultPage(),
@@ -480,85 +487,81 @@ class PageDots extends StatelessWidget {
   }
 }
 
-/// 導覽頁上方的字典內頁：單字、音標、書籤，幾秒換一個字
-class JuanHero extends StatefulWidget {
-  const JuanHero({super.key, required this.page});
-  final int page;
-  @override
-  State<JuanHero> createState() => _JuanHeroState();
-}
-
-class _JuanHeroState extends State<JuanHero> {
-  static const _samples = ['situate', 'resilient', 'perspective', 'maintain', 'pivotal'];
-  int _tick = 0;
-  late final Timer _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(const Duration(milliseconds: 2600), (_) => setState(() => _tick += 1));
-  }
-
-  @override
-  void dispose() {
-    _timer.cancel();
-    super.dispose();
-  }
-
+/// 導覽用的答案卡方格：空的是外框，選了就填色打勾
+class MarkBox extends StatelessWidget {
+  const MarkBox({super.key, required this.on});
+  final bool on;
   @override
   Widget build(BuildContext context) {
     final p = Palette.of(context);
-    final word = _samples[_tick % _samples.length];
-    final e = Dict.lookup(word);
-    return Center(
-      child: AnimatedRotation(
-        turns: (widget.page.isEven ? -2 : 2) / 360,
-        duration: const Duration(milliseconds: 500),
-        curve: Curves.easeOutCubic,
-        child: SizedBox(
-          width: 250,
-          height: 214,
-          child: Stack(clipBehavior: Clip.none, children: [
-            Positioned.fill(
-              top: 4,
-              child: Container(
-                padding: const EdgeInsets.all(22),
-                decoration: BoxDecoration(
-                  color: p.card,
-                  borderRadius: BorderRadius.circular(Radii.lg),
-                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: .22), blurRadius: 30, offset: const Offset(3, 5))],
-                ),
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 350),
-                  layoutBuilder: (current, previous) => Stack(alignment: Alignment.topLeft, children: [...previous, ?current]),
-                  child: Column(
-                    key: ValueKey(word),
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(right: 40),
-                        child: FitText(word, style: ts(32, w: w7)),
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      width: 24,
+      height: 28,
+      decoration: BoxDecoration(
+        color: on ? p.accent : Colors.transparent,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: on ? p.accent : p.sec.withValues(alpha: .6), width: 1.5),
+      ),
+      child: on ? Icon(Icons.check_rounded, size: 16, color: p.onAccent) : null,
+    );
+  }
+}
+
+class SoonTag extends StatelessWidget {
+  const SoonTag({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final p = Palette.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(color: p.sec.withValues(alpha: .14), borderRadius: BorderRadius.circular(20)),
+      child: Text('之後推出', style: ts(F.cap2, w: w7, c: p.sec)),
+    );
+  }
+}
+
+/// 用選好的字體和顏色畫一小段 App：單字、意思和今天的進度
+class ThemePreview extends StatelessWidget {
+  const ThemePreview({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final p = Palette.of(context);
+    return Semantics(
+      label: '預覽',
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(color: p.card, borderRadius: BorderRadius.circular(Radii.lg)),
+        child: IntrinsicHeight(
+          child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Container(width: 5, color: p.accent),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 18, 16),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
+                    Flexible(child: Text('resilient', maxLines: 1, overflow: TextOverflow.ellipsis, style: ts(28, w: w7))),
+                    const SizedBox(width: 8),
+                    Text('adj.', style: ts(F.cap, c: p.sec)),
+                    const Spacer(),
+                    Text('第 3 級', style: ts(F.cap, w: w7, c: p.accent)),
+                  ]),
+                  const SizedBox(height: 6),
+                  Text('有韌性的；能迅速恢復的', style: ts(F.body, c: p.accent)),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(3),
+                        child: LinearProgressIndicator(value: .6, minHeight: 6, color: p.accent, backgroundColor: p.accent.withValues(alpha: .15)),
                       ),
-                      if (e != null) ...[
-                        const SizedBox(height: 8),
-                        Text('${e.pos}  /${e.ipa}/', maxLines: 1, overflow: TextOverflow.ellipsis, style: ts(F.cap, c: p.sec)),
-                        const SizedBox(height: 8),
-                        Text(e.zh.isEmpty ? '' : e.zh.first, maxLines: 1, overflow: TextOverflow.ellipsis, style: ts(F.title3, w: w7, c: p.accent)),
-                      ],
-                      const SizedBox(height: 10),
-                      for (final w in const [180.0, 150.0, 110.0])
-                        Container(
-                          width: w,
-                          height: 6,
-                          margin: const EdgeInsets.only(bottom: 8),
-                          decoration: BoxDecoration(color: p.sec.withValues(alpha: .15), borderRadius: BorderRadius.circular(3)),
-                        ),
-                    ],
-                  ),
-                ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text('今天 6 / 10', style: ts(F.cap, c: p.sec)),
+                  ]),
+                ]),
               ),
             ),
-            Positioned(top: 0, right: 18, child: Icon(Icons.bookmark_rounded, size: 38, color: p.accent)),
           ]),
         ),
       ),

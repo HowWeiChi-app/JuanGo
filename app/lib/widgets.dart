@@ -1407,46 +1407,46 @@ class ThemeGrid extends StatelessWidget {
   const ThemeGrid({super.key, required this.selection, required this.onSelect});
   final String selection;
   final ValueChanged<String> onSelect;
+
+  /// 一排色點，選中的外面一圈並打勾，名稱寫在下面
   @override
   Widget build(BuildContext context) {
     final p = Palette.of(context);
-    return LayoutBuilder(builder: (context, c) {
-      final w = (c.maxWidth - 20) / 3;
-      return Wrap(spacing: 10, runSpacing: 10, children: [
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final current = AppTheme.all.where((t) => t.id == selection).firstOrNull;
+    return Column(children: [
+      Row(children: [
         for (final t in AppTheme.all)
-          Tap(
-            label: t.name,
-            onTap: () => onSelect(t.id),
-            child: Container(
-              width: w,
-              height: 76,
-              clipBehavior: Clip.antiAlias,
-              foregroundDecoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(Radii.md),
-                border: selection == t.id ? Border.all(color: p.ink, width: 2) : null,
-              ),
-              decoration: BoxDecoration(color: t.swatch, borderRadius: BorderRadius.circular(Radii.md)),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
-                    child: Text('Aa', style: ts(F.title3, w: w7, c: t.base)),
+          Expanded(
+            child: Tap(
+              label: t.name,
+              dim: false,
+              onTap: () => onSelect(t.id),
+              child: SizedBox(
+                height: 48,
+                child: Center(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: 40,
+                    height: 40,
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: selection == t.id ? t.accent(dark) : Colors.transparent, width: 2),
+                    ),
+                    child: Container(
+                      decoration: BoxDecoration(shape: BoxShape.circle, color: t.accent(dark)),
+                      child: selection == t.id ? const Icon(Icons.check_rounded, size: 15, color: Colors.white) : null,
+                    ),
                   ),
                 ),
-                Container(
-                  height: 28,
-                  color: t.base,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Row(children: [
-                    Expanded(child: Text(t.name, maxLines: 1, style: ts(F.cap, w: w7, c: Colors.white))),
-                    if (selection == t.id) const Icon(Icons.check_rounded, size: 14, color: Colors.white),
-                  ]),
-                ),
-              ]),
+              ),
             ),
           ),
-      ]);
-    });
+      ]),
+      const SizedBox(height: 6),
+      Text(current?.name ?? '', style: ts(F.sub, c: p.sec)),
+    ]);
   }
 }
 

@@ -7,19 +7,10 @@ struct OnboardingView: View {
     /// the option just tapped (-1: 不知道), shown in colour for a moment before the next question
     @State private var shown: Int?
     @State private var unsupportedLanguage = false
-    @State private var customGoal = false
 
     var body: some View {
         @Bindable var settings = settings
         VStack(spacing: 0) {
-            // the test has the whole screen: an answer card, not a word card that hides the meaning
-            if page != 1 {
-                Hero(page: page, word: nil)
-                    .scaleEffect(page == 4 ? 0.7 : 1)
-                    .frame(height: page == 4 ? 200 : 300)
-                    .padding(.top, 8)
-                    .transition(.opacity)
-            }
             Group {
                 switch page {
                 case 0: languagePage
@@ -43,34 +34,57 @@ struct OnboardingView: View {
         .alert("目前只支援繁體中文解釋", isPresented: $unsupportedLanguage) { Button("好") {} } message: {
             Text("其他語言的解釋會在之後的版本加入。")
         }
-        .sheet(isPresented: $customGoal) {
-            VStack(spacing: 20) {
-                Text("自訂每日新字").font(.app(.title2, .bold))
-                Text("\(settings.dailyGoal) 個 / 天").font(.app(size: 44, .semibold)).contentTransition(.numericText())
-                Stepper("", value: $settings.dailyGoal, in: 1...100).labelsHidden()
-                Button("完成") { customGoal = false }.buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
-            }
-            .padding(28).presentationDetents([.height(320)])
-        }
     }
 
     // MARK: pages
 
+    /// A page title on the left, like the heading of a worksheet, with one line on what the choice does.
+    private func header(_ title: String, _ note: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.app(size: 34, .bold))
+            Text(note).font(.app(.subheadline)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 24).padding(.top, 36)
+    }
+
+    private static let languages: [(code: String, name: String, sample: String)] = [
+        ("zh-Hant", "繁體中文", "有韌性的"), ("en", "English", "able to recover quickly"),
+        ("ja", "日本語", "回復力のある"), ("ko", "한국어", "회복력 있는"),
+    ]
+
+    /// Rows on one sheet, each showing how "resilient" would be explained, with an answer-card box to mark.
     private var languagePage: some View {
-        VStack(spacing: 22) {
-            Text("選擇解釋語言").font(.app(.title, .bold))
-            StackGrid(items: [("zh-Hant", "繁體中文"), ("en", "English"), ("ja", "日本語"), ("ko", "한국어")], columns: 2, spacing: 14) { item in
-                    let (code, name) = item
-                    let on = settings.language == code
+        VStack(alignment: .leading, spacing: 22) {
+            header("解釋語言", "單字的意思會用這個語言顯示。")
+            VStack(spacing: 0) {
+                ForEach(Array(Self.languages.enumerated()), id: \.offset) { i, l in
+                    let on = settings.language == l.code, ready = l.code == "zh-Hant"
                     Button {
-                        if code == "zh-Hant" { settings.language = code } else { unsupportedLanguage = true }
+                        if ready { settings.language = l.code } else { unsupportedLanguage = true }
                     } label: {
-                        HStack { Text(name); if on { LIcon("checkmark") } }
+                        HStack(spacing: 14) {
+                            MarkBox(on: on)
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 8) {
+                                    Text(l.name).font(.app(.headline))
+                                    if !ready { SoonTag() }
+                                }
+                                Text("resilient  \(l.sample)").font(.app(.subheadline)).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 16).frame(minHeight: 70).contentShape(Rectangle())
                     }
-                    .buttonStyle(PillButtonStyle(fill: on ? .themeAccent : nil, foreground: on ? .onAccent : nil))
+                    .buttonStyle(.plain)
+                    .opacity(ready ? 1 : 0.55)
                     .accessibilityAddTraits(on ? .isSelected : [])
+                    if i < Self.languages.count - 1 { Divider().padding(.leading, 54) }
+                }
             }
+            .background(Color.cardFill, in: RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
             .padding(.horizontal, 20)
+            Spacer(minLength: 0)
         }
     }
 
@@ -190,30 +204,42 @@ struct OnboardingView: View {
         }
     }
 
+    /// One number to set with − and +, what it adds up to, and three quick presets underneath.
     private var goalPage: some View {
         @Bindable var settings = settings
-        return VStack(spacing: 18) {
-            Text("設定學習目標").font(.app(.title, .bold))
-            HStack(spacing: 10) {
-                ForEach([(5, "輕鬆", ""), (10, "標準", "約 10 分鐘"), (20, "衝刺", "")], id: \.0) { n, name, sub in
-                    let on = settings.dailyGoal == n
-                    Button { settings.dailyGoal = n } label: {
-                        VStack(spacing: 4) {
-                            Text(name).font(.app(.headline))
-                            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                                Text("\(n)").font(.app(size: 30, .semibold))
-                                Text("個 / 天").font(.app(.caption))
-                            }
-                            Text(sub).font(.app(.caption2))
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 96)
+        let goal = settings.dailyGoal
+        return VStack(alignment: .leading, spacing: 18) {
+            header("每日新字", "每天學幾個新字？要複習的字會另外排進來，之後隨時能改。")
+            VStack(spacing: 14) {
+                HStack(spacing: 20) {
+                    stepButton("minus", "少一個", -1)
+                    VStack(spacing: 0) {
+                        Text("\(goal)").font(.app(size: 64, .bold)).monospacedDigit()
+                            .contentTransition(.numericText(value: Double(goal)))
+                        Text("個新字／天").font(.app(.subheadline)).foregroundStyle(.secondary)
                     }
-                    .buttonStyle(ChoiceTileStyle(selected: on))
+                    .frame(minWidth: 120)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("每天 \(goal) 個新字")
+                    .accessibilityAdjustableAction { d in
+                        settings.dailyGoal = min(100, max(1, goal + (d == .increment ? 1 : -1)))
+                    }
+                    stepButton("plus", "多一個", 1)
+                }
+                Text("約 \(goal) 分鐘・30 天約 \(goal * 30) 字").font(.app(.subheadline, .semibold)).foregroundStyle(Color.themeAccent)
+                HStack(spacing: 8) {
+                    ForEach([(5, "輕鬆"), (10, "標準"), (20, "衝刺")], id: \.0) { n, name in
+                        let on = goal == n
+                        Button("\(name) \(n)") { withAnimation(.snappy) { settings.dailyGoal = n } }
+                            .buttonStyle(PillButtonStyle(fill: on ? .themeAccent : nil, foreground: on ? .onAccent : nil, height: 44))
+                            .accessibilityAddTraits(on ? .isSelected : [])
+                    }
                 }
             }
+            .frame(maxWidth: .infinity)
+            .padding(16).padding(.vertical, 6)
+            .background(Color.cardFill, in: RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
             .padding(.horizontal, 20)
-            Button(![5, 10, 20].contains(settings.dailyGoal) ? "自訂數量：\(settings.dailyGoal) 個 / 天" : "自訂數量") { customGoal = true }
-                .font(.app(.subheadline, .semibold)).foregroundStyle(.secondary)
             VStack(spacing: 10) {
                 Toggle(isOn: $settings.reminderOn) { Label("學習與複習提醒", pulso: "bell.fill").font(.app(.headline)) }
                 if settings.reminderOn {
@@ -222,37 +248,57 @@ struct OnboardingView: View {
             }
             .card(padding: 16)
             .padding(.horizontal, 20)
+            Spacer(minLength: 0)
         }
     }
 
+    private func stepButton(_ icon: String, _ label: String, _ by: Int) -> some View {
+        Button {
+            withAnimation(.snappy) { settings.dailyGoal = min(100, max(1, settings.dailyGoal + by)) }
+        } label: {
+            LIcon(icon).font(.app(.title3, .bold)).frame(width: 30, height: 30)
+        }
+        .buttonStyle(.glass).buttonBorderShape(.circle).controlSize(.large)
+        .disabled(by < 0 ? settings.dailyGoal <= 1 : settings.dailyGoal >= 100)
+        .accessibilityLabel(label)
+    }
+
+    /// A live sample of the app on top, then light or dark, the font as marked rows, and the colour as dots.
     private var themePage: some View {
         @Bindable var settings = settings
         return ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("選擇主題").font(.app(.title, .bold)).frame(maxWidth: .infinity)
+            VStack(alignment: .leading, spacing: 16) {
+                header("外觀", "字體和顏色會套用到整個 App，之後在設定也能改。")
+                ThemePreview().padding(.horizontal, 20)
                 Picker("外觀", selection: $settings.appearance) {
                     Text("跟隨系統").tag(0); Text("淺色").tag(1); Text("深色").tag(2)
-                }.pickerStyle(.segmented)
-                Text("字體").font(.app(.headline))
-                HStack(spacing: 8) {
+                }
+                .pickerStyle(.segmented).padding(.horizontal, 20)
+                Text("字體").font(.app(.headline)).padding(.horizontal, 24).padding(.top, 4)
+                VStack(spacing: 0) {
                     ForEach(Array(AppFont.options.enumerated()), id: \.offset) { i, o in
                         let on = settings.fontStyle == i
                         Button { settings.fontStyle = i } label: {
-                            VStack(spacing: 2) {
-                                Text("Aa").font(.system(.title3, design: o.swiftDesign, weight: .bold))
-                                Text(o.name).font(AppFont.preview(i, size: 12))
+                            HStack(spacing: 14) {
+                                MarkBox(on: on)
+                                Text(o.name).font(.app(.headline))
+                                Spacer(minLength: 0)
                             }
-                            .frame(maxWidth: .infinity, minHeight: 50)
+                            .padding(.horizontal, 16).frame(minHeight: 52).contentShape(Rectangle())
                         }
-                        .buttonStyle(ChoiceTileStyle(selected: on))
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                        if i < AppFont.options.count - 1 { Divider().padding(.leading, 54) }
                     }
                 }
-                HStack { Text("主題色").font(.app(.headline)); Spacer(); Text(settings.theme.name).foregroundStyle(.secondary) }
-                ThemeGrid(selection: $settings.themeID)
+                .background(Color.cardFill, in: RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
+                .padding(.horizontal, 20)
+                Text("主題色").font(.app(.headline)).padding(.horizontal, 24).padding(.top, 4)
+                ThemeGrid(selection: $settings.themeID).padding(.horizontal, 20).padding(.bottom, 24)
             }
-            .padding(.horizontal, 20)
         }
         .scrollIndicators(.hidden)
+        .clipped()
     }
 
     // MARK: bottom bar
@@ -294,29 +340,85 @@ struct OnboardingView: View {
 
 struct ThemeGrid: View {
     @Binding var selection: String
-    /// Swatches: a paper square with the theme colour as a band along the bottom.
+    /// A row of colour dots, the chosen one ringed and ticked, with its name underneath.
     var body: some View {
-        StackGrid(items: AppTheme.all, columns: 3, spacing: 10) { t in
-                Button { selection = t.id } label: {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("Aa").font(.app(.title3, .bold)).foregroundStyle(t.accent)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(10)
-                        Spacer(minLength: 0)
-                        HStack {
-                            Text(t.name).font(.app(.caption, .bold)).foregroundStyle(.white)
-                            Spacer()
-                            if selection == t.id { LIcon("checkmark").font(.app(.caption, .bold)).foregroundStyle(.white) }
-                        }
-                        .padding(.horizontal, 10).frame(height: 28).background(t.accent)
+        VStack(spacing: 8) {
+            HStack(spacing: 0) {
+                ForEach(AppTheme.all) { t in
+                    let on = selection == t.id
+                    Button { selection = t.id } label: {
+                        Circle().fill(t.accent).frame(width: 32, height: 32)
+                            .overlay { if on { LIcon("checkmark").font(.app(size: 13, .bold)).foregroundStyle(.white) } }
+                            .padding(4)
+                            .overlay(Circle().strokeBorder(on ? t.accent : .clear, lineWidth: 2))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .contentShape(Rectangle())
                     }
-                    .frame(height: 76)
-                    .background(t.swatch)
-                    .clipShape(RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
-                        .strokeBorder(selection == t.id ? Color.primary : .clear, lineWidth: 2))
-                }.buttonStyle(.plain)
-                .accessibilityAddTraits(selection == t.id ? .isSelected : [])
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(t.name)
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+            }
+            Text(AppTheme.all.first { $0.id == selection }?.name ?? "").font(.app(.subheadline)).foregroundStyle(.secondary)
         }
+        .animation(.snappy, value: selection)
+    }
+}
+
+/// A small sample of the app in the chosen font and colour: a word with its meaning and today's progress.
+struct ThemePreview: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("resilient").font(.app(size: 28, .bold)).lineLimit(1).minimumScaleFactor(0.6)
+                Text("adj.").font(.app(.caption)).foregroundStyle(.secondary)
+                Spacer()
+                Text("第 3 級").font(.app(.caption, .bold)).foregroundStyle(Color.themeAccent)
+            }
+            Text("有韌性的；能迅速恢復的").font(.app(.body)).foregroundStyle(Color.themeAccent)
+            HStack(spacing: 10) {
+                GeometryReader { g in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.themeAccent.opacity(0.15))
+                        Capsule().fill(Color.themeAccent).frame(width: g.size.width * 0.6)
+                    }
+                }
+                .frame(height: 6)
+                Text("今天 6 / 10").font(.app(.caption).monospacedDigit()).foregroundStyle(.secondary)
+            }
+        }
+        .padding(18).padding(.leading, 5)
+        .background(alignment: .leading) {
+            ZStack(alignment: .leading) {
+                Color.cardFill
+                Color.themeAccent.frame(width: 5)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("預覽")
+    }
+}
+
+/// The answer-card box used for choices during onboarding: empty outline, filled and ticked when marked.
+struct MarkBox: View {
+    let on: Bool
+    var body: some View {
+        RoundedRectangle(cornerRadius: 6)
+            .fill(on ? Color.themeAccent : .clear)
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(on ? 0 : 0.6), lineWidth: 1.5))
+            .overlay { if on { LIcon("checkmark").font(.app(size: 13, .bold)).foregroundStyle(Color.onAccent) } }
+            .frame(width: 24, height: 28)
+            .animation(.snappy(duration: 0.2), value: on)
+            .accessibilityHidden(true)
+    }
+}
+
+struct SoonTag: View {
+    var body: some View {
+        Text("之後推出").font(.app(.caption2, .bold)).foregroundStyle(.secondary)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Capsule().fill(Color.secondary.opacity(0.14)))
     }
 }
 
@@ -331,48 +433,6 @@ struct PageDots: View {
             }
         }
         .animation(.snappy, value: index)
-    }
-}
-
-/// Floating stack of word cards that previews the app at the top of each onboarding page.
-struct Hero: View {
-    let page: Int
-    let word: String?
-    @State private var tick = 0
-    private let samples = ["situate", "resilient", "perspective", "maintain", "pivotal"]
-
-    /// A single dictionary page with a ribbon bookmark: headword, pronunciation, ruled lines.
-    var body: some View {
-        let current = word ?? samples[tick % samples.count]
-        VStack(alignment: .leading, spacing: 10) {
-            Text(current).font(.app(size: 32, .bold)).contentTransition(.opacity)
-            if let e = Dictionary_.lookup(current) {
-                Text("\(e.pos)  /\(e.ipa)/").font(.app(.caption)).foregroundStyle(.secondary)
-                // During the level test the hero must not reveal the answer.
-                Text(word == nil ? (e.zh.first ?? "") : "？").font(.app(.title3, .bold)).foregroundStyle(.tint)
-            }
-            ForEach(0..<3, id: \.self) { k in
-                Capsule().fill(Color.secondary.opacity(0.15)).frame(width: [180, 150, 110][k], height: 6)
-            }
-        }
-        .padding(22)
-        .frame(width: 250, height: 210, alignment: .topLeading)
-        .background(Color.cardFill, in: RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
-        // DESIGN.md: the one shadow in the system, for an object resting on a surface.
-        .shadow(color: .black.opacity(0.22), radius: 15, x: 3, y: 5)
-        .overlay(alignment: .topTrailing) {
-            LIcon("bookmark.fill").font(.app(size: 34)).foregroundStyle(Color.themeAccent)
-                .offset(y: -4).padding(.trailing, 22)
-        }
-        .rotationEffect(.degrees(Double(page % 2 == 0 ? -2 : 2)))
-        .animation(.spring(duration: 0.6), value: current)
-        .task(id: word == nil) {
-            guard word == nil else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2.6))
-                tick += 1
-            }
-        }
     }
 }
 
