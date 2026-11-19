@@ -101,7 +101,8 @@ $$;
 -- A right answer is worth 100 at once, falling to 50 at the 10-second limit; round 5 counts 1.5x.
 create or replace function public.battle_points(n int, ms int) returns int
 language sql immutable set search_path = public as $$
-  select round((50 + 50 * (1 - least(greatest(ms, 0), 10000) / 10000.0)) * (case when n = 5 then 1.5 else 1 end))::int
+  -- 100 points falling to 30 along a curve, steepest at the start, so quick answers rarely tie
+  select round((30 + 70 * power(1 - least(greatest(ms, 0), 10000) / 10000.0, 2)) * (case when n = 5 then 1.5 else 1 end))::int
 $$;
 
 -- Elo. New players move twice as fast for their first 20 games.

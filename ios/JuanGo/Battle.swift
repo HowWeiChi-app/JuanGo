@@ -490,11 +490,11 @@ private struct BattleGame: View {
             header(s, reveal: reveal)
             scoreboard(s)
             if let r = reveal {
-                timeBar(0)
+                timeBar(nil)
                 question(r.q, s: s, last: r.last)
                 pointsLine(r.last)
             } else if let q = model.current, q.n == s.round, let starts = s.starts, now >= starts, let ends = s.ends {
-                timeBar(max(0, min(1, (ends - now) / 10_000)))
+                timeBar(ends)
                 question(q, s: s, last: nil)
                 waitingLine(s, timeUp: now >= ends, picked: model.picks[q.n] != nil)
             } else {
@@ -548,15 +548,19 @@ private struct BattleGame: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func timeBar(_ left: Double) -> some View {
-        GeometryReader { g in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.themeAccent.opacity(0.14))
-                Capsule().fill(left < 0.3 ? Color.hsnuMagenta : Color.themeAccent).frame(width: g.size.width * left)
+    /// Redraws on every screen refresh (120 Hz on ProMotion) so the bar slides smoothly.
+    private func timeBar(_ ends: Double?) -> some View {
+        TimelineView(.animation(paused: ends == nil)) { _ in
+            let left = ends.map { max(0, min(1, ($0 - model.serverNow) / 10_000)) } ?? 0
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.themeAccent.opacity(0.14))
+                    Capsule().fill(left < 0.3 ? Color.hsnuMagenta : Color.themeAccent).frame(width: g.size.width * left)
+                }
             }
+            .frame(height: 8)
+            .accessibilityLabel("剩餘 \(Int(ceil(left * 10))) 秒")
         }
-        .frame(height: 8)
-        .accessibilityLabel("剩餘 \(Int(ceil(left * 10))) 秒")
     }
 
     private func question(_ q: BattleState.Question, s: BattleState, last: BattleState.Last?) -> some View {

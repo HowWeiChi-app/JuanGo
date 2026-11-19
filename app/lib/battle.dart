@@ -3,6 +3,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:material_ui/material_ui.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -742,6 +743,57 @@ class _Game extends StatefulWidget {
   State<_Game> createState() => _GameState();
 }
 
+/// 倒數條跟著螢幕每一格重畫（高刷螢幕就是 90／120 Hz），整頁仍是每 0.1 秒更新
+class _TimeBar extends StatefulWidget {
+  const _TimeBar({required this.palette, required this.ends, required this.now});
+  final Palette palette;
+  final double? ends;
+  final double Function() now;
+  @override
+  State<_TimeBar> createState() => _TimeBarState();
+}
+
+class _TimeBarState extends State<_TimeBar> with SingleTickerProviderStateMixin {
+  late final Ticker _ticker = createTicker((_) => setState(() {}));
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.ends != null) _ticker.start();
+  }
+
+  @override
+  void didUpdateWidget(_TimeBar old) {
+    super.didUpdateWidget(old);
+    if (widget.ends == null && _ticker.isActive) _ticker.stop();
+    if (widget.ends != null && !_ticker.isActive) _ticker.start();
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.palette, ends = widget.ends;
+    final left = ends == null ? 0.0 : ((ends - widget.now()) / 10000).clamp(0.0, 1.0);
+    return Semantics(
+      label: '剩餘 ${(left * 10).ceil()} 秒',
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: LinearProgressIndicator(
+          value: left,
+          minHeight: 8,
+          backgroundColor: p.accent.withValues(alpha: .14),
+          color: left < .3 ? p.hsnuMagenta : p.accent,
+        ),
+      ),
+    );
+  }
+}
+
 class _GameState extends State<_Game> {
   late final Timer _tick;
 
@@ -785,7 +837,7 @@ class _GameState extends State<_Game> {
     if (shown != null) {
       final l = s.last!;
       body = [
-        _bar(p, 0),
+        _bar(p, null),
         Expanded(child: _question(p, s, shown, l)),
         Text(
           l.points > 0 ? '+${l.points}' : (l.pick == null ? '時間到' : '答錯了'),
@@ -796,7 +848,7 @@ class _GameState extends State<_Game> {
     } else if (live) {
       final timeUp = now >= ends;
       body = [
-        _bar(p, ((ends - now) / 10000).clamp(0.0, 1.0)),
+        _bar(p, ends),
         Expanded(child: _question(p, s, q, null)),
         Text(timeUp ? '時間到' : (_m.picks.containsKey(q.n) ? '等對手作答' : ' '), style: ts(F.sub, c: p.sec)),
       ];
@@ -844,18 +896,7 @@ class _GameState extends State<_Game> {
     );
   }
 
-  Widget _bar(Palette p, double left) => Semantics(
-    label: '剩餘 ${(left * 10).ceil()} 秒',
-    child: ClipRRect(
-      borderRadius: BorderRadius.circular(4),
-      child: LinearProgressIndicator(
-        value: left,
-        minHeight: 8,
-        backgroundColor: p.accent.withValues(alpha: .14),
-        color: left < .3 ? p.hsnuMagenta : p.accent,
-      ),
-    ),
-  );
+  Widget _bar(Palette p, double? ends) => _TimeBar(palette: p, ends: ends, now: () => _m.serverNow);
 
   Widget _scoreboard(Palette p, BattleState s) {
     final o = s.opponent;
