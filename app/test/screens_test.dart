@@ -28,7 +28,9 @@ final _root = GlobalKey();
 Future<void> _loadFonts() async {
   Future<void> load(String family, String path) async {
     final bytes = File(path).readAsBytesSync();
-    await (FontLoader(family)..addFont(Future.value(ByteData.sublistView(bytes)))).load();
+    await (FontLoader(
+      family,
+    )..addFont(Future.value(ByteData.sublistView(bytes)))).load();
   }
 
   const sdk = '/opt/homebrew/share/flutter/bin/cache/artifacts/material_fonts';
@@ -71,7 +73,8 @@ extension on WidgetTester {
 
   Future<void> shot(String name) async {
     if (_shots.isEmpty) return;
-    final box = _root.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    final box =
+        _root.currentContext!.findRenderObject()! as RenderRepaintBoundary;
     await runAsync(() async {
       final image = await box.toImage(pixelRatio: 2);
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -80,7 +83,12 @@ extension on WidgetTester {
   }
 }
 
-Future<void> _open(WidgetTester t, Size size, {bool onboarded = true, bool dark = false}) async {
+Future<void> _open(
+  WidgetTester t,
+  Size size, {
+  bool onboarded = true,
+  bool dark = false,
+}) async {
   debugDisableShadows = _shots.isEmpty;
   await t.runAsync(() => resetState(onboarded: onboarded));
   if (onboarded) seedWords();
@@ -90,19 +98,21 @@ Future<void> _open(WidgetTester t, Size size, {bool onboarded = true, bool dark 
     ..physicalSize = size * 2
     ..padding = const FakeViewPadding(top: 64, bottom: 40);
   addTearDown(t.view.reset);
-  await t.pumpWidget(RepaintBoundary(
-    key: _root,
-    child: ListenableBuilder(
-      listenable: AppSettings.shared,
-      builder: (_, _) => MaterialApp(
-        debugShowCheckedModeBanner: false,
-        theme: buildTheme(Brightness.light),
-        darkTheme: buildTheme(Brightness.dark),
-        themeMode: AppSettings.shared.themeMode,
-        home: const RootView(),
+  await t.pumpWidget(
+    RepaintBoundary(
+      key: _root,
+      child: ListenableBuilder(
+        listenable: AppSettings.shared,
+        builder: (_, _) => MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: buildTheme(Brightness.light),
+          darkTheme: buildTheme(Brightness.dark),
+          themeMode: AppSettings.shared.themeMode,
+          home: const RootView(),
+        ),
       ),
     ),
-  ));
+  );
   await t.settle();
 }
 
@@ -121,7 +131,10 @@ void main() {
     }
   });
 
-  for (final (label, size) in const [('小', Size(360, 680)), ('大', Size(412, 892))]) {
+  for (final (label, size) in const [
+    ('小', Size(360, 680)),
+    ('大', Size(412, 892)),
+  ]) {
     final tag = size.width.toInt();
 
     testWidgets('新手導覽（$label螢幕）', (t) async {
@@ -178,9 +191,11 @@ void main() {
     testWidgets('考前倒數（$label螢幕）', (t) async {
       await _open(t, size);
       final now = DateTime.now();
-      AppSettings.shared.update((x) => x
-        ..examOn = true
-        ..examDate = DateTime(now.year, now.month, now.day + 60));
+      AppSettings.shared.update(
+        (x) => x
+          ..examOn = true
+          ..examDate = DateTime(now.year, now.month, now.day + 60),
+      );
       await t.settle();
       expect(find.text('距學測還有 60 天'), findsOneWidget);
       await t.shot('${tag}_countdown_home');
@@ -219,11 +234,19 @@ void main() {
       await _open(t, size);
       await t.tapTab(Icons.account_circle_rounded);
       await t.tapIcon(Icons.tune_rounded);
-      await t.scrollUntilVisible(find.text('關於與授權'), 400, scrollable: find.byType(Scrollable).last);
+      await t.scrollUntilVisible(
+        find.text('關於與授權'),
+        400,
+        scrollable: find.byType(Scrollable).last,
+      );
       await t.tapText('關於與授權');
       expect(find.text('多益'), findsOneWidget);
       await t.shot('${tag}_about');
-      await t.scrollUntilVisible(find.text('開放原始碼套件授權'), 400, scrollable: find.byType(Scrollable).last);
+      await t.scrollUntilVisible(
+        find.text('開放原始碼套件授權'),
+        400,
+        scrollable: find.byType(Scrollable).last,
+      );
       await t.tapText('開放原始碼套件授權');
       await t.shot('${tag}_about_licenses');
       await _close(t);
@@ -231,7 +254,10 @@ void main() {
 
     testWidgets('考古題（$label螢幕）', (t) async {
       await _open(t, size);
-      presentFull(t.element(find.byType(MainTabs)), ExamView(exam: ExamStore.all.first));
+      presentFull(
+        t.element(find.byType(MainTabs)),
+        ExamView(exam: ExamStore.all.first),
+      );
       await t.settle();
       await t.shot('${tag}_exam_menu');
       await t.tapText('詞彙題');
@@ -250,7 +276,13 @@ void main() {
     testWidgets('連續學習畫面（$label螢幕）', (t) async {
       await _open(t, size);
       final context = t.element(find.byType(MainTabs));
-      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => Material(child: StreakView(stats: AppStore.shared.stats, onContinue: () {}))));
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => Material(
+            child: StreakView(stats: AppStore.shared.stats, onContinue: () {}),
+          ),
+        ),
+      );
       await t.settle();
       expect(find.text('連續學習'), findsOneWidget);
       await t.shot('${tag}_streak');
@@ -325,7 +357,13 @@ void main() {
       await t.settle();
       await t.shot('${tag}_sheet_detail');
       await t.back();
-      confirmAction(context, '刪除 3 個單字？', message: '這些字的學習進度會一起刪除；每天的練習紀錄會保留。', label: '刪除', onConfirm: () {});
+      confirmAction(
+        context,
+        '刪除 3 個單字？',
+        message: '這些字的學習進度會一起刪除；每天的練習紀錄會保留。',
+        label: '刪除',
+        onConfirm: () {},
+      );
       await t.settle();
       await t.shot('${tag}_alert');
       await t.back();

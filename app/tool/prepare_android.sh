@@ -108,3 +108,19 @@ cat > android/app/src/main/res/raw/keep.xml <<'XML'
 <resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@mipmap/ic_notification" />
 XML
 echo "App 圖示已更新"
+
+# 8. 課文書架：單字表要用中文辨識器，模型要另外加；日文、韓文、印地文辨識器沒用到，告訴 R8 不用找
+python3 - android/app/build.gradle.kts <<'PY'
+import sys
+path = sys.argv[1]
+g = open(path, encoding="utf-8").read()
+if "text-recognition-chinese" not in g:
+    g += '\ndependencies {\n    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")\n}\n'
+open(path, "w", encoding="utf-8").write(g)
+print("build.gradle.kts 已加中文辨識")
+PY
+cat > android/app/proguard-rules.pro <<'TXT'
+-dontwarn com.google.mlkit.vision.text.devanagari.**
+-dontwarn com.google.mlkit.vision.text.japanese.**
+-dontwarn com.google.mlkit.vision.text.korean.**
+TXT

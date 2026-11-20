@@ -8,8 +8,9 @@ import 'package:flutter/services.dart';
 
 import 'models.dart';
 
-List<DictEntry> _parse(String json) =>
-    (jsonDecode(json) as List).map((e) => DictEntry.fromJson(e as Map<String, dynamic>)).toList();
+List<DictEntry> _parse(String json) => (jsonDecode(json) as List)
+    .map((e) => DictEntry.fromJson(e as Map<String, dynamic>))
+    .toList();
 
 class Dict {
   static List<DictEntry> all = const [];
@@ -51,8 +52,10 @@ class Dict {
     phrases = list.where((e) => e.w.contains(' ') && e.zh.isNotEmpty).toList();
   }
 
-  static List<DictEntry> entriesOfLevel(String level) => _byLevel[level] ?? const [];
-  static List<DictEntry> entriesOfDeck(Deck d) => _deckCache.putIfAbsent(d, () => all.where(d.contains).toList());
+  static List<DictEntry> entriesOfLevel(String level) =>
+      _byLevel[level] ?? const [];
+  static List<DictEntry> entriesOfDeck(Deck d) =>
+      _deckCache.putIfAbsent(d, () => all.where(d.contains).toList());
 
   static final _edges = RegExp(r"^[\s\p{P}]+|[\s\p{P}]+$", unicode: true);
 
@@ -66,13 +69,23 @@ class Dict {
       final e = _index['${t.substring(0, t.length - 3)}y'];
       if (e != null) return e;
     }
-    for (final suffix in const ['s', 'es', 'ed', 'd', 'ing', 'ly', 'er', 'est']) {
+    for (final suffix in const [
+      's',
+      'es',
+      'ed',
+      'd',
+      'ing',
+      'ly',
+      'er',
+      'est',
+    ]) {
       if (!t.endsWith(suffix) || t.length <= suffix.length + 2) continue;
       final stem = t.substring(0, t.length - suffix.length);
       final e = _index[stem] ?? _index['${stem}e'];
       if (e != null) return e;
       if (stem.length >= 2 && stem[stem.length - 1] == stem[stem.length - 2]) {
-        final doubled = _index[stem.substring(0, stem.length - 1)]; // stopped, running
+        final doubled =
+            _index[stem.substring(0, stem.length - 1)]; // stopped, running
         if (doubled != null) return doubled;
       }
     }
@@ -85,9 +98,13 @@ class Dict {
     final q = query.toLowerCase().trim();
     if (q.isEmpty) return const [];
     if (hasChinese(q)) {
-      final exact = all.where((e) => e.zh.any((z) => z == q || z == '$q的')).toList();
+      final exact = all
+          .where((e) => e.zh.any((z) => z == q || z == '$q的'))
+          .toList();
       final seen = exact.toSet();
-      final partial = all.where((e) => !seen.contains(e) && e.zh.any((z) => z.contains(q)));
+      final partial = all.where(
+        (e) => !seen.contains(e) && e.zh.any((z) => z.contains(q)),
+      );
       return [...exact, ...partial].take(limit).toList();
     }
     final prefix = all.where((e) => e.w.toLowerCase().startsWith(q)).toList()
@@ -100,7 +117,12 @@ class Dict {
   }
 
   /// 同義字：中文意思相同的字，詞性相同的排前面
-  static List<DictEntry> synonyms(String term, List<String> meanings, String pos, {int limit = 4}) {
+  static List<DictEntry> synonyms(
+    String term,
+    List<String> meanings,
+    String pos, {
+    int limit = 4,
+  }) {
     final tags = posTagsOf(pos).toSet();
     final score = <DictEntry, int>{};
     for (final z in meanings) {
@@ -122,11 +144,11 @@ class Dict {
   /// 相似字詞：先用預先算好的清單，沒有才找中文意思相同的字
   /// 大考的難度順序；其他字表放在它們的字通常落在的位置
   static int levelRank(String lv) => switch (lv) {
-        '國中小' => 0,
-        '多益' => 4,
-        '托福' || '雅思' => 6,
-        _ => int.tryParse(lv) ?? 3,
-      };
+    '國中小' => 0,
+    '多益' => 4,
+    '托福' || '雅思' => 6,
+    _ => int.tryParse(lv) ?? 3,
+  };
 
   /// b 有多像 a 在大考裡的錯誤選項：程度相同，再來是開頭或結尾一樣（impress / improve、attention / addition）、長度相近
   static double examScore(String a, int aLevel, String b, int bLevel) {
@@ -136,7 +158,9 @@ class Dict {
       head++;
     }
     var tail = 0;
-    while (tail < x.length && tail < y.length && x[x.length - 1 - tail] == y[y.length - 1 - tail]) {
+    while (tail < x.length &&
+        tail < y.length &&
+        x[x.length - 1 - tail] == y[y.length - 1 - tail]) {
       tail++;
     }
     var s = -(aLevel - bLevel).abs() * 1.5;
@@ -151,56 +175,215 @@ class Dict {
   }
 
   /// 同詞性的單字，照像不像大考錯誤選項排好，最像的在前；加一點隨機，才不會每次都是同三個。只抽樣算，不算全部一萬字
-  static List<DictEntry> examLike(String term, String pos, Random rng, {int count = 12}) {
-    final me = lookup(term), t = term.toLowerCase(), rank = levelRank(me?.lv ?? '3');
+  static List<DictEntry> examLike(
+    String term,
+    String pos,
+    Random rng, {
+    int count = 12,
+  }) {
+    final me = lookup(term),
+        t = term.toLowerCase(),
+        rank = levelRank(me?.lv ?? '3');
     // 近義字（reluctant / loath）會變成第二個正確答案
     final near = (me?.sim ?? const <String>[]).toSet();
     var pool = (byPos[pos] ?? const <DictEntry>[])
-        .where((e) =>
-            e.w != t &&
-            !e.w.contains(' ') &&
-            (levelRank(e.lv) - rank).abs() <= 1 &&
-            !near.contains(e.w) &&
-            !e.sim.contains(t))
+        .where(
+          (e) =>
+              e.w != t &&
+              !e.w.contains(' ') &&
+              (levelRank(e.lv) - rank).abs() <= 1 &&
+              !near.contains(e.w) &&
+              !e.sim.contains(t),
+        )
         .toList();
     if (pool.length > 400) pool = (pool..shuffle(rng)).take(400).toList();
-    final scored = [for (final e in pool) (e, examScore(term, rank, e.w, levelRank(e.lv)) + rng.nextDouble() * 1.5)]
-      ..sort((a, b) => b.$2.compareTo(a.$2));
+    final scored = [
+      for (final e in pool)
+        (
+          e,
+          examScore(term, rank, e.w, levelRank(e.lv)) + rng.nextDouble() * 1.5,
+        ),
+    ]..sort((a, b) => b.$2.compareTo(a.$2));
     return [for (final x in scored.take(count)) x.$1];
   }
 
-  static List<DictEntry> similar(String term, List<String> meanings, String pos, {int limit = 3}) {
+  static List<DictEntry> similar(
+    String term,
+    List<String> meanings,
+    String pos, {
+    int limit = 3,
+  }) {
     final listed = (lookup(term)?.sim ?? const <String>[])
         .map(lookup)
         .whereType<DictEntry>()
         .where((e) => e.w.toLowerCase() != term.toLowerCase())
         .toList();
-    return (listed.isEmpty ? synonyms(term, meanings, pos, limit: limit) : listed).take(limit).toList();
+    return (listed.isEmpty
+            ? synonyms(term, meanings, pos, limit: limit)
+            : listed)
+        .take(limit)
+        .toList();
   }
 
   static const _irregular = {
-    'went': 'go', 'gone': 'go', 'was': 'be', 'were': 'be', 'been': 'be', 'is': 'be', 'are': 'be',
-    'had': 'have', 'has': 'have', 'did': 'do', 'does': 'do', 'done': 'do', 'made': 'make', 'said': 'say', 'took': 'take',
-    'taken': 'take', 'came': 'come', 'saw': 'see', 'seen': 'see', 'got': 'get', 'gotten': 'get', 'gave': 'give', 'given': 'give',
-    'knew': 'know', 'known': 'know', 'thought': 'think', 'told': 'tell', 'found': 'find', 'left': 'leave', 'felt': 'feel',
-    'brought': 'bring', 'bought': 'buy', 'began': 'begin', 'begun': 'begin', 'kept': 'keep', 'held': 'hold', 'wrote': 'write',
-    'written': 'write', 'stood': 'stand', 'heard': 'hear', 'meant': 'mean', 'met': 'meet', 'ran': 'run', 'paid': 'pay',
-    'sat': 'sit', 'spoke': 'speak', 'spoken': 'speak', 'led': 'lead', 'grew': 'grow', 'grown': 'grow', 'lost': 'lose',
-    'fell': 'fall', 'fallen': 'fall', 'sent': 'send', 'built': 'build', 'understood': 'understand', 'drew': 'draw',
-    'broke': 'break', 'broken': 'break', 'spent': 'spend', 'rose': 'rise', 'drove': 'drive', 'driven': 'drive', 'ate': 'eat',
-    'eaten': 'eat', 'chose': 'choose', 'chosen': 'choose', 'wore': 'wear', 'worn': 'wear', 'children': 'child', 'men': 'man',
-    'women': 'woman', 'people': 'person', 'feet': 'foot', 'teeth': 'tooth', 'mice': 'mouse', 'better': 'good', 'best': 'good',
-    'worse': 'bad', 'worst': 'bad', 'taught': 'teach', 'caught': 'catch', 'fought': 'fight', 'flew': 'fly', 'slept': 'sleep',
-    'threw': 'throw', 'thrown': 'throw', 'sold': 'sell', 'won': 'win', 'sang': 'sing', 'swam': 'swim', 'drank': 'drink',
-    'lives': 'life', 'leaves': 'leaf', 'wives': 'wife', 'knives': 'knife', 'halves': 'half', 'shelves': 'shelf', 'wolves': 'wolf',
-    'thieves': 'thief', 'loaves': 'loaf', 'geese': 'goose', 'data': 'datum', 'criteria': 'criterion', 'phenomena': 'phenomenon',
-    'analyses': 'analysis', 'crises': 'crisis', 'hid': 'hide', 'hidden': 'hide', 'lay': 'lie', 'lain': 'lie', 'laid': 'lay',
-    'rode': 'ride', 'ridden': 'ride', 'shook': 'shake', 'shaken': 'shake', 'stole': 'steal', 'stolen': 'steal', 'struck': 'strike',
-    'swore': 'swear', 'sworn': 'swear', 'tore': 'tear', 'torn': 'tear', 'woke': 'wake', 'woken': 'wake', 'wove': 'weave',
-    'bent': 'bend', 'bled': 'bleed', 'bred': 'breed', 'dealt': 'deal', 'dug': 'dig', 'fed': 'feed', 'fled': 'flee', 'hung': 'hang',
-    'lent': 'lend', 'lit': 'light', 'sought': 'seek', 'shot': 'shoot', 'slid': 'slide', 'spun': 'spin', 'stuck': 'stick',
-    'stung': 'sting', 'swept': 'sweep', 'swung': 'swing', 'wept': 'weep', 'wound': 'wind', 'arose': 'arise', 'arisen': 'arise',
-    'forgot': 'forget', 'forgotten': 'forget', 'forgave': 'forgive', 'forgiven': 'forgive', 'froze': 'freeze', 'frozen': 'freeze',
-    'mistook': 'mistake', 'mistaken': 'mistake', 'overcame': 'overcome', 'withdrew': 'withdraw', 'withdrawn': 'withdraw',
+    'went': 'go',
+    'gone': 'go',
+    'was': 'be',
+    'were': 'be',
+    'been': 'be',
+    'is': 'be',
+    'are': 'be',
+    'had': 'have',
+    'has': 'have',
+    'did': 'do',
+    'does': 'do',
+    'done': 'do',
+    'made': 'make',
+    'said': 'say',
+    'took': 'take',
+    'taken': 'take',
+    'came': 'come',
+    'saw': 'see',
+    'seen': 'see',
+    'got': 'get',
+    'gotten': 'get',
+    'gave': 'give',
+    'given': 'give',
+    'knew': 'know',
+    'known': 'know',
+    'thought': 'think',
+    'told': 'tell',
+    'found': 'find',
+    'left': 'leave',
+    'felt': 'feel',
+    'brought': 'bring',
+    'bought': 'buy',
+    'began': 'begin',
+    'begun': 'begin',
+    'kept': 'keep',
+    'held': 'hold',
+    'wrote': 'write',
+    'written': 'write',
+    'stood': 'stand',
+    'heard': 'hear',
+    'meant': 'mean',
+    'met': 'meet',
+    'ran': 'run',
+    'paid': 'pay',
+    'sat': 'sit',
+    'spoke': 'speak',
+    'spoken': 'speak',
+    'led': 'lead',
+    'grew': 'grow',
+    'grown': 'grow',
+    'lost': 'lose',
+    'fell': 'fall',
+    'fallen': 'fall',
+    'sent': 'send',
+    'built': 'build',
+    'understood': 'understand',
+    'drew': 'draw',
+    'broke': 'break',
+    'broken': 'break',
+    'spent': 'spend',
+    'rose': 'rise',
+    'drove': 'drive',
+    'driven': 'drive',
+    'ate': 'eat',
+    'eaten': 'eat',
+    'chose': 'choose',
+    'chosen': 'choose',
+    'wore': 'wear',
+    'worn': 'wear',
+    'children': 'child',
+    'men': 'man',
+    'women': 'woman',
+    'people': 'person',
+    'feet': 'foot',
+    'teeth': 'tooth',
+    'mice': 'mouse',
+    'better': 'good',
+    'best': 'good',
+    'worse': 'bad',
+    'worst': 'bad',
+    'taught': 'teach',
+    'caught': 'catch',
+    'fought': 'fight',
+    'flew': 'fly',
+    'slept': 'sleep',
+    'threw': 'throw',
+    'thrown': 'throw',
+    'sold': 'sell',
+    'won': 'win',
+    'sang': 'sing',
+    'swam': 'swim',
+    'drank': 'drink',
+    'lives': 'life',
+    'leaves': 'leaf',
+    'wives': 'wife',
+    'knives': 'knife',
+    'halves': 'half',
+    'shelves': 'shelf',
+    'wolves': 'wolf',
+    'thieves': 'thief',
+    'loaves': 'loaf',
+    'geese': 'goose',
+    'data': 'datum',
+    'criteria': 'criterion',
+    'phenomena': 'phenomenon',
+    'analyses': 'analysis',
+    'crises': 'crisis',
+    'hid': 'hide',
+    'hidden': 'hide',
+    'lay': 'lie',
+    'lain': 'lie',
+    'laid': 'lay',
+    'rode': 'ride',
+    'ridden': 'ride',
+    'shook': 'shake',
+    'shaken': 'shake',
+    'stole': 'steal',
+    'stolen': 'steal',
+    'struck': 'strike',
+    'swore': 'swear',
+    'sworn': 'swear',
+    'tore': 'tear',
+    'torn': 'tear',
+    'woke': 'wake',
+    'woken': 'wake',
+    'wove': 'weave',
+    'bent': 'bend',
+    'bled': 'bleed',
+    'bred': 'breed',
+    'dealt': 'deal',
+    'dug': 'dig',
+    'fed': 'feed',
+    'fled': 'flee',
+    'hung': 'hang',
+    'lent': 'lend',
+    'lit': 'light',
+    'sought': 'seek',
+    'shot': 'shoot',
+    'slid': 'slide',
+    'spun': 'spin',
+    'stuck': 'stick',
+    'stung': 'sting',
+    'swept': 'sweep',
+    'swung': 'swing',
+    'wept': 'weep',
+    'wound': 'wind',
+    'arose': 'arise',
+    'arisen': 'arise',
+    'forgot': 'forget',
+    'forgotten': 'forget',
+    'forgave': 'forgive',
+    'forgiven': 'forgive',
+    'froze': 'freeze',
+    'frozen': 'freeze',
+    'mistook': 'mistake',
+    'mistaken': 'mistake',
+    'overcame': 'overcome',
+    'withdrew': 'withdraw',
+    'withdrawn': 'withdraw',
   };
 }

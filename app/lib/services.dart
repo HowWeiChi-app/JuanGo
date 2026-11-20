@@ -25,11 +25,21 @@ class Speech {
     }
     t = t.replaceAll(RegExp(r'\s*(~|…|\.{3})\s*'), ' ');
     const words = [
-      ("sb's", "somebody's"), ("sth's", "something's"), ('sb', 'somebody'), ('sth', 'something'),
-      ('smb', 'somebody'), ('smth', 'something'), ('etc', 'et cetera'), ('e.g', 'for example'), ('i.e', 'that is'),
+      ("sb's", "somebody's"),
+      ("sth's", "something's"),
+      ('sb', 'somebody'),
+      ('sth', 'something'),
+      ('smb', 'somebody'),
+      ('smth', 'something'),
+      ('etc', 'et cetera'),
+      ('e.g', 'for example'),
+      ('i.e', 'that is'),
     ];
     for (final (short, long) in words) {
-      t = t.replaceAll(RegExp('\\b${reEscape(short)}\\b\\.?', caseSensitive: false), long);
+      t = t.replaceAll(
+        RegExp('\\b${reEscape(short)}\\b\\.?', caseSensitive: false),
+        long,
+      );
     }
     return t;
   }
@@ -72,7 +82,9 @@ class Reminders {
     if (_ready) return;
     tzdata.initializeTimeZones();
     await _plugin.initialize(
-      const InitializationSettings(android: AndroidInitializationSettings('@mipmap/ic_notification')),
+      const InitializationSettings(
+        android: AndroidInitializationSettings('@mipmap/ic_notification'),
+      ),
     );
     _ready = true;
   }
@@ -86,28 +98,46 @@ class Reminders {
       }
       final s = AppSettings.shared;
       if (!s.reminderOn) return;
-      final android =
-          _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      final android = _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
       if (await android?.requestNotificationsPermission() == false) return;
 
       final store = AppStore.shared;
       final today = startOfDay(DateTime.now());
-      final studiedToday = store.logs.isNotEmpty && !store.logs.last.date.isBefore(today);
-      final dueDates = store.studyable.map((w) => w.dueDate).whereType<DateTime>().toList();
+      final studiedToday =
+          store.logs.isNotEmpty && !store.logs.last.date.isBefore(today);
+      final dueDates = store.studyable
+          .map((w) => w.dueDate)
+          .whereType<DateTime>()
+          .toList();
       for (var d = 0; d < 14; d++) {
         final day = addDays(today, d);
-        final at = DateTime(day.year, day.month, day.day, s.reminderMinutes ~/ 60, s.reminderMinutes % 60);
+        final at = DateTime(
+          day.year,
+          day.month,
+          day.day,
+          s.reminderMinutes ~/ 60,
+          s.reminderMinutes % 60,
+        );
         if (d == 0 && (studiedToday || !at.isAfter(DateTime.now()))) continue;
         final end = addDays(day, 1);
         final due = dueDates.where((x) => x.isBefore(end)).length;
         await _plugin.zonedSchedule(
           d,
           '該複習單字囉',
-          due > 0 ? '今天有 $due 個字到期，花幾分鐘複習完，別讓剛學的字又忘光。' : '花幾分鐘把今天到期的字複習完，別讓剛學的字又忘光。',
+          due > 0
+              ? '今天有 $due 個字到期，花幾分鐘複習完，別讓剛學的字又忘光。'
+              : '花幾分鐘把今天到期的字複習完，別讓剛學的字又忘光。',
           // 算好的是絕對時間，所以用 UTC 表示就好，不必知道手機的時區名稱
           tz.TZDateTime.from(at.toUtc(), tz.UTC),
           const NotificationDetails(
-            android: AndroidNotificationDetails('daily', '每日提醒', icon: '@mipmap/ic_notification'),
+            android: AndroidNotificationDetails(
+              'daily',
+              '每日提醒',
+              icon: '@mipmap/ic_notification',
+            ),
           ),
           androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
         );

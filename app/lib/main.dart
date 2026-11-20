@@ -44,11 +44,19 @@ class JuanGoApp extends StatefulWidget {
 class _JuanGoAppState extends State<JuanGoApp> {
   // 字典有 3 MB，等它載入時先顯示主題底色，不讓畫面停在白屏
   // 資料都載入後才接登入連結，同步才不會蓋到還沒讀進來的資料
-  late final Future<void> _ready = Future.wait([Dict.load(), AppStore.shared.load(), ExamStore.load(), Cloud.shared.load()])
-      .then((_) {
-    DevLog.add('app', '開啟 · ${DevLog.deviceSummary} · ${Cloud.shared.signedIn ? '已登入' : '未登入'}');
-    return Cloud.shared.listenForLinks();
-  });
+  late final Future<void> _ready =
+      Future.wait([
+        Dict.load(),
+        AppStore.shared.load(),
+        ExamStore.load(),
+        Cloud.shared.load(),
+      ]).then((_) {
+        DevLog.add(
+          'app',
+          '開啟 · ${DevLog.deviceSummary} · ${Cloud.shared.signedIn ? '已登入' : '未登入'}',
+        );
+        return Cloud.shared.listenForLinks();
+      });
 
   @override
   void initState() {
@@ -81,13 +89,18 @@ class _JuanGoAppState extends State<JuanGoApp> {
         builder: (context, child) {
           final dark = Theme.of(context).brightness == Brightness.dark;
           return AnnotatedRegion<SystemUiOverlayStyle>(
-            value: (dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark).copyWith(
-              statusBarColor: Colors.transparent,
-              systemNavigationBarColor: Colors.transparent,
-              systemNavigationBarContrastEnforced: false,
-            ),
+            value:
+                (dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
+                    .copyWith(
+                      statusBarColor: Colors.transparent,
+                      systemNavigationBarColor: Colors.transparent,
+                      systemNavigationBarContrastEnforced: false,
+                    ),
             // 字放太大會擠壞固定高度的按鈕，所以設個上限
-            child: MediaQuery.withClampedTextScaling(maxScaleFactor: 1.3, child: child!),
+            child: MediaQuery.withClampedTextScaling(
+              maxScaleFactor: 1.3,
+              child: child!,
+            ),
           );
         },
         home: FutureBuilder(
@@ -97,11 +110,24 @@ class _JuanGoAppState extends State<JuanGoApp> {
             if (snap.hasError) {
               return Material(
                 color: p.bg,
-                child: const Center(child: EmptyState('資料載入失敗', icon: Icons.error_outline_rounded, message: '請關閉 App 後重新開啟。')),
+                child: const Center(
+                  child: EmptyState(
+                    '資料載入失敗',
+                    icon: Icons.error_outline_rounded,
+                    message: '請關閉 App 後重新開啟。',
+                  ),
+                ),
               );
             }
-            if (snap.connectionState != ConnectionState.done) return ColoredBox(color: p.bg);
-            return Stack(fit: StackFit.expand, children: [const RootView(), _FadeCover(color: p.bg)]);
+            if (snap.connectionState != ConnectionState.done)
+              return ColoredBox(color: p.bg);
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                const RootView(),
+                _FadeCover(color: p.bg),
+              ],
+            );
           },
         ),
       ),
@@ -123,7 +149,9 @@ class _FadeCoverState extends State<_FadeCover> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => mounted ? setState(() => _shown = false) : null);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => mounted ? setState(() => _shown = false) : null,
+    );
   }
 
   @override
@@ -177,7 +205,9 @@ class _RootViewState extends State<RootView> {
       color: Palette.of(context).bg,
       child: AnimatedSwitcher(
         duration: const Duration(milliseconds: 400),
-        child: onboarded ? const MainTabs(key: ValueKey('tabs')) : const OnboardingView(key: ValueKey('onboarding')),
+        child: onboarded
+            ? const MainTabs(key: ValueKey('tabs'))
+            : const OnboardingView(key: ValueKey('onboarding')),
       ),
     );
   }
@@ -212,16 +242,26 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
     WordReport.flush();
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkQuota());
     // 開發版：有新版就提醒下載
-    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(DevUpdate.check(() => appNavigator.currentContext ?? context)));
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => unawaited(
+        DevUpdate.check(() => appNavigator.currentContext ?? context),
+      ),
+    );
     // 自動對戰（開發版）：一打開就進單字對戰
-    unawaited(BattleAutoplay.read().then((_) {
-      final c = appNavigator.currentContext;
-      if (c == null || !c.mounted) return;
-      final step = BattleAutoplay.demoStep;
-      // ignore: invalid_use_of_visible_for_testing_member
-      if (step != null) return unawaited(presentFull(c, BattlePage(model: BattleModel()..demo(step))));
-      if (BattleAutoplay.delay != null) unawaited(presentFull(c, const BattlePage()));
-    }));
+    unawaited(
+      BattleAutoplay.read().then((_) {
+        final c = appNavigator.currentContext;
+        if (c == null || !c.mounted) return;
+        final step = BattleAutoplay.demoStep;
+        // ignore: invalid_use_of_visible_for_testing_member
+        if (step != null)
+          return unawaited(
+            presentFull(c, BattlePage(model: BattleModel()..demo(step))),
+          );
+        if (BattleAutoplay.delay != null)
+          unawaited(presentFull(c, const BattlePage()));
+      }),
+    );
   }
 
   /// 超過免費版上限時跳提醒，或到期刪字
@@ -238,7 +278,8 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.resumed) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.resumed) {
       DevLog.add('app', state == AppLifecycleState.resumed ? '回到前景' : '到背景');
     }
     if (state == AppLifecycleState.paused) {
@@ -267,12 +308,12 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
   }
 
   Widget _page(int i) => switch (i) {
-        0 => HomeTab(onFindWords: () => _select(1)),
-        1 => const ExploreTab(),
-        2 => const AddTab(),
-        3 => const WordsTab(),
-        _ => const ProfileTab(),
-      };
+    0 => HomeTab(onFindWords: () => _select(1)),
+    1 => const ExploreTab(),
+    2 => const AddTab(),
+    3 => const WordsTab(),
+    _ => const ProfileTab(),
+  };
 
   /// Android 的返回鍵：先退分頁裡的頁面，再回主頁，最後才離開 App
   void _back() {
@@ -299,43 +340,49 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
       },
       child: Material(
         color: p.bg,
-        child: Stack(children: [
-          Padding(
-            padding: EdgeInsets.only(bottom: keyboard),
-            child: MediaQuery.removeViewInsets(
-              context: context,
-              removeBottom: true,
-              child: BottomInset(
-                value: keyboard > 0 ? 16 : barBottom + 56 + 18,
-                child: Stack(children: [
-                  for (final i in _visited.toList()..sort())
-                    AnimatedOpacity(
-                      key: ValueKey(i),
-                      duration: const Duration(milliseconds: 250),
-                      opacity: i == _tab ? 1 : 0,
-                      child: IgnorePointer(
-                        ignoring: i != _tab,
-                        child: TickerMode(
-                          enabled: i == _tab,
-                          child: Navigator(
-                            key: _navs[i],
-                            onGenerateRoute: (_) => PageRouteBuilder(pageBuilder: (_, _, _) => _page(i)),
+        child: Stack(
+          children: [
+            Padding(
+              padding: EdgeInsets.only(bottom: keyboard),
+              child: MediaQuery.removeViewInsets(
+                context: context,
+                removeBottom: true,
+                child: BottomInset(
+                  value: keyboard > 0 ? 16 : barBottom + 56 + 18,
+                  child: Stack(
+                    children: [
+                      for (final i in _visited.toList()..sort())
+                        AnimatedOpacity(
+                          key: ValueKey(i),
+                          duration: const Duration(milliseconds: 250),
+                          opacity: i == _tab ? 1 : 0,
+                          child: IgnorePointer(
+                            ignoring: i != _tab,
+                            child: TickerMode(
+                              enabled: i == _tab,
+                              child: Navigator(
+                                key: _navs[i],
+                                onGenerateRoute: (_) => PageRouteBuilder(
+                                  pageBuilder: (_, _, _) => _page(i),
+                                ),
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                ]),
+                    ],
+                  ),
+                ),
               ),
             ),
-          ),
-          if (keyboard == 0)
-            Positioned(
-              left: 28,
-              right: 28,
-              bottom: barBottom,
-              child: _TabBar(icons: _icons, index: _tab, onSelect: _select),
-            ),
-        ]),
+            if (keyboard == 0)
+              Positioned(
+                left: 28,
+                right: 28,
+                bottom: barBottom,
+                child: _TabBar(icons: _icons, index: _tab, onSelect: _select),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -343,7 +390,11 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
 
 /// 浮在內容上的膠囊分頁列，只有圖示
 class _TabBar extends StatelessWidget {
-  const _TabBar({required this.icons, required this.index, required this.onSelect});
+  const _TabBar({
+    required this.icons,
+    required this.index,
+    required this.onSelect,
+  });
   final List<(IconData, String)> icons;
   final int index;
   final ValueChanged<int> onSelect;
@@ -355,7 +406,13 @@ class _TabBar extends StatelessWidget {
       height: 56,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(28),
-        boxShadow: const [BoxShadow(color: Color(0x26000000), blurRadius: 18, offset: Offset(0, 5))],
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x26000000),
+            blurRadius: 18,
+            offset: Offset(0, 5),
+          ),
+        ],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(28),
@@ -364,36 +421,51 @@ class _TabBar extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.all(4),
             color: p.card.withValues(alpha: .86),
-            child: LayoutBuilder(builder: (context, c) {
-              final w = c.maxWidth / icons.length;
-              return Stack(children: [
-                AnimatedPositioned(
-                  duration: const Duration(milliseconds: 260),
-                  curve: Curves.easeOutCubic,
-                  left: w * index,
-                  top: 0,
-                  bottom: 0,
-                  width: w,
-                  child: Container(
-                    decoration: BoxDecoration(color: p.accent.withValues(alpha: .13), borderRadius: BorderRadius.circular(24)),
-                  ),
-                ),
-                Row(children: [
-                  for (final (i, (icon, label)) in icons.indexed)
-                    Expanded(
-                      child: Semantics(
-                        selected: i == index,
-                        child: Tap(
-                          dim: false,
-                          label: label,
-                          onTap: () => onSelect(i),
-                          child: Center(child: Icon(icon, size: 26, color: i == index ? p.accent : p.sec)),
+            child: LayoutBuilder(
+              builder: (context, c) {
+                final w = c.maxWidth / icons.length;
+                return Stack(
+                  children: [
+                    AnimatedPositioned(
+                      duration: const Duration(milliseconds: 260),
+                      curve: Curves.easeOutCubic,
+                      left: w * index,
+                      top: 0,
+                      bottom: 0,
+                      width: w,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: p.accent.withValues(alpha: .13),
+                          borderRadius: BorderRadius.circular(24),
                         ),
                       ),
                     ),
-                ]),
-              ]);
-            }),
+                    Row(
+                      children: [
+                        for (final (i, (icon, label)) in icons.indexed)
+                          Expanded(
+                            child: Semantics(
+                              selected: i == index,
+                              child: Tap(
+                                dim: false,
+                                label: label,
+                                onTap: () => onSelect(i),
+                                child: Center(
+                                  child: Icon(
+                                    icon,
+                                    size: 26,
+                                    color: i == index ? p.accent : p.sec,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),

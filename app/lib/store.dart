@@ -43,7 +43,8 @@ class AppStore extends ChangeNotifier {
   Word? word(String term) => _byTerm[term.toLowerCase()];
   Stats get stats => _stats ??= Stats(logs, wordList);
   Iterable<Word> get studyable => words.where((w) => w.studyable);
-  List<Word> wordsIn(WordList l) => words.where((w) => w.lists.contains(l.id)).toList();
+  List<Word> wordsIn(WordList l) =>
+      words.where((w) => w.lists.contains(l.id)).toList();
 
   Future<void> load() async {
     final dir = await getApplicationSupportDirectory();
@@ -63,7 +64,10 @@ class AppStore extends ChangeNotifier {
       }
       logs.sort((a, b) => a.date.compareTo(b.date));
       _readRemoved(j['removed']);
-      if (j['countdown'] is Map) countdown = Countdown.fromJson((j['countdown'] as Map).cast<String, dynamic>());
+      if (j['countdown'] is Map)
+        countdown = Countdown.fromJson(
+          (j['countdown'] as Map).cast<String, dynamic>(),
+        );
       _nextListId = lists.fold(0, (n, l) => l.id > n ? l.id : n) + 1;
     } catch (e) {
       // 檔案壞掉時留一份副本，不直接蓋掉使用者的資料
@@ -98,14 +102,23 @@ class AppStore extends ChangeNotifier {
   }
 
   /// 存一個字。被免費版 1000 字上限擋下時回傳 null（並跳出提示）；fromExam 的字不算，一律存
-  Word? add(DictEntry e, {List<String>? meanings, WordList? list, bool myWords = true, bool fromExam = false}) {
+  Word? add(
+    DictEntry e, {
+    List<String>? meanings,
+    WordList? list,
+    bool myWords = true,
+    bool fromExam = false,
+  }) {
     var w = word(e.w);
-    if (!fromExam && WordQuota.takesPlace(e, w, myWords: myWords, toList: list != null) && !WordQuota.hasRoom) {
+    if (!fromExam &&
+        WordQuota.takesPlace(e, w, myWords: myWords, toList: list != null) &&
+        !WordQuota.hasRoom) {
       WordQuota.stopped();
       return null;
     }
     if (w != null) {
-      if (meanings != null && meanings.isNotEmpty) w.meanings = List.of(meanings);
+      if (meanings != null && meanings.isNotEmpty)
+        w.meanings = List.of(meanings);
       if (myWords) w.inMyWords = true;
     } else {
       w = Word.fromEntry(e, meanings: meanings)
@@ -147,11 +160,17 @@ class AppStore extends ChangeNotifier {
 
   bool isNewListName(String name) {
     final n = name.trim();
-    return n.isNotEmpty && !WordList.builtInNames.contains(n) && lists.every((l) => l.name != n);
+    return n.isNotEmpty &&
+        !WordList.builtInNames.contains(n) &&
+        lists.every((l) => l.name != n);
   }
 
   WordList createList(String name, {DateTime? createdAt}) {
-    final l = WordList(id: _nextListId++, name: name.trim(), createdAt: createdAt);
+    final l = WordList(
+      id: _nextListId++,
+      name: name.trim(),
+      createdAt: createdAt,
+    );
     lists.add(l);
     save();
     return l;
@@ -228,11 +247,13 @@ class AppStore extends ChangeNotifier {
       'exportedAt': dateJson(DateTime.now()),
       'words': sorted.map((w) => _record(w, progress: true)).toList(),
       'lists': lists
-          .map((l) => {
-                'name': l.name,
-                'createdAt': dateJson(l.createdAt),
-                'terms': wordsIn(l).map((w) => w.term).toList(),
-              })
+          .map(
+            (l) => {
+              'name': l.name,
+              'createdAt': dateJson(l.createdAt),
+              'terms': wordsIn(l).map((w) => w.term).toList(),
+            },
+          )
           .toList(),
       'logs': logs.map((l) => l.toJson()).toList(),
       'settings': AppSettings.shared.backupValues,
@@ -240,8 +261,9 @@ class AppStore extends ChangeNotifier {
     };
   }
 
-  List<Map<String, dynamic>> _removedJson() =>
-      [for (final e in removed.entries) {'term': e.key, 'at': dateJson(e.value)}];
+  List<Map<String, dynamic>> _removedJson() => [
+    for (final e in removed.entries) {'term': e.key, 'at': dateJson(e.value)},
+  ];
 
   void _readRemoved(Object? raw) {
     for (final r in (raw as List? ?? const []).cast<Map<String, dynamic>>()) {
@@ -263,15 +285,15 @@ class AppStore extends ChangeNotifier {
   }
 
   Map<String, dynamic> listFile(String name, List<Word> ws) => {
-        'app': 'JuanGo',
-        'format': 1,
-        'kind': 'list',
-        'exportedAt': dateJson(DateTime.now()),
-        'words': ws.map((w) => _record(w, progress: false)).toList(),
-        'lists': [
-          {'name': name, 'terms': ws.map((w) => w.term).toList()},
-        ],
-      };
+    'app': 'JuanGo',
+    'format': 1,
+    'kind': 'list',
+    'exportedAt': dateJson(DateTime.now()),
+    'words': ws.map((w) => _record(w, progress: false)).toList(),
+    'lists': [
+      {'name': name, 'terms': ws.map((w) => w.term).toList()},
+    ],
+  };
 
   /// 寫到暫存資料夾，交給系統的分享選單
   Future<File> writeShareFile(Map<String, dynamic> f) async {
@@ -300,7 +322,8 @@ class AppStore extends ChangeNotifier {
     if (j == null || j['app'] != 'JuanGo' || j['words'] is! List) {
       throw const FormatException('這不是 JuanGo 的備份或清單檔');
     }
-    if ((j['format'] as int? ?? 1) > 2) throw const FormatException('這個檔案來自較新版的 JuanGo，請先更新 App');
+    if ((j['format'] as int? ?? 1) > 2)
+      throw const FormatException('這個檔案來自較新版的 JuanGo，請先更新 App');
     // 第 2 版的備份省略了字典裡就有的內容和預設值，先補回來
     for (final raw in j['words'] as List) {
       if (raw is! Map<String, dynamic>) continue;
@@ -332,7 +355,8 @@ class AppStore extends ChangeNotifier {
       _readRemoved(f.json['removed']);
       for (final e in removed.entries) {
         final w = word(e.key);
-        if (w != null && !w.addedAt.isAfter(e.value)) _byTerm.remove(w.term.toLowerCase());
+        if (w != null && !w.addedAt.isAfter(e.value))
+          _byTerm.remove(w.term.toLowerCase());
       }
     }
     void applyProgress(Map<String, dynamic> r, Word w) {
@@ -347,13 +371,18 @@ class AppStore extends ChangeNotifier {
       final term = r['term'] as String? ?? '';
       if (term.isEmpty || (only != null && !only.contains(term))) continue;
       final gone = isBackup ? removed[term] : null;
-      if (gone != null && word(term) == null && !(parseDate(r['addedAt']) ?? DateTime(1970)).isAfter(gone)) continue;
-      final meanings = (r['meanings'] as List?)?.cast<String>() ?? const <String>[];
+      if (gone != null &&
+          word(term) == null &&
+          !(parseDate(r['addedAt']) ?? DateTime(1970)).isAfter(gone))
+        continue;
+      final meanings =
+          (r['meanings'] as List?)?.cast<String>() ?? const <String>[];
       final e = word(term);
       if (e != null) {
         if (e.meanings.isEmpty) e.meanings = List.of(meanings);
         if (e.pos.isEmpty) e.pos = r['pos'] as String? ?? '';
-        if (e.definition.isEmpty) e.definition = r['definition'] as String? ?? '';
+        if (e.definition.isEmpty)
+          e.definition = r['definition'] as String? ?? '';
         if (e.example.isEmpty) {
           e.example = r['example'] as String? ?? '';
           e.exampleZh = r['exampleZh'] as String? ?? '';
@@ -407,7 +436,9 @@ class AppStore extends ChangeNotifier {
         continue;
       }
       final matches = lists.where((l) => l.name == name);
-      final l = matches.isNotEmpty ? matches.first : createList(name, createdAt: parseDate(r['createdAt']));
+      final l = matches.isNotEmpty
+          ? matches.first
+          : createList(name, createdAt: parseDate(r['createdAt']));
       for (final t in terms) {
         if (only != null && !only.contains(t)) continue;
         word(t)?.lists.add(l.id);
@@ -417,7 +448,8 @@ class AppStore extends ChangeNotifier {
     var logCount = 0;
     final incoming = f.json['logs'] as List?;
     if (incoming != null && incoming.isNotEmpty) {
-      String key(String t, DateTime d) => '$t|${d.millisecondsSinceEpoch ~/ 1000}';
+      String key(String t, DateTime d) =>
+          '$t|${d.millisecondsSinceEpoch ~/ 1000}';
       final have = logs.map((l) => key(l.term, l.date)).toSet();
       for (final raw in incoming) {
         final l = ReviewLog.fromJson(raw as Map<String, dynamic>);
@@ -430,7 +462,8 @@ class AppStore extends ChangeNotifier {
     }
 
     final s = f.json['settings'];
-    if (isBackup && settings && s is Map<String, dynamic>) AppSettings.shared.applyBackup(s);
+    if (isBackup && settings && s is Map<String, dynamic>)
+      AppSettings.shared.applyBackup(s);
     save();
 
     return [
@@ -458,12 +491,14 @@ class BackupFile {
   String get title {
     if (!isBackup) return '單字清單「${listName ?? '未命名'}」';
     final d = parseDate(json['exportedAt']);
-    return d == null ? 'JuanGo 備份' : 'JuanGo 備份（${d.year}/${d.month}/${d.day} ${hourMinute(d)}）';
+    return d == null
+        ? 'JuanGo 備份'
+        : 'JuanGo 備份（${d.year}/${d.month}/${d.day} ${hourMinute(d)}）';
   }
 
   String get summary => [
-        '$wordCount 個單字',
-        if (listCount > 0) '$listCount 個清單',
-        if (logCount > 0) '$logCount 筆複習紀錄',
-      ].join('、');
+    '$wordCount 個單字',
+    if (listCount > 0) '$listCount 個清單',
+    if (logCount > 0) '$logCount 筆複習紀錄',
+  ].join('、');
 }

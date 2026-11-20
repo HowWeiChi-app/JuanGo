@@ -35,7 +35,10 @@ void main() {
   });
 
   test('練習流程：全部答對會結束，撤銷能退回上一題', () {
-    final words = [for (final t in ['maintain', 'benefit', 'curious']) AppStore.shared.add(Dict.lookup(t)!)!];
+    final words = [
+      for (final t in ['maintain', 'benefit', 'curious'])
+        AppStore.shared.add(Dict.lookup(t)!)!,
+    ];
     final e = SessionEngine(words);
     final first = e.current!.word;
     e.grade(Grade.good);
@@ -109,13 +112,19 @@ void main() {
     expect(restored.logs.length, logs);
     expect(restored.word('efficient')!.srsLevel, level);
     expect(restored.word('resilience')!.favorite, isTrue);
-    expect(restored.wordsIn(restored.lists.single).map((w) => w.term), ['maintain']);
+    expect(restored.wordsIn(restored.lists.single).map((w) => w.term), [
+      'maintain',
+    ]);
   });
 
   test('備份省略字典裡就有的內容，還原時補回來；自己改過的意思照樣保留', () {
     final s = AppStore.shared;
-    final e = Dict.all.firstWhere((e) => e.zh.isNotEmpty && e.ex.isNotEmpty && Dict.lookup(e.w)?.w == e.w);
-    final mine = Dict.all.firstWhere((x) => x.w != e.w && x.zh.isNotEmpty && Dict.lookup(x.w)?.w == x.w);
+    final e = Dict.all.firstWhere(
+      (e) => e.zh.isNotEmpty && e.ex.isNotEmpty && Dict.lookup(e.w)?.w == e.w,
+    );
+    final mine = Dict.all.firstWhere(
+      (x) => x.w != e.w && x.zh.isNotEmpty && Dict.lookup(x.w)?.w == x.w,
+    );
     s.add(e);
     s.add(mine);
     s.word(mine.w)!.meanings = ['我自己的意思'];
@@ -125,7 +134,9 @@ void main() {
     expect(plain.keys, isNot(contains('meanings')));
     expect(plain.keys, isNot(contains('example')));
     expect(plain.keys, isNot(contains('inMyWords')));
-    expect(words.firstWhere((r) => r['term'] == mine.w)['meanings'], ['我自己的意思']);
+    expect(words.firstWhere((r) => r['term'] == mine.w)['meanings'], [
+      '我自己的意思',
+    ]);
 
     final text = jsonEncode(backup);
     AppStore.resetForTest();
@@ -149,12 +160,24 @@ void main() {
     for (final e in ExamStore.all) {
       for (final g in e.groups) {
         for (final q in g.questions) {
-          expect(q.answer, inInclusiveRange(0, g.optionsOf(q).length - 1), reason: '${e.year} 第${q.n}題');
-          if (g.kind != 'reading' && g.passage != null) expect(g.passage, contains('⟨${q.n}⟩'), reason: '${e.year} 第${q.n}題');
+          expect(
+            q.answer,
+            inInclusiveRange(0, g.optionsOf(q).length - 1),
+            reason: '${e.year} 第${q.n}題',
+          );
+          if (g.kind != 'reading' && g.passage != null)
+            expect(
+              g.passage,
+              contains('⟨${q.n}⟩'),
+              reason: '${e.year} 第${q.n}題',
+            );
         }
       }
     }
-    final tested = ExamStore.all.first.groups.firstWhere((g) => g.kind == 'vocab').questions.first;
+    final tested = ExamStore.all.first.groups
+        .firstWhere((g) => g.kind == 'vocab')
+        .questions
+        .first;
     expect(tested.options.any((o) => ExamStore.years(o).isNotEmpty), isTrue);
   });
 }

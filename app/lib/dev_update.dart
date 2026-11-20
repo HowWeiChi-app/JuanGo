@@ -20,9 +20,14 @@ class DevUpdate {
   static bool _asked = false;
 
   static Future<void> check(BuildContext Function() context) async {
-    if (!devGosPro || _asked || !Platform.isAndroid || !Cloud.shared.signedIn) return;
+    if (!devGosPro || _asked || !Platform.isAndroid || !Cloud.shared.signedIn)
+      return;
     try {
-      final j = await Cloud.shared.rpc('dev_latest', const {}, const Duration(seconds: 10));
+      final j = await Cloud.shared.rpc(
+        'dev_latest',
+        const {},
+        const Duration(seconds: 10),
+      );
       if (j is! Map) return;
       final build = (j['build'] as num?)?.toInt() ?? 0;
       if (build <= devBuild) return;
@@ -40,7 +45,11 @@ class DevUpdate {
         ].join('\n\n'),
         actions: [
           const AlertAction('稍後'),
-          AlertAction('下載', bold: true, onTap: () => unawaited(_download('${j['path']}'))),
+          AlertAction(
+            '下載',
+            bold: true,
+            onTap: () => unawaited(_download('${j['path']}')),
+          ),
         ],
       );
     } catch (e) {
@@ -50,7 +59,10 @@ class DevUpdate {
 
   static Future<void> _download(String path) async {
     try {
-      await launchUrl(Uri.parse(await Cloud.shared.signDevBuild(path)), mode: LaunchMode.externalApplication);
+      await launchUrl(
+        Uri.parse(await Cloud.shared.signDevBuild(path)),
+        mode: LaunchMode.externalApplication,
+      );
     } catch (e) {
       debugPrint('開發版下載網址拿不到：$e');
     }

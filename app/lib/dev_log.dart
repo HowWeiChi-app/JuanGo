@@ -23,7 +23,9 @@ class DevLog {
   /// 測試裡不寫檔
   static bool disabled = false;
 
-  static Future<File> _f() async => _file ??= File('${(await getApplicationSupportDirectory()).path}/devlog.txt');
+  static Future<File> _f() async => _file ??= File(
+    '${(await getApplicationSupportDirectory()).path}/devlog.txt',
+  );
 
   static String _two(int n) => n.toString().padLeft(2, '0');
 
@@ -31,14 +33,21 @@ class DevLog {
   static void add(String tag, String message) {
     if (!devGosPro || disabled) return;
     final t = DateTime.now();
-    final line = '${_two(t.month)}-${_two(t.day)} ${_two(t.hour)}:${_two(t.minute)}:${_two(t.second)} [$tag] ${message.replaceAll('\n', ' ')}\n';
+    final line =
+        '${_two(t.month)}-${_two(t.day)} ${_two(t.hour)}:${_two(t.minute)}:${_two(t.second)} [$tag] ${message.replaceAll('\n', ' ')}\n';
     _queue = _queue.then((_) async {
       try {
         final f = await _f();
         await f.writeAsString(line, mode: FileMode.append, flush: true);
         if (++_writes % 100 == 0) {
-          final lines = (await f.readAsLines()).where((l) => l.isNotEmpty).toList();
-          if (lines.length > _maxLines) await f.writeAsString('${lines.sublist(lines.length - _maxLines).join('\n')}\n', flush: true);
+          final lines = (await f.readAsLines())
+              .where((l) => l.isNotEmpty)
+              .toList();
+          if (lines.length > _maxLines)
+            await f.writeAsString(
+              '${lines.sublist(lines.length - _maxLines).join('\n')}\n',
+              flush: true,
+            );
         }
       } catch (_) {}
     });
@@ -63,7 +72,8 @@ class DevLog {
   }
 
   /// App 版本、Android 版本，回報和開啟時記一行
-  static String get deviceSummary => 'JuanGo 開發版 $devBuild · ${Platform.operatingSystem} ${Platform.operatingSystemVersion}';
+  static String get deviceSummary =>
+      'JuanGo 開發版 $devBuild · ${Platform.operatingSystem} ${Platform.operatingSystemVersion}';
 }
 
 class DevLogPage extends StatefulWidget {
@@ -78,7 +88,9 @@ class _DevLogPageState extends State<DevLogPage> {
   @override
   void initState() {
     super.initState();
-    unawaited(DevLog.read().then((t) => mounted ? setState(() => _text = t) : null));
+    unawaited(
+      DevLog.read().then((t) => mounted ? setState(() => _text = t) : null),
+    );
   }
 
   @override
@@ -90,16 +102,27 @@ class _DevLogPageState extends State<DevLogPage> {
       safeTop: false,
       actions: [
         if (text.isNotEmpty)
-          BarText('清除', onTap: () => confirmAction(context, '清除這支手機上的 log？', label: '清除', onConfirm: () async {
+          BarText(
+            '清除',
+            onTap: () => confirmAction(
+              context,
+              '清除這支手機上的 log？',
+              label: '清除',
+              onConfirm: () async {
                 await DevLog.clear();
                 if (mounted) setState(() => _text = '');
-              })),
+              },
+            ),
+          ),
       ],
       slivers: [
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: SelectableText(text.isEmpty ? (_text == null ? '' : '還沒有紀錄。') : text, style: ts(F.cap, c: p.ink, mono: true)),
+            child: SelectableText(
+              text.isEmpty ? (_text == null ? '' : '還沒有紀錄。') : text,
+              style: ts(F.cap, c: p.ink, mono: true),
+            ),
           ),
         ),
       ],
@@ -134,21 +157,31 @@ class _DevReportPageState extends State<DevReportPage> {
     String result;
     var sent = false;
     try {
-      await Cloud.shared.sendBytes(Uri.parse('${CloudConfig.url}/rest/v1/dev_reports'), 'POST',
-          body: utf8.encode(jsonEncode({
+      await Cloud.shared.sendBytes(
+        Uri.parse('${CloudConfig.url}/rest/v1/dev_reports'),
+        'POST',
+        body: utf8.encode(
+          jsonEncode({
             'app': 'juango',
             'platform': 'android',
             'version': '$devBuild',
             'build': '$devBuild',
             'device': DevLog.deviceSummary,
             'message': message,
-            'log': log.length > 200000 ? log.substring(log.length - 200000) : log,
-          })),
-          prefer: 'return=minimal');
+            'log': log.length > 200000
+                ? log.substring(log.length - 200000)
+                : log,
+          }),
+        ),
+        prefer: 'return=minimal',
+      );
       sent = true;
       result = '已送出，謝謝回報！';
     } on CloudFailure catch (e) {
-      result = e.message.contains('dev_reports') || e.message.contains('relation') ? '回報的伺服器還沒開通。' : '沒有送出：${e.message}';
+      result =
+          e.message.contains('dev_reports') || e.message.contains('relation')
+          ? '回報的伺服器還沒開通。'
+          : '沒有送出：${e.message}';
     }
     if (!mounted) return;
     setState(() => _sending = false);
@@ -165,31 +198,55 @@ class _DevReportPageState extends State<DevReportPage> {
       safeTop: false,
       slivers: [
         SliverToBoxAdapter(
-          child: Sec(footer: '會一起送出：${DevLog.deviceSummary}', children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-              child: TextField(
-                controller: _message,
-                autofocus: true,
-                minLines: 5,
-                maxLines: 12,
-                style: ts(F.body, c: p.ink),
-                onChanged: (_) => setState(() {}),
-                decoration: InputDecoration(hintText: '哪裡怪怪的？怎麼發生的？', hintStyle: ts(F.body, c: p.ter), border: InputBorder.none),
+          child: Sec(
+            footer: '會一起送出：${DevLog.deviceSummary}',
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 6,
+                ),
+                child: TextField(
+                  controller: _message,
+                  autofocus: true,
+                  minLines: 5,
+                  maxLines: 12,
+                  style: ts(F.body, c: p.ink),
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: '哪裡怪怪的？怎麼發生的？',
+                    hintStyle: ts(F.body, c: p.ter),
+                    border: InputBorder.none,
+                  ),
+                ),
               ),
-            ),
-          ]),
+            ],
+          ),
         ),
         SliverToBoxAdapter(
-          child: Sec(footer: 'Log 只有在按「送出」時才會上傳，平常都只存在這支手機。', children: [
-            SwitchRow(title: '附上 log 紀錄', value: _withLog, onChanged: (v) => setState(() => _withLog = v)),
-            RowTile(title: '看看要送出的 log', chevron: true, onTap: () => pushPage(context, const DevLogPage())),
-          ]),
+          child: Sec(
+            footer: 'Log 只有在按「送出」時才會上傳，平常都只存在這支手機。',
+            children: [
+              SwitchRow(
+                title: '附上 log 紀錄',
+                value: _withLog,
+                onChanged: (v) => setState(() => _withLog = v),
+              ),
+              RowTile(
+                title: '看看要送出的 log',
+                chevron: true,
+                onTap: () => pushPage(context, const DevLogPage()),
+              ),
+            ],
+          ),
         ),
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: PrimaryButton(label: _sending ? '送出中…' : '送出', onTap: _message.text.trim().isEmpty || _sending ? null : _send),
+            child: PrimaryButton(
+              label: _sending ? '送出中…' : '送出',
+              onTap: _message.text.trim().isEmpty || _sending ? null : _send,
+            ),
           ),
         ),
       ],

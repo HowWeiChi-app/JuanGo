@@ -13,12 +13,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 Future<void> setUpData() async {
   TestWidgetsFlutterBinding.ensureInitialized();
-  final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-  for (final name in ['flutter_tts', 'dexterous.com/flutter/local_notifications', 'dev.fluttercommunity.plus/share']) {
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  for (final name in [
+    'flutter_tts',
+    'dexterous.com/flutter/local_notifications',
+    'dev.fluttercommunity.plus/share',
+  ]) {
     messenger.setMockMethodCallHandler(MethodChannel(name), (_) async => null);
   }
-  if (Dict.all.isEmpty) Dict.loadFromJson(File('assets/words.json').readAsStringSync());
-  if (ExamStore.all.isEmpty) ExamStore.loadFromJson(File('assets/exams.json').readAsStringSync());
+  if (Dict.all.isEmpty)
+    Dict.loadFromJson(File('assets/words.json').readAsStringSync());
+  if (ExamStore.all.isEmpty)
+    ExamStore.loadFromJson(File('assets/exams.json').readAsStringSync());
 }
 
 Future<void> resetState({bool onboarded = false}) async {
@@ -31,13 +38,32 @@ Future<void> resetState({bool onboarded = false}) async {
 /// 一份看起來有在用的字庫：不同熟練度、有收藏、有清單、今天有練習
 void seedWords() {
   final s = AppStore.shared;
-  const terms = ['resilience', 'perspective', 'maintain', 'pivotal', 'situate', 'abandon', 'benefit', 'curious', 'decline', 'efficient'];
+  const terms = [
+    'resilience',
+    'perspective',
+    'maintain',
+    'pivotal',
+    'situate',
+    'abandon',
+    'benefit',
+    'curious',
+    'decline',
+    'efficient',
+  ];
   for (final (i, t) in terms.indexed) {
     final w = s.add(Dict.lookup(t)!)!;
     for (var k = 0; k < i % 6; k++) {
       SRS.apply(Grade.good, w);
     }
-    if (i < 6) s.addLog(ReviewLog(term: t, result: Grade.good.index, wasNew: i < 3, date: DateTime.now()));
+    if (i < 6)
+      s.addLog(
+        ReviewLog(
+          term: t,
+          result: Grade.good.index,
+          wasNew: i < 3,
+          date: DateTime.now(),
+        ),
+      );
   }
   s.toggleFavorite(s.word('resilience')!);
   s.createList('期中考');

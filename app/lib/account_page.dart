@@ -37,18 +37,30 @@ class _AccountPageState extends State<AccountPage> {
 
   void _openList(SharedList l) {
     final code = Cloud.pretty(l.code);
-    showAlert(context, l.name, message: '代碼 $code・${l.wordCount} 個字・剩 ${l.hoursLeft} 小時', actions: [
-      AlertAction('拷貝代碼', onTap: () => Clipboard.setData(ClipboardData(text: code))),
-      AlertAction('停止分享', destructive: true, onTap: () async {
-        try {
-          await _cloud.deleteList(l.code);
-        } catch (e) {
-          if (mounted) showAlert(context, '$e');
-        }
-        await _loadLists();
-      }),
-      const AlertAction('好', bold: true),
-    ]);
+    showAlert(
+      context,
+      l.name,
+      message: '代碼 $code・${l.wordCount} 個字・剩 ${l.hoursLeft} 小時',
+      actions: [
+        AlertAction(
+          '拷貝代碼',
+          onTap: () => Clipboard.setData(ClipboardData(text: code)),
+        ),
+        AlertAction(
+          '停止分享',
+          destructive: true,
+          onTap: () async {
+            try {
+              await _cloud.deleteList(l.code);
+            } catch (e) {
+              if (mounted) showAlert(context, '$e');
+            }
+            await _loadLists();
+          },
+        ),
+        const AlertAction('好', bold: true),
+      ],
+    );
   }
 
   @override
@@ -77,11 +89,15 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<void> _confirmDelete() => showAlert(
-        context,
-        '刪除帳號？',
-        message: '會永久刪除這個帳號和雲端上的所有資料，無法復原。這台裝置上的單字和進度會保留。有訂閱的話，要另外到 Google Play 取消。',
-        actions: [const AlertAction('取消'), AlertAction('刪除', destructive: true, bold: true, onTap: _delete)],
-      );
+    context,
+    '刪除帳號？',
+    message:
+        '會永久刪除這個帳號和雲端上的所有資料，無法復原。這台裝置上的單字和進度會保留。有訂閱的話，要另外到 Google Play 取消。',
+    actions: [
+      const AlertAction('取消'),
+      AlertAction('刪除', destructive: true, bold: true, onTap: _delete),
+    ],
+  );
 
   Future<void> _delete() async {
     setState(() => _deleting = true);
@@ -104,33 +120,50 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
-  String _time(DateTime? d) => d == null ? '還沒有' : '${d.year}/${d.month}/${d.day} ${hourMinute(d)}';
+  String _time(DateTime? d) =>
+      d == null ? '還沒有' : '${d.year}/${d.month}/${d.day} ${hourMinute(d)}';
 
   List<Widget> _signedIn(Palette p, CloudSession s) => [
-        Sec(header: '帳號', footer: '回到 App 時會自動同步，兩台裝置的單字和進度會合併，不會互相刪除。', children: [
-          RowTile(title: 'Email', value: s.email),
-          RowTile(title: '上次同步', value: _time(_cloud.lastSync)),
-          RowTile(
-            title: _cloud.syncing ? '同步中…' : '立即同步',
-            titleColor: _cloud.syncing ? p.sec : p.accent,
-            onTap: _cloud.syncing ? null : _sync,
-          ),
-        ]),
-        _sharedLists(p),
-        Sec(footer: '刪除帳號會刪掉雲端上的備份和分享中的清單，這台裝置上的單字和進度會保留。', children: [
-          RowTile(title: '登出', titleColor: p.destructive, onTap: _cloud.signOut),
-          RowTile(title: _deleting ? '刪除中…' : '刪除帳號', titleColor: p.destructive, onTap: _deleting ? null : _confirmDelete),
-        ]),
-      ];
+    Sec(
+      header: '帳號',
+      footer: '回到 App 時會自動同步，兩台裝置的單字和進度會合併，不會互相刪除。',
+      children: [
+        RowTile(title: 'Email', value: s.email),
+        RowTile(title: '上次同步', value: _time(_cloud.lastSync)),
+        RowTile(
+          title: _cloud.syncing ? '同步中…' : '立即同步',
+          titleColor: _cloud.syncing ? p.sec : p.accent,
+          onTap: _cloud.syncing ? null : _sync,
+        ),
+      ],
+    ),
+    _sharedLists(p),
+    Sec(
+      footer: '刪除帳號會刪掉雲端上的備份和分享中的清單，這台裝置上的單字和進度會保留。',
+      children: [
+        RowTile(title: '登出', titleColor: p.destructive, onTap: _cloud.signOut),
+        RowTile(
+          title: _deleting ? '刪除中…' : '刪除帳號',
+          titleColor: p.destructive,
+          onTap: _deleting ? null : _confirmDelete,
+        ),
+      ],
+    ),
+  ];
 
   Widget _sharedLists(Palette p) {
-    final live = (_lists ?? const <SharedList>[]).where((l) => l.hoursLeft > 0).toList();
+    final live = (_lists ?? const <SharedList>[])
+        .where((l) => l.hoursLeft > 0)
+        .toList();
     return Sec(
       header: '我分享的清單',
       footer: '代碼 72 小時後失效並從雲端刪除；從清單再分享一次可以延長。點一下可以拷貝或停止分享。',
       children: [
         if (live.isEmpty)
-          RowTile(title: _lists == null ? '讀取中…' : '目前沒有分享中的清單', titleColor: p.sec)
+          RowTile(
+            title: _lists == null ? '讀取中…' : '目前沒有分享中的清單',
+            titleColor: p.sec,
+          )
         else
           for (final l in live)
             RowTile(
@@ -194,7 +227,11 @@ class _AccountPageState extends State<AccountPage> {
           _lists = null;
           _loadLists();
         }
-        return NavPage(title: '帳號登入', safeTop: false, slivers: s == null ? _signedOut(p) : _signedIn(p, s));
+        return NavPage(
+          title: '帳號登入',
+          safeTop: false,
+          slivers: s == null ? _signedOut(p) : _signedIn(p, s),
+        );
       },
     );
   }

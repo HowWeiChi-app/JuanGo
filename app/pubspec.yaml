@@ -25,6 +25,7 @@ dependencies:
   google_mlkit_text_recognition: ^1.0.3   # 課文書架：裝置上的文字辨識
   google_mlkit_document_scanner: ^0.7.2   # 課文書架：拍課本（自動裁切、拉正、可從相簿匯入）
   image: ^4.13.1                        # 課文書架：照片縮小、壓成 JPEG 再上傳
+  pdfx: ^2.9.2                          # 課文書架：把 PDF 每頁畫成圖片再辨識
 
 dev_dependencies:
   flutter_test:
