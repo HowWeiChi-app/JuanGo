@@ -1,0 +1,321 @@
+{
+  "counts": [
+    {
+      "note": "我的單字裡的一般字",
+      "cefr": "托福",
+      "fromExam": false,
+      "inMyWords": true,
+      "favorite": false,
+      "inList": false,
+      "counts": true
+    },
+    {
+      "note": "只在自訂清單",
+      "cefr": "",
+      "fromExam": false,
+      "inMyWords": false,
+      "favorite": false,
+      "inList": true,
+      "counts": true
+    },
+    {
+      "note": "只在喜歡",
+      "cefr": "多益",
+      "fromExam": false,
+      "inMyWords": false,
+      "favorite": true,
+      "inList": false,
+      "counts": true
+    },
+    {
+      "note": "大考詞彙不算",
+      "cefr": "4",
+      "fromExam": false,
+      "inMyWords": true,
+      "favorite": true,
+      "inList": true,
+      "counts": false
+    },
+    {
+      "note": "考古題答錯加入的字不算",
+      "cefr": "雅思",
+      "fromExam": true,
+      "inMyWords": true,
+      "favorite": false,
+      "inList": false,
+      "counts": false
+    },
+    {
+      "note": "沒有收進任何地方",
+      "cefr": "國中小",
+      "fromExam": false,
+      "inMyWords": false,
+      "favorite": false,
+      "inList": false,
+      "counts": false
+    }
+  ],
+  "fit": [
+    {
+      "note": "空位夠",
+      "wanted": [
+        true,
+        true,
+        false
+      ],
+      "used": 10,
+      "unlimited": false,
+      "allowed": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "note": "只剩 2 個空位，不算的字照樣加入",
+      "wanted": [
+        true,
+        false,
+        true,
+        true,
+        false
+      ],
+      "used": 998,
+      "unlimited": false,
+      "allowed": [
+        true,
+        true,
+        true,
+        false,
+        true
+      ]
+    },
+    {
+      "note": "已經超過上限",
+      "wanted": [
+        true,
+        false
+      ],
+      "used": 1200,
+      "unlimited": false,
+      "allowed": [
+        false,
+        true
+      ]
+    },
+    {
+      "note": "Pro 沒有上限",
+      "wanted": [
+        true,
+        true
+      ],
+      "used": 5000,
+      "unlimited": true,
+      "allowed": [
+        true,
+        true
+      ]
+    }
+  ],
+  "usage": [
+    {
+      "used": 899,
+      "unlimited": false,
+      "text": null
+    },
+    {
+      "used": 900,
+      "unlimited": false,
+      "text": "已用 900 / 1000"
+    },
+    {
+      "used": 1003,
+      "unlimited": false,
+      "text": "已用 1003 / 1000"
+    },
+    {
+      "used": 950,
+      "unlimited": true,
+      "text": null
+    }
+  ],
+  "countdown": [
+    {
+      "note": "第一次超過：30 天",
+      "before": {},
+      "used": 1001,
+      "unlimited": false,
+      "today": 100,
+      "after": {
+        "overSince": 100,
+        "deleteOn": 130,
+        "lastStart": 100
+      },
+      "reminder": null,
+      "due": false
+    },
+    {
+      "note": "倒數中不會重新起算",
+      "before": {
+        "overSince": 100,
+        "deleteOn": 130,
+        "lastStart": 100
+      },
+      "used": 1200,
+      "unlimited": false,
+      "today": 110,
+      "after": {
+        "overSince": 100,
+        "deleteOn": 130,
+        "lastStart": 100
+      },
+      "reminder": null,
+      "due": false
+    },
+    {
+      "note": "剩 7 天跳提醒",
+      "before": {
+        "overSince": 100,
+        "deleteOn": 130,
+        "lastStart": 100
+      },
+      "used": 1200,
+      "unlimited": false,
+      "today": 123,
+      "after": {
+        "overSince": 100,
+        "deleteOn": 130,
+        "lastStart": 100
+      },
+      "reminder": 7,
+      "due": false
+    },
+    {
+      "note": "剩 7 天的提醒跳過了就不再跳",
+      "before": {
+        "overSince": 100,
+        "deleteOn": 130,
+        "lastStart": 100,
+        "shown7": true
+      },
+      "used": 1200,
+      "unlimited": false,
+      "today": 125,
+      "after": {
+        "overSince": 100,
+        "deleteOn": 130,
+        "lastStart": 100,
+        "shown7": true
+      },
+      "reminder": null,
+      "due": false
+    },
+    {
+      "note": "剩 1 天跳提醒",
+      "before": {
+        "overSince": 100,
+        "deleteOn": 130,
+        "lastStart": 100,
+        "shown7": true
+      },
+      "used": 1200,
+      "unlimited": false,
+      "today": 129,
+      "after": {
+        "overSince": 100,
+        "deleteOn": 130,
+        "lastStart": 100,
+        "shown7": true
+      },
+      "reminder": 1,
+      "due": false
+    },
+    {
+      "note": "第 30 天到期",
+      "before": {
+        "overSince": 100,
+        "deleteOn": 130,
+        "lastStart": 100,
+        "shown7": true,
+        "shown1": true
+      },
+      "used": 1200,
+      "unlimited": false,
+      "today": 130,
+      "after": {
+        "overSince": 100,
+        "deleteOn": 130,
+        "lastStart": 100,
+        "shown7": true,
+        "shown1": true
+      },
+      "reminder": null,
+      "due": true
+    },
+    {
+      "note": "刪到 1000 個以下就取消",
+      "before": {
+        "overSince": 100,
+        "deleteOn": 130,
+        "lastStart": 100,
+        "shown7": true
+      },
+      "used": 1000,
+      "unlimited": false,
+      "today": 125,
+      "after": {
+        "lastStart": 100
+      },
+      "reminder": null,
+      "due": false
+    },
+    {
+      "note": "訂閱 Pro 就取消",
+      "before": {
+        "overSince": 100,
+        "deleteOn": 130,
+        "lastStart": 100
+      },
+      "used": 3000,
+      "unlimited": true,
+      "today": 105,
+      "after": {
+        "lastStart": 100
+      },
+      "reminder": null,
+      "due": false
+    },
+    {
+      "note": "90 天內第二次超過：7 天",
+      "before": {
+        "lastStart": 100
+      },
+      "used": 1001,
+      "unlimited": false,
+      "today": 150,
+      "after": {
+        "overSince": 150,
+        "deleteOn": 157,
+        "lastStart": 150
+      },
+      "reminder": 7,
+      "due": false
+    },
+    {
+      "note": "90 天後再超過：又是 30 天",
+      "before": {
+        "lastStart": 100
+      },
+      "used": 1001,
+      "unlimited": false,
+      "today": 190,
+      "after": {
+        "overSince": 190,
+        "deleteOn": 220,
+        "lastStart": 190
+      },
+      "reminder": null,
+      "due": false
+    }
+  ]
+}

@@ -91,7 +91,7 @@ struct WordsTab: View {
             }
             .sheet(isPresented: $moveSheet) {
                 AddToListSheet { list in
-                    for w in words where selection.contains(w.persistentModelID) {
+                    for w in words where selection.contains(w.persistentModelID) && WordQuota.admit(w, in: ctx) {
                         if let list { if !w.lists.contains(list) { w.lists.append(list) } } else { w.inMyWords = true }
                     }
                     try? ctx.save(); selecting = false; selection = []
@@ -365,6 +365,10 @@ struct ListWordsView: View {
         List {
             // built-in decks only: a saved list is short enough to scroll
             if isDeck { SearchRow(text: $query, prompt: "搜尋英文或中文") }
+            if route == .myWords, WordQuota.isOver(words) { Section { QuotaBanner(words: words) }.listRowInsets(EdgeInsets()).listRowBackground(Color.clear) }
+            if route == .myWords, WordQuota.usage(words.filter(WordQuota.counts).count, unlimited: WordQuota.unlimited) != nil {
+                Section { QuotaUsage(words: words) }.listRowBackground(Color.cardFill)
+            }
             Group {
             switch route {
             case .deck, .level:
@@ -604,6 +608,7 @@ struct WordDetailView: View {
         .sheet(item: $lookup) { WordConfirmSheet(term: $0.term) }
         .sheet(isPresented: $showLists) {
             AddToListSheet { list in
+                guard WordQuota.admit(word, in: ctx) else { return }
                 if let list { if !word.lists.contains(list) { word.lists.append(list) } } else { word.inMyWords = true }
                 try? ctx.save()
             }

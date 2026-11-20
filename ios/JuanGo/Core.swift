@@ -22,6 +22,8 @@ import UserNotifications
     var favorite: Bool
     var inMyWords: Bool
     var reviewCount: Int
+    /// added from an exam's missed words, so it doesn't count toward the free 1,000
+    var fromExam: Bool = false
     var lists: [WordList] = []
 
     init(entry: DictEntry, meanings: [String]? = nil) {
@@ -730,17 +732,27 @@ enum Library {
         return try? ctx.fetch(fd).first
     }
 
+    /// Saves a word. Returns nil when the free 1,000-word limit stops it (the limit's alert then shows,
+    /// unless `QuotaGate.shared.quiet`); words from `fromExam` don't count and always go in.
     @discardableResult
-    static func add(_ entry: DictEntry, meanings: [String]? = nil, to list: WordList? = nil, myWords: Bool = true, in ctx: ModelContext) -> Word {
+    static func add(_ entry: DictEntry, meanings: [String]? = nil, to list: WordList? = nil, myWords: Bool = true,
+                    fromExam: Bool = false, in ctx: ModelContext) -> Word? {
         let entry = ExampleStore.shared.filled(entry)
+        let existing = word(entry.w, in: ctx)
+        if !fromExam, WordQuota.takesPlace(entry, existing: existing, myWords: myWords, list: list),
+           !WordQuota.hasRoom(in: ctx) {
+            QuotaGate.shared.stopped()
+            return nil
+        }
         let w: Word
-        if let existing = word(entry.w, in: ctx) {
+        if let existing {
             w = existing
             if let meanings, !meanings.isEmpty { w.meanings = meanings }
             if myWords { w.inMyWords = true }
         } else {
             w = Word(entry: entry, meanings: meanings)
             w.inMyWords = myWords
+            w.fromExam = fromExam
             ctx.insert(w)
         }
         if let list, !w.lists.contains(where: { $0.persistentModelID == list.persistentModelID }) {

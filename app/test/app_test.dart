@@ -23,7 +23,7 @@ void main() {
   });
 
   test('間隔複習：答對升級、答錯降級但不回到未學', () {
-    final w = AppStore.shared.add(Dict.lookup('maintain')!);
+    final w = AppStore.shared.add(Dict.lookup('maintain')!)!;
     SRS.apply(Grade.good, w);
     SRS.apply(Grade.good, w);
     expect(w.srsLevel, 2);
@@ -35,7 +35,7 @@ void main() {
   });
 
   test('練習流程：全部答對會結束，撤銷能退回上一題', () {
-    final words = [for (final t in ['maintain', 'benefit', 'curious']) AppStore.shared.add(Dict.lookup(t)!)];
+    final words = [for (final t in ['maintain', 'benefit', 'curious']) AppStore.shared.add(Dict.lookup(t)!)!];
     final e = SessionEngine(words);
     final first = e.current!.word;
     e.grade(Grade.good);

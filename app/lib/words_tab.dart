@@ -15,6 +15,7 @@ import 'store.dart';
 import 'study_flow.dart';
 import 'theme.dart';
 import 'widgets.dart';
+import 'word_quota.dart';
 
 AppStore get _store => AppStore.shared;
 
@@ -293,6 +294,7 @@ class _WordsTabState extends State<WordsTab> {
                     fg: p.accent,
                     onTap: () => showAddToList(context, (list) {
                       for (final w in _selected) {
+                        if (!WordQuota.admit(w)) break;
                         list != null ? w.lists.add(list.id) : w.inMyWords = true;
                       }
                       _store.save();
@@ -495,9 +497,12 @@ class _ListWordsPageState extends State<ListWordsPage> {
                   if (entries.isNotEmpty) Sec(count: entries.length, builder: (_, i) => _entryRow(p, entries[i])),
                 ]
               : [
+                  if (r.kind == RouteKind.myWords && QuotaBanner.showing)
+                    const SliverPadding(padding: EdgeInsets.fromLTRB(16, 8, 16, 8), sliver: SliverToBoxAdapter(child: QuotaBanner())),
                   if (words.isEmpty) const SliverToBoxAdapter(child: EmptyState('清單是空的', icon: Icons.inbox_outlined)),
                   if (words.isNotEmpty)
                     Sec(
+                      header: r.kind == RouteKind.myWords ? WordQuota.usage(WordQuota.used(), unlimited: WordQuota.unlimited) : null,
                       count: words.length,
                       builder: (c, i) {
                         final w = words[i];
@@ -689,6 +694,7 @@ class _WordDetailPageState extends State<WordDetailPage> {
               icon: Icons.create_new_folder_outlined,
               label: '加入清單',
               onTap: () => showAddToList(context, (list) {
+                if (!WordQuota.admit(w)) return;
                 list != null ? w.lists.add(list.id) : w.inMyWords = true;
                 _store.save();
               }),

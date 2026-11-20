@@ -13,6 +13,7 @@ import 'store.dart';
 import 'theme.dart';
 import 'widgets.dart';
 import 'words_tab.dart';
+import 'word_quota.dart';
 
 AppStore get _store => AppStore.shared;
 
@@ -55,6 +56,7 @@ class _WordConfirmSheetState extends State<WordConfirmSheet> {
 
   void _add() {
     final w = _store.add(entry, meanings: chosen, list: widget.destination);
+    if (w == null) return;
     saved = w;
     widget.onAdded?.call(w);
     Navigator.of(context).pop();
@@ -128,7 +130,7 @@ class _WordConfirmSheetState extends State<WordConfirmSheet> {
           icon: Icons.create_new_folder_outlined,
           onTap: () => showAddToList(context, (list) {
             final w = _store.add(entry, meanings: chosen, list: list, myWords: list == null || (s?.inMyWords ?? false));
-            setState(() => saved = w);
+            if (w != null) setState(() => saved = w);
           }),
         ),
         const SizedBox(height: 12),
@@ -451,19 +453,23 @@ class _CandidatesSheetState extends State<_CandidatesSheet> {
     );
   }
 
+  void _tryAdd() {
+    final entries = [
+      for (final e in widget.cands.known)
+        if (_selected.contains(e.w)) e,
+      for (final (term, meaning) in widget.cands.unknown)
+        if (_selected.contains(term)) DictEntry.custom(term, meaning),
+    ];
+    addWithinQuota(context, entries, _add, toList: widget.destination != null);
+  }
+
   void _add() {
     var n = 0;
     for (final e in widget.cands.known) {
-      if (_selected.contains(e.w)) {
-        _store.add(e, list: widget.destination);
-        n += 1;
-      }
+      if (_selected.contains(e.w) && _store.add(e, list: widget.destination) != null) n += 1;
     }
     for (final (term, meaning) in widget.cands.unknown) {
-      if (_selected.contains(term)) {
-        _store.add(DictEntry.custom(term, meaning), list: widget.destination);
-        n += 1;
-      }
+      if (_selected.contains(term) && _store.add(DictEntry.custom(term, meaning), list: widget.destination) != null) n += 1;
     }
     widget.onDone?.call(n);
     Navigator.of(context).pop();
@@ -478,7 +484,7 @@ class _CandidatesSheetState extends State<_CandidatesSheet> {
       title: '選擇要加入的字',
       safeTop: false,
       leading: BarText('取消', bold: false, onTap: () => Navigator.of(context).pop()),
-      actions: [BarText('加入 ${_selected.length} 個', onTap: _selected.isEmpty ? null : _add)],
+      actions: [BarText('加入 ${_selected.length} 個', onTap: _selected.isEmpty ? null : _tryAdd)],
       bottom: c.known.isEmpty
           ? null
           : Padding(
@@ -509,14 +515,32 @@ class _CandidatesSheetState extends State<_CandidatesSheet> {
 }
 
 /// 確認要不要把備份或清單檔加進來
-Future<void> confirmImport(BuildContext c, BackupFile f, ValueChanged<String> onDone) => confirmAction(
-      c,
-      f.title,
-      message: '${f.summary}。\n會合併到這台裝置，不會刪除現有資料。',
-      label: f.isBackup ? '還原' : '加入',
-      destructive: false,
-      onConfirm: () => onDone(_store.restore(f)),
-    );
+/// 分享清單放不下免費版上限時，只加入放得下的字
+Future<void> confirmImport(BuildContext c, BackupFile f, ValueChanged<String> onDone) {
+  Set<String>? only;
+  if (!f.isBackup) {
+    final entries = [
+      for (final r in (f.json['words'] as List).cast<Map<String, dynamic>>())
+        DictEntry(w: r['term'] as String? ?? '', ipa: '', pos: '', zh: const [], def: '', ex: '', exZh: '', lv: r['cefr'] as String? ?? ''),
+    ];
+    final ok = WordQuota.admitted(entries);
+    if (ok.isEmpty && entries.isNotEmpty) {
+      WordQuota.stopped();
+      return Future.value();
+    }
+    if (ok.length < entries.length) only = {for (final e in ok) e.w};
+  }
+  return confirmAction(
+    c,
+    f.title,
+    message: only != null
+        ? '${f.summary}。\n只能加入前 ${only.length} 個，${WordQuota.fullMessage}。'
+        : '${f.summary}。\n會合併到這台裝置，不會刪除現有資料。',
+    label: f.isBackup ? '還原' : only != null ? '加入 ${only.length} 個' : '加入',
+    destructive: false,
+    onConfirm: () => onDone(_store.restore(f, only: only)),
+  );
+}
 
 /// 選檔案並讀成文字；取消時回傳 null
 Future<(String name, String text)?> pickTextFile({List<String> extensions = const ['txt', 'csv', 'json']}) async {

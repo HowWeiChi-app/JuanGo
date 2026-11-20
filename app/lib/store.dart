@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'dictionary.dart';
 import 'models.dart';
 import 'settings.dart';
+import 'word_quota.dart';
 
 class AppStore extends ChangeNotifier {
   AppStore._();
@@ -25,6 +26,12 @@ class AppStore extends ChangeNotifier {
 
   /// 依時間由舊到新
   final logs = <ReviewLog>[];
+
+  /// 因為免費版上限被刪掉的字和刪除時間；放進備份，同步時才不會從雲端或別台裝置再帶回來
+  final removed = <String, DateTime>{};
+
+  /// 超過上限的倒數
+  var countdown = Countdown();
 
   File? _file;
   Timer? _timer;
@@ -55,6 +62,8 @@ class AppStore extends ChangeNotifier {
         logs.add(ReviewLog.fromJson(m as Map<String, dynamic>));
       }
       logs.sort((a, b) => a.date.compareTo(b.date));
+      _readRemoved(j['removed']);
+      if (j['countdown'] is Map) countdown = Countdown.fromJson((j['countdown'] as Map).cast<String, dynamic>());
       _nextListId = lists.fold(0, (n, l) => l.id > n ? l.id : n) + 1;
     } catch (e) {
       // 檔案壞掉時留一份副本，不直接蓋掉使用者的資料
@@ -80,19 +89,28 @@ class AppStore extends ChangeNotifier {
       'words': words.map((w) => w.toJson()).toList(),
       'lists': lists.map((l) => l.toJson()).toList(),
       'logs': logs.map((l) => l.toJson()).toList(),
+      'removed': _removedJson(),
+      'countdown': countdown.toJson(),
     });
     final tmp = File('${file.path}.tmp');
     await tmp.writeAsString(data, flush: true);
     await tmp.rename(file.path);
   }
 
-  Word add(DictEntry e, {List<String>? meanings, WordList? list, bool myWords = true}) {
+  /// 存一個字。被免費版 1000 字上限擋下時回傳 null（並跳出提示）；fromExam 的字不算，一律存
+  Word? add(DictEntry e, {List<String>? meanings, WordList? list, bool myWords = true, bool fromExam = false}) {
     var w = word(e.w);
+    if (!fromExam && WordQuota.takesPlace(e, w, myWords: myWords, toList: list != null) && !WordQuota.hasRoom) {
+      WordQuota.stopped();
+      return null;
+    }
     if (w != null) {
       if (meanings != null && meanings.isNotEmpty) w.meanings = List.of(meanings);
       if (myWords) w.inMyWords = true;
     } else {
-      w = Word.fromEntry(e, meanings: meanings)..inMyWords = myWords;
+      w = Word.fromEntry(e, meanings: meanings)
+        ..inMyWords = myWords
+        ..fromExam = fromExam;
       _byTerm[w.term.toLowerCase()] = w;
     }
     if (list != null) w.lists.add(list.id);
@@ -195,6 +213,7 @@ class AppStore extends ChangeNotifier {
         'addedAt': dateJson(w.addedAt),
         if (w.favorite) 'favorite': true,
         if (!w.inMyWords) 'inMyWords': false,
+        if (w.fromExam) 'fromExam': true,
         'reviewCount': w.reviewCount,
       },
     };
@@ -217,7 +236,30 @@ class AppStore extends ChangeNotifier {
           .toList(),
       'logs': logs.map((l) => l.toJson()).toList(),
       'settings': AppSettings.shared.backupValues,
+      if (removed.isNotEmpty) 'removed': _removedJson(),
     };
+  }
+
+  List<Map<String, dynamic>> _removedJson() =>
+      [for (final e in removed.entries) {'term': e.key, 'at': dateJson(e.value)}];
+
+  void _readRemoved(Object? raw) {
+    for (final r in (raw as List? ?? const []).cast<Map<String, dynamic>>()) {
+      final t = r['term'] as String?, at = parseDate(r['at']);
+      if (t == null || at == null) continue;
+      final had = removed[t];
+      if (had == null || at.isAfter(had)) removed[t] = at;
+    }
+  }
+
+  /// 免費版上限到期：刪掉這些字和它們的複習進度，清單本身留著
+  void removeForQuota(List<Word> ws) {
+    final now = DateTime.now();
+    for (final w in ws) {
+      removed[w.term] = now;
+      _byTerm.remove(w.term.toLowerCase());
+    }
+    save();
   }
 
   Map<String, dynamic> listFile(String name, List<Word> ws) => {
@@ -281,9 +323,18 @@ class AppStore extends ChangeNotifier {
   }
 
   /// 合併進這台裝置，不刪任何東西；同一個字保留最近複習過的進度
-  String restore(BackupFile f, {bool settings = true}) {
+  /// only：分享清單裡放得進免費版上限的字（null 是全部）
+  String restore(BackupFile f, {bool settings = true, Set<String>? only}) {
     final isBackup = f.isBackup;
     var added = 0, updated = 0;
+    // 別台裝置因為上限刪掉的字：這裡也刪，而且不再收回來
+    if (isBackup) {
+      _readRemoved(f.json['removed']);
+      for (final e in removed.entries) {
+        final w = word(e.key);
+        if (w != null && !w.addedAt.isAfter(e.value)) _byTerm.remove(w.term.toLowerCase());
+      }
+    }
     void applyProgress(Map<String, dynamic> r, Word w) {
       w.srsLevel = r['srsLevel'] as int? ?? w.srsLevel;
       w.dueDate = parseDate(r['dueDate']);
@@ -294,7 +345,9 @@ class AppStore extends ChangeNotifier {
     for (final raw in f.json['words'] as List) {
       final r = raw as Map<String, dynamic>;
       final term = r['term'] as String? ?? '';
-      if (term.isEmpty) continue;
+      if (term.isEmpty || (only != null && !only.contains(term))) continue;
+      final gone = isBackup ? removed[term] : null;
+      if (gone != null && word(term) == null && !(parseDate(r['addedAt']) ?? DateTime(1970)).isAfter(gone)) continue;
       final meanings = (r['meanings'] as List?)?.cast<String>() ?? const <String>[];
       final e = word(term);
       if (e != null) {
@@ -312,6 +365,7 @@ class AppStore extends ChangeNotifier {
           updated += 1;
         }
         if (r['favorite'] == true) e.favorite = true;
+        if (isBackup && r['fromExam'] == true) e.fromExam = true;
         if (r['inMyWords'] == true || !isBackup) e.inMyWords = true;
       } else {
         final w = Word(
@@ -329,6 +383,7 @@ class AppStore extends ChangeNotifier {
           w.addedAt = parseDate(r['addedAt']) ?? w.addedAt;
           w.favorite = r['favorite'] as bool? ?? false;
           w.inMyWords = r['inMyWords'] as bool? ?? true;
+          w.fromExam = r['fromExam'] as bool? ?? false;
         }
         _byTerm[term.toLowerCase()] = w;
         added += 1;
@@ -354,6 +409,7 @@ class AppStore extends ChangeNotifier {
       final matches = lists.where((l) => l.name == name);
       final l = matches.isNotEmpty ? matches.first : createList(name, createdAt: parseDate(r['createdAt']));
       for (final t in terms) {
+        if (only != null && !only.contains(t)) continue;
         word(t)?.lists.add(l.id);
       }
     }

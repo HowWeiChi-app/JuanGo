@@ -94,7 +94,7 @@ class _ExploreTabState extends State<ExploreTab> {
     if (w != null && w.inMyWords) {
       _store.removeFromMyWords(w);
     } else {
-      _store.add(e);
+      if (_store.add(e) == null) return;
       Feedback2.success();
       if (_tipStep == 1) _settings.update((s) => s.exploreTipsDone = true);
     }

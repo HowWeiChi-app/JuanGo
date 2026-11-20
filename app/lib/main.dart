@@ -20,6 +20,7 @@ import 'store.dart';
 import 'theme.dart';
 import 'widgets.dart';
 import 'words_tab.dart';
+import 'word_quota.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -42,10 +43,28 @@ class _JuanGoAppState extends State<JuanGoApp> {
       .then((_) => Cloud.shared.listenForLinks());
 
   @override
+  void initState() {
+    super.initState();
+    WordQuota.stops.addListener(_quotaStopped);
+  }
+
+  @override
+  void dispose() {
+    WordQuota.stops.removeListener(_quotaStopped);
+    super.dispose();
+  }
+
+  void _quotaStopped() {
+    final c = appNavigator.currentContext;
+    if (c != null) showQuotaFull(c);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: AppSettings.shared,
       builder: (context, _) => MaterialApp(
+        navigatorKey: appNavigator,
         title: 'JuanGo',
         debugShowCheckedModeBanner: false,
         theme: buildTheme(Brightness.light),
@@ -150,6 +169,13 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     Reminders.sync();
     Cloud.shared.syncQuietly();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkQuota());
+  }
+
+  /// 超過免費版上限時跳提醒，或到期刪字
+  void _checkQuota() {
+    final c = appNavigator.currentContext;
+    if (c != null) QuotaCountdown.check(c);
   }
 
   @override
@@ -165,6 +191,7 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
       Reminders.sync();
       Cloud.shared.backgroundPush();
     } else if (state == AppLifecycleState.resumed) {
+      _checkQuota();
       Cloud.shared.syncQuietly();
     }
   }
