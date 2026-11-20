@@ -972,7 +972,8 @@ begin
       'opponent_answered', (case when first then r.p2_pick else r.p1_pick end) is not null);
     if t >= r.starts_at - interval '1 second' then
       res := res || jsonb_build_object('question', jsonb_build_object(
-        'n', r.n, 'to_zh', r.to_zh, 'prompt', r.prompt, 'options', to_jsonb(r.options)));
+        'n', r.n, 'to_zh', r.to_zh, 'prompt', r.prompt, 'options', to_jsonb(r.options),
+        'pos', (select b.pos from battle_words b where b.term = r.term)));
     end if;
   end if;
 

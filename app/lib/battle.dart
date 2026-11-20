@@ -66,11 +66,15 @@ class BattleQuestion {
     : n = j['n'] as int,
       toZh = j['to_zh'] as bool,
       prompt = j['prompt'] as String,
-      options = (j['options'] as List).cast<String>();
+      options = (j['options'] as List).cast<String>(),
+      pos = j['pos'] as String? ?? '';
   final int n;
   final bool toZh;
   final String prompt;
   final List<String> options;
+
+  /// 這個字的詞性（n.、v.、adj./adv.…），沒有時是空字串
+  final String pos;
 }
 
 class BattleLast {
@@ -429,6 +433,7 @@ class BattleModel extends ChangeNotifier {
       'to_zh': true,
       'prompt': 'persuade',
       'options': ['說服', '猶豫', '承認', '避免'],
+      'pos': 'v.',
     };
     final now = _local;
     me = BattlePlayer({
@@ -1283,14 +1288,20 @@ class _GameState extends State<_Game> {
                 index: 0,
                 child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 16),
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    q.prompt,
-                    maxLines: 1,
-                    style: ts(q.toZh ? 40 : 32, w: w7, c: p.ink),
+                child: Column(children: [
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      q.prompt,
+                      maxLines: 1,
+                      style: ts(q.toZh ? 40 : 32, w: w7, c: p.ink),
+                    ),
                   ),
-                ),
+                  if (q.pos.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(q.pos, semanticsLabel: '詞性 ${q.pos}', style: ts(F.sub, w: w6, c: p.sec)),
+                  ],
+                ]),
               ),
               ),
               for (final (i, o) in q.options.indexed)

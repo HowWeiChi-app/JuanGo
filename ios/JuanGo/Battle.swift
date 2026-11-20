@@ -11,7 +11,11 @@ struct BattleState: Decodable {
         var pid: String? = nil
         var tierName: String? = nil
     }
-    struct Question: Decodable, Equatable { var n: Int; var toZh: Bool; var prompt: String; var options: [String] }
+    struct Question: Decodable, Equatable {
+        var n: Int; var toZh: Bool; var prompt: String; var options: [String]
+        /// the word's part of speech (n., v., adj./adv.…)
+        var pos: String? = nil
+    }
     struct Last: Decodable {
         var n: Int, answer: Int, term: String, zh: String
         var pick: Int?, points: Int, opponentPick: Int?, opponentPoints: Int
@@ -407,7 +411,7 @@ final class BattleModel {
         isDemo = true
         let opp = BattleState.Side(name: "柚子", rating: 1236, tier: 3, score: step == "result" ? 612 : 170, pid: "demo-opp", tierName: "至尊星耀")
         let you = BattleState.Side(name: "勇敢的水獺08", rating: 1218, tier: 3, score: step == "result" ? 705 : 188, pid: "demo-me", tierName: "至尊星耀")
-        let q = BattleState.Question(n: 3, toZh: true, prompt: "persuade", options: ["說服", "猶豫", "承認", "避免"])
+        let q = BattleState.Question(n: 3, toZh: true, prompt: "persuade", options: ["說服", "猶豫", "承認", "避免"], pos: "v.")
         let now = Date.now.timeIntervalSince1970 * 1000
         me = BattlePlayer(name: you.name, rating: you.rating, tier: you.tier, games: 12, wins: 7, losses: 4, draws: 1,
                           pid: "demo-me", tierName: "至尊星耀", tierFrom: 1200, tierNext: 1400, nextName: "無雙卷哥",
@@ -863,9 +867,15 @@ private struct BattleGame: View {
 
     private func question(_ q: BattleState.Question, s: BattleState, last: BattleState.Last?) -> some View {
         VStack(spacing: 10) {
-            Text(q.prompt).font(.app(size: q.toZh ? 40 : 32, .bold)).lineLimit(2).minimumScaleFactor(0.5)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity, minHeight: 110)
+            VStack(spacing: 6) {
+                Text(q.prompt).font(.app(size: q.toZh ? 40 : 32, .bold)).lineLimit(2).minimumScaleFactor(0.5)
+                    .multilineTextAlignment(.center)
+                if let pos = q.pos, !pos.isEmpty {
+                    Text(pos).font(.app(.subheadline, .semibold)).foregroundStyle(.secondary)
+                        .accessibilityLabel("詞性 \(pos)")
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 110)
             ForEach(Array(q.options.enumerated()), id: \.offset) { i, o in
                 AnswerOption(letter: String(UnicodeScalar(65 + i)!), text: o, state: optionState(i, q: q, last: last)) {
                     model.answer(i)

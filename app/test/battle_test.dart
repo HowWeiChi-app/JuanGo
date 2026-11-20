@@ -66,7 +66,7 @@ void main() {
             'opponent': _side('乙', 0),
             'starts': now - 2000,
             'ends': now + 8000,
-            'question': {'n': 5, 'to_zh': false, 'prompt': '說服', 'options': ['persuade', 'avoid', 'admit', 'delay']},
+            'question': {'n': 5, 'to_zh': false, 'prompt': '說服', 'options': ['persuade', 'avoid', 'admit', 'delay'], 'pos': 'v.'},
             if (done) 'last': {'n': 5, 'answer': 0, 'pick': 0, 'points': 150, 'opponent_points': 0},
             if (done)
               'result': {
@@ -95,6 +95,7 @@ void main() {
     expect(sent['p_round'], 5);
     expect(sent['p_ms'] as int, inInclusiveRange(1900, 2600), reason: '要用伺服器時間算作答秒數');
     expect(m.state!.result!.delta, 20);
+    expect(m.current?.pos ?? m.state?.question?.pos, 'v.');
     m.dispose();
   });
 
@@ -180,7 +181,10 @@ void main() {
           expect(find.text('離無雙卷哥還差 182 分'), findsOneWidget);
         }
         if (step == 'result') expect(find.text('合計'), findsOneWidget);
-        if (step == 'question') expect(find.text('第 3 / 10 題'), findsOneWidget);
+        if (step == 'question') {
+          expect(find.text('第 3 / 10 題'), findsOneWidget);
+          expect(find.text('v.'), findsOneWidget, reason: '題目要標詞性');
+        }
         if (step == 'board') expect(find.text('2026 S6 即時排名'), findsOneWidget);
         if (_shots.isNotEmpty && size.width > 400) {
           await t.runAsync(() async {
