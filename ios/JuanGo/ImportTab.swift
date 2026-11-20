@@ -270,6 +270,7 @@ struct OCRPickerView: View {
     @Environment(\.modelContext) private var ctx
     @Environment(\.dismiss) private var dismiss
     @State private var selected = Set<String>()
+    @State private var partial: Int?
 
     var body: some View {
         NavigationStack {
@@ -297,7 +298,7 @@ struct OCRPickerView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button(role: .cancel) { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("加入 \(selected.count) 個") { addSelected() }.disabled(selected.isEmpty)
+                    Button("加入 \(selected.count) 個") { tryAdd() }.disabled(selected.isEmpty)
                 }
                 ToolbarItem(placement: .bottomBar) {
                     Button(selected.count == candidates.known.count ? "全不選" : "選取字典字") {
@@ -306,6 +307,7 @@ struct OCRPickerView: View {
                 }
             }
             .onAppear { selected = Set(candidates.known.map(\.w)) }
+            .quotaPartial($partial) { addSelected() }
         }
     }
 
@@ -324,18 +326,25 @@ struct OCRPickerView: View {
         }.foregroundStyle(.primary)
     }
 
+    private func tryAdd() {
+        let entries = candidates.known.filter { selected.contains($0.w) }
+            + candidates.unknown.filter { selected.contains($0.term) }.map { DictEntry.custom($0.term, meaning: $0.meaning) }
+        partial = WordQuota.batch(entries, list: destination, in: ctx) { addSelected() }
+    }
+
     private func addSelected() {
         var n = 0
-        for e in candidates.known where selected.contains(e.w) { Library.add(e, to: destination, in: ctx); n += 1 }
+        for e in candidates.known where selected.contains(e.w) { if Library.add(e, to: destination, in: ctx) != nil { n += 1 } }
         var untranslated: [Word] = []
         for u in candidates.unknown where selected.contains(u.term) {
+            let w: Word?
             if u.meaning.isEmpty, let ai = WordTranslator.shared.cached(u.term) {
-                Library.add(ai.entry(for: u.term), to: destination, in: ctx)
+                w = Library.add(ai.entry(for: u.term), to: destination, in: ctx)
             } else {
-                let w = Library.add(.custom(u.term, meaning: u.meaning), to: destination, in: ctx)
-                if u.meaning.isEmpty { untranslated.append(w) }
+                w = Library.add(.custom(u.term, meaning: u.meaning), to: destination, in: ctx)
+                if let w, u.meaning.isEmpty { untranslated.append(w) }
             }
-            n += 1
+            if w != nil { n += 1 }
         }
         WordTranslator.shared.fill(untranslated, in: ctx)
         onDone(n)

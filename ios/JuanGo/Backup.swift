@@ -18,6 +18,8 @@ struct BackupFile: Codable {
     var lists: [ListRecord]
     var logs: [LogRecord]? = nil
     var settings: [String: SettingValue]? = nil
+    /// words deleted for the free word limit, so a sync doesn't bring them back from the cloud or another device
+    var removed: [RemovedRecord]? = nil
 
     struct WordRecord: Codable {
         var term, ipa, pos: String
@@ -31,10 +33,11 @@ struct BackupFile: Codable {
         var favorite: Bool? = nil
         var inMyWords: Bool? = nil
         var reviewCount: Int? = nil
+        var fromExam: Bool? = nil
 
         private enum CodingKeys: String, CodingKey {
             case term, ipa, pos, meanings, definition, example, exampleZh, cefr
-            case srsLevel, dueDate, lastReviewed, addedAt, favorite, inMyWords, reviewCount
+            case srsLevel, dueDate, lastReviewed, addedAt, favorite, inMyWords, reviewCount, fromExam
         }
 
         /// The built-in entry with exactly this spelling, whose text a backup leaves out.
@@ -63,12 +66,17 @@ struct BackupFile: Codable {
             try c.encodeIfPresent(reviewCount, forKey: .reviewCount)
             if !compact || favorite == true { try c.encodeIfPresent(favorite, forKey: .favorite) }
             if !compact || inMyWords == false { try c.encodeIfPresent(inMyWords, forKey: .inMyWords) }
+            if fromExam == true { try c.encode(true, forKey: .fromExam) }
         }
     }
     struct ListRecord: Codable {
         var name: String
         var createdAt: Date? = nil
         var terms: [String]
+    }
+    struct RemovedRecord: Codable {
+        var term: String
+        var at: Date
     }
     struct LogRecord: Codable {
         var term: String
@@ -135,6 +143,7 @@ extension BackupFile.WordRecord {
         reviewCount = try c.decodeIfPresent(Int.self, forKey: .reviewCount)
         favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite)
         inMyWords = try c.decodeIfPresent(Bool.self, forKey: .inMyWords)
+        fromExam = try c.decodeIfPresent(Bool.self, forKey: .fromExam)
         if addedAt != nil {   // a backup record: the usual values are left out
             favorite = favorite ?? false
             inMyWords = inMyWords ?? true
@@ -160,7 +169,9 @@ enum Backup {
                           words: words.map { record($0, progress: true) },
                           lists: lists.map { .init(name: $0.name, createdAt: $0.createdAt, terms: $0.words.map(\.term)) },
                           logs: logs.map { .init(term: $0.term, date: $0.date, result: $0.result, wasNew: $0.wasNew) },
-                          settings: AppSettings.shared.backupValues)
+                          settings: AppSettings.shared.backupValues,
+                          removed: Removed.all.isEmpty ? nil : Removed.all.map { .init(term: $0.key, at: $0.value) }
+                            .sorted { $0.at < $1.at })
     }
 
     /// One list to give to someone else: the words and their meanings, without progress.
@@ -175,6 +186,7 @@ enum Backup {
         if progress {
             r.srsLevel = w.srsLevel; r.dueDate = w.dueDate; r.lastReviewed = w.lastReviewed; r.addedAt = w.addedAt
             r.favorite = w.favorite; r.inMyWords = w.inMyWords; r.reviewCount = w.reviewCount
+            if w.fromExam { r.fromExam = true }
         }
         return r
     }
@@ -219,12 +231,22 @@ enum Backup {
     /// Merges a file into this device; nothing already here is deleted.
     /// Words already saved keep whichever progress was reviewed more recently.
     @discardableResult
-    static func restore(_ f: BackupFile, into ctx: ModelContext, settings: Bool = true) -> String {
+    /// `only`: the terms of a shared list that fit under the free word limit (nil: all of them).
+    static func restore(_ f: BackupFile, into ctx: ModelContext, settings: Bool = true, only: Set<String>? = nil) -> String {
         var existing: [String: Word] = [:]
         for w in (try? ctx.fetch(FetchDescriptor<Word>())) ?? [] { existing[w.term] = w }
         var added = 0, updated = 0
 
-        for r in f.words where !r.term.isEmpty {
+        // words another device deleted for the word limit: delete them here too, and don't take them back
+        var gone: [String: Date] = [:]
+        if f.kind == .backup {
+            Removed.merge(f.removed ?? [])
+            gone = Removed.all
+            for (t, at) in gone { if let w = existing[t], w.addedAt <= at { ctx.delete(w); existing[t] = nil } }
+        }
+
+        for r in f.words where !r.term.isEmpty && only?.contains(r.term) != false {
+            if let at = gone[r.term], existing[r.term] == nil, (r.addedAt ?? .distantPast) <= at { continue }
             let w: Word
             if let e = existing[r.term] {
                 w = e
@@ -237,6 +259,7 @@ enum Backup {
                     applyProgress(r, to: e); updated += 1
                 }
                 if r.favorite == true { e.favorite = true }
+                if f.kind == .backup, r.fromExam == true { e.fromExam = true }
                 if r.inMyWords == true || f.kind == .list { e.inMyWords = true }
             } else {
                 w = Word(entry: DictEntry(w: r.term, ipa: r.ipa, pos: r.pos, zh: r.meanings, def: r.definition,
@@ -246,6 +269,7 @@ enum Backup {
                     if let d = r.addedAt { w.addedAt = d }
                     w.favorite = r.favorite ?? false
                     w.inMyWords = r.inMyWords ?? true
+                    w.fromExam = r.fromExam ?? false
                 }
                 ctx.insert(w)
                 existing[r.term] = w
@@ -266,7 +290,7 @@ enum Backup {
                 if let d = r.createdAt { l.createdAt = d }
                 ctx.insert(l); lists[r.name] = l
             }
-            for t in r.terms {
+            for t in r.terms where only?.contains(t) != false {
                 guard let w = existing[t], !w.lists.contains(where: { $0.persistentModelID == l.persistentModelID }) else { continue }
                 w.lists.append(l)
             }
@@ -340,6 +364,29 @@ extension AppSettings {
     }
 }
 
+/// Words deleted for the free word limit and when, kept on this device and carried in backups (`removed`).
+enum Removed {
+    private static let key = "quota.removed"
+
+    static var all: [String: Date] {
+        ((UserDefaults.standard.dictionary(forKey: key) as? [String: Double]) ?? [:])
+            .mapValues { Date(timeIntervalSince1970: $0) }
+    }
+
+    static func add(_ terms: [String], at: Date = .now) {
+        var d = (UserDefaults.standard.dictionary(forKey: key) as? [String: Double]) ?? [:]
+        for t in terms { d[t] = at.timeIntervalSince1970 }
+        UserDefaults.standard.set(d, forKey: key)
+    }
+
+    static func merge(_ records: [BackupFile.RemovedRecord]) {
+        guard !records.isEmpty else { return }
+        var d = (UserDefaults.standard.dictionary(forKey: key) as? [String: Double]) ?? [:]
+        for r in records { d[r.term] = max(d[r.term] ?? 0, r.at.timeIntervalSince1970) }
+        UserDefaults.standard.set(d, forKey: key)
+    }
+}
+
 // MARK: - UI helpers
 
 /// Shows the system share sheet (AirDrop, LINE, 儲存到「檔案」…) for a file, on top of whatever is on screen —
@@ -368,15 +415,31 @@ private struct BackupImportConfirm: ViewModifier {
     let ctx: ModelContext
     let done: (String) -> Void
 
+    /// For a shared list that doesn't all fit under the free word limit, the terms that do; nil when it all fits.
+    private func fitting(_ f: BackupFile) -> Set<String>? {
+        guard f.kind == .list else { return nil }
+        let entries = f.words.map { DictEntry(w: $0.term, ipa: "", pos: "", zh: [], def: "", ex: "", exZh: "", lv: $0.cefr) }
+        let ok = WordQuota.admitted(entries, in: ctx)
+        return ok.count < entries.count ? Set(ok.map(\.w)) : nil
+    }
+
     func body(content: Content) -> some View {
         content.confirmationDialog(file?.title ?? "", isPresented: Binding(get: { file != nil }, set: { if !$0 { file = nil } }),
                                    titleVisibility: .visible, presenting: file) { f in
-            Button(f.kind == .backup ? "合併還原" : "加入清單") { done(Backup.restore(f, into: ctx)); file = nil }
+            let fits = fitting(f)
+            Button(f.kind == .backup ? "合併還原" : fits.map { "加入前 \($0.count) 個" } ?? "加入清單") {
+                if let fits, fits.isEmpty { QuotaGate.shared.stopped() } else { done(Backup.restore(f, into: ctx, only: fits)) }
+                file = nil
+            }
             Button("取消", role: .cancel) { file = nil }
         } message: { f in
-            Text(f.kind == .backup
-                 ? "\(f.summary)。會和這台裝置上的資料合併，不會刪除任何東西；同一個字保留最近複習過的進度。設定也會換成備份裡的。"
-                 : "\(f.summary)。會加進「我的單字」和同名清單，你自己的進度不受影響。")
+            if f.kind == .backup {
+                Text("\(f.summary)。會和這台裝置上的資料合併，不會刪除任何東西；同一個字保留最近複習過的進度。設定也會換成備份裡的。")
+            } else if let fits = fitting(f) {
+                Text("\(f.summary)。只能加入前 \(fits.count) 個，\(WordQuota.fullMessage)。")
+            } else {
+                Text("\(f.summary)。會加進「我的單字」和同名清單，你自己的進度不受影響。")
+            }
         }
     }
 }

@@ -37,6 +37,7 @@ struct StudyTab: View {
         let h = Home(words: words, newLeft: newLeft(plan))
         NavigationStack {
             List { Group {
+                if WordQuota.isOver(words) { Section { QuotaBanner(words: words) }.listRowInsets(EdgeInsets()).listRowBackground(Color.clear) }
                 Section {
                     if let plan { countdownRow(plan) }
                     todayRing(h, plan: plan)
@@ -58,14 +59,14 @@ struct StudyTab: View {
                     }
                 }
                 // the lists come before the chart: practising a list is what this screen is opened for most
-                Section("我的清單") {
+                Section {
                     listRow("我的單字", icon: "character.book.closed.fill", words: words.filter(\.inMyWords))
                     listRow("喜歡", icon: "heart.fill", words: words.filter(\.favorite))
                     ForEach(lists) { l in listRow(l.name, icon: "folder.fill", words: l.words) }
                     // made from the log: the words to go over again, without building a list by hand
                     let missed = recentlyMissed()
                     if !missed.isEmpty { listRow("最近答錯", icon: "exclamationmark.circle.fill", words: missed) }
-                }
+                } header: { Text("我的清單") } footer: { QuotaUsage(words: words) }
                 Section {
                     ForEach(ExamStore.all) { e in
                         actionRow(e.title, "\(e.questionCount) 題・詞彙 綜合 文意 篇章 閱讀", icon: {
@@ -132,7 +133,7 @@ struct StudyTab: View {
         let want = newLeft(plan)
         if let plan, fresh.count < want {
             let have = Set(words.map(\.term))
-            fresh += plan.pool(excluding: have).prefix(want - fresh.count).map { Library.add($0, in: ctx) }
+            fresh += plan.pool(excluding: have).prefix(want - fresh.count).compactMap { Library.add($0, in: ctx) }
         }
         return h.due + fresh
     }
@@ -326,7 +327,8 @@ struct StudyTab: View {
                 // one set of saved terms instead of a database lookup for each of the deck's (up to 6,000) words
                 let have = Set(words.map(\.term))
                 let picked = entries.filter { !have.contains($0.w.lowercased()) }.shuffled().prefix(settings.dailyGoal)
-                let ws = picked.map { Library.add($0, in: ctx) }
+                let ws = picked.compactMap { Library.add($0, in: ctx) }
+                guard !ws.isEmpty else { return }
                 flow = StudyRequest(title: d.rawValue, words: ws)
             } label: {
                 HStack(spacing: 14) {

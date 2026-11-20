@@ -91,6 +91,7 @@ class Word {
     this.favorite = false,
     this.inMyWords = true,
     this.reviewCount = 0,
+    this.fromExam = false,
     Set<int>? lists,
   })  : meanings = meanings ?? [],
         addedAt = addedAt ?? DateTime.now(),
@@ -123,6 +124,7 @@ class Word {
         favorite: j['favorite'] as bool? ?? false,
         inMyWords: j['inMyWords'] as bool? ?? true,
         reviewCount: j['reviewCount'] as int? ?? 0,
+        fromExam: j['fromExam'] as bool? ?? false,
         lists: (j['lists'] as List?)?.cast<int>().toSet(),
       );
 
@@ -132,6 +134,9 @@ class Word {
   DateTime? dueDate, lastReviewed;
   DateTime addedAt;
   bool favorite, inMyWords;
+
+  /// 考古題答錯加入的字，不算進免費版 1000 個
+  bool fromExam;
 
   /// 這個字屬於哪些自訂清單（WordList.id）
   Set<int> lists;
@@ -165,6 +170,7 @@ class Word {
         'favorite': favorite,
         'inMyWords': inMyWords,
         'reviewCount': reviewCount,
+        if (fromExam) 'fromExam': true,
         'lists': lists.toList(),
       };
 }

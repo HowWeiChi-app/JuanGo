@@ -206,7 +206,7 @@ struct WordConfirmSheet: View {
         }
         .sheet(isPresented: $showLists) {
             AddToListSheet { list in
-                if let entry { saved = Library.add(entry, meanings: chosen, to: list, myWords: saved?.inMyWords ?? false, in: ctx) }
+                if let entry { saved = Library.add(entry, meanings: chosen, to: list, myWords: saved?.inMyWords ?? false, in: ctx) ?? saved }
             }
         }
         .sheet(isPresented: $showEdit) {
@@ -266,7 +266,7 @@ struct WordConfirmSheet: View {
 
     private func add(myWords: Bool) {
         guard let entry else { return }
-        let w = Library.add(entry, meanings: chosen, to: destination, myWords: myWords, in: ctx)
+        guard let w = Library.add(entry, meanings: chosen, to: destination, myWords: myWords, in: ctx) else { return }
         saved = w
         onAdded?(w)
         dismiss()

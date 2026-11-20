@@ -414,7 +414,7 @@ class _ExamViewState extends State<ExamView> {
                 ? null
                 : () {
                     for (final e in missed) {
-                      AppStore.shared.add(e);
+                      AppStore.shared.add(e, fromExam: true);
                     }
                     setState(() => _added = true);
                   },

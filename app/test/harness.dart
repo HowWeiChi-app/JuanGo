@@ -33,7 +33,7 @@ void seedWords() {
   final s = AppStore.shared;
   const terms = ['resilience', 'perspective', 'maintain', 'pivotal', 'situate', 'abandon', 'benefit', 'curious', 'decline', 'efficient'];
   for (final (i, t) in terms.indexed) {
-    final w = s.add(Dict.lookup(t)!);
+    final w = s.add(Dict.lookup(t)!)!;
     for (var k = 0; k < i % 6; k++) {
       SRS.apply(Grade.good, w);
     }

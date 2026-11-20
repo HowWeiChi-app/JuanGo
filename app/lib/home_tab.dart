@@ -14,6 +14,7 @@ import 'store.dart';
 import 'study_flow.dart';
 import 'theme.dart';
 import 'widgets.dart';
+import 'word_quota.dart';
 
 class HomeTab extends StatelessWidget {
   const HomeTab({super.key, required this.onFindWords});
@@ -55,12 +56,14 @@ class HomeTab extends StatelessWidget {
         List<Word> todayWords() {
           if (!canTopUp) return today;
           final have = _store.words.map((w) => w.term.toLowerCase()).toSet();
-          final more = [for (final e in plan.pool(have).take(newLeft - newWords.length)) _store.add(e)];
+          final more = [for (final e in plan.pool(have).take(newLeft - newWords.length)) ?_store.add(e)];
           return [...today, ...more];
         }
         final missed = _recentlyMissed();
 
         return LargePage(title: '主頁', slivers: [
+          if (QuotaBanner.showing)
+            const SliverPadding(padding: EdgeInsets.fromLTRB(16, 8, 16, 8), sliver: SliverToBoxAdapter(child: QuotaBanner())),
           Sec(header: monthDayWeekFull(DateTime.now()), children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
@@ -85,7 +88,7 @@ class HomeTab extends StatelessWidget {
             _actionRow(p, '學習紀錄', '每天練了哪些字', Icon(Icons.calendar_month_rounded, size: 23, color: p.accent),
                 () => showHistory(context, _store.logs.reversed.toList())),
           ]),
-          Sec(header: '我的清單', children: [
+          Sec(header: '我的清單', footer: WordQuota.usage(WordQuota.used(), unlimited: WordQuota.unlimited), children: [
             _listRow(context, p, '我的單字', Icons.menu_book_rounded, _store.words.where((w) => w.inMyWords).toList()),
             _listRow(context, p, '喜歡', Icons.favorite_rounded, _store.words.where((w) => w.favorite).toList()),
             for (final l in _store.lists) _listRow(context, p, l.name, Icons.folder_rounded, _store.wordsIn(l)),
@@ -298,7 +301,8 @@ class HomeTab extends StatelessWidget {
       onTap: () {
         final have = _store.words.map((w) => w.term.toLowerCase()).toSet();
         final picked = entries.where((e) => !have.contains(e.w.toLowerCase())).toList()..shuffle();
-        final words = [for (final e in picked.take(_settings.dailyGoal)) _store.add(e)];
+        final words = [for (final e in picked.take(_settings.dailyGoal)) ?_store.add(e)];
+        if (words.isEmpty) return;
         startStudy(context, d.label, words);
       },
     );

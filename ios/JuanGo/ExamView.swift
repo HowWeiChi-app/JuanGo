@@ -365,7 +365,7 @@ struct ExamView: View {
                             }
                         }
                         Button(added ? "已加入我的單字" : "全部加入我的單字") {
-                            for e in missed { _ = Library.add(e, in: ctx) }
+                            for e in missed { Library.add(e, fromExam: true, in: ctx) }
                             try? ctx.save(); added = true
                         }
                         .buttonStyle(PillButtonStyle())

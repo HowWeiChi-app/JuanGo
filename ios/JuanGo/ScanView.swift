@@ -342,6 +342,7 @@ struct ScanView: View {
     @State private var thinking = false
     @State private var feedback: String?
     @State private var showList = false
+    @State private var partial: Int?
     @FocusState private var typing: Bool
 
     private var saved: Set<String> { Set(library.filter(\.inMyWords).map(\.term)) }
@@ -378,10 +379,11 @@ struct ScanView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button(role: .cancel) { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("加入 \(selected.count) 個") { addSelected() }.disabled(selected.isEmpty).bold()
+                    Button("加入 \(selected.count) 個") { tryAdd() }.disabled(selected.isEmpty).bold()
                 }
             }
             .sheet(isPresented: $showList) { selectionList }
+            .quotaPartial($partial) { addSelected() }
             .onAppear {
                 // level-1 words (have, are, change…) are known by everyone in 高中; start from 2 or the user's level
                 filter.minLevel = max(2, Int(settings.level) ?? 2)
@@ -741,7 +743,10 @@ struct ScanView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("返回") { showList = false } }
-                ToolbarItem(placement: .confirmationAction) { Button("加入") { showList = false; addSelected() }.disabled(selected.isEmpty) }
+                ToolbarItem(placement: .confirmationAction) { Button("加入") {
+                    showList = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { tryAdd() }   // after the list sheet is gone
+                }.disabled(selected.isEmpty) }
             }
         }
         .presentationDetents([.medium, .large])
@@ -751,7 +756,14 @@ struct ScanView: View {
     /// picked words that neither the page nor the dictionary explains
     private var unknownKeys: [String] { selected.filter { pageEntries[$0] == nil && Dictionary_.lookup($0) == nil } }
 
+    private func tryAdd() {
+        let entries = selected.map { exactEntry($0) ?? Dictionary_.lookup($0) ?? .custom($0, meaning: "") }
+        partial = WordQuota.batch(entries, list: destination, in: ctx) { addSelected() }
+    }
+
     private func addSelected() {
+        var added = 0
+        defer { onDone(added) }
         var untranslated: [Word] = []
         for key in selected {
             if let g = pageEntries[key] {
@@ -765,16 +777,16 @@ struct ScanView: View {
                 let sameSense = first.isEmpty || g.meanings.contains { first.contains($0) || $0.contains(first) }
                 if !sameSense { e.def = ""; e.ex = ""; e.exZh = "" }
                 e.zh = g.meanings
-                let w = Library.add(e, meanings: g.meanings, to: destination, in: ctx)
+                guard let w = Library.add(e, meanings: g.meanings, to: destination, in: ctx) else { continue }
+                added += 1
                 if !g.pos.isEmpty { w.pos = g.pos }
                 if !sameSense { w.definition = ""; w.example = ""; w.exampleZh = ""; ExampleStore.shared.backfill([w]) }
-            } else if let e = Dictionary_.lookup(key) { Library.add(e, to: destination, in: ctx) }
-            else if let ai = translator.cached(key) { Library.add(ai.entry(for: key), to: destination, in: ctx) }
-            else { untranslated.append(Library.add(.custom(key, meaning: ""), to: destination, in: ctx)) }
+            } else if let e = Dictionary_.lookup(key) { if Library.add(e, to: destination, in: ctx) != nil { added += 1 } }
+            else if let ai = translator.cached(key) { if Library.add(ai.entry(for: key), to: destination, in: ctx) != nil { added += 1 } }
+            else if let w = Library.add(.custom(key, meaning: ""), to: destination, in: ctx) { untranslated.append(w); added += 1 }
         }
         try? ctx.save()
         translator.fill(untranslated, in: ctx)
-        onDone(selected.count)
         dismiss()
     }
 }
