@@ -1,7 +1,7 @@
 name: juango
 description: JuanGo：英文單字學習 App（Android 版）
 publish_to: "none"
-version: 0.1.0+3
+version: 0.1.0+4
 
 environment:
   sdk: ^3.13.0

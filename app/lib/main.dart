@@ -21,6 +21,7 @@ import 'theme.dart';
 import 'widgets.dart';
 import 'words_tab.dart';
 import 'word_quota.dart';
+import 'word_report.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -169,6 +170,7 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     Reminders.sync();
     Cloud.shared.syncQuietly();
+    WordReport.flush();
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkQuota());
   }
 
@@ -192,6 +194,7 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
       Cloud.shared.backgroundPush();
     } else if (state == AppLifecycleState.resumed) {
       _checkQuota();
+      WordReport.flush();
       Cloud.shared.syncQuietly();
     }
   }

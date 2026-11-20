@@ -16,6 +16,7 @@ import 'study_flow.dart';
 import 'theme.dart';
 import 'widgets.dart';
 import 'word_quota.dart';
+import 'word_report.dart';
 
 AppStore get _store => AppStore.shared;
 
@@ -613,6 +614,7 @@ class _WordDetailPageState extends State<WordDetailPage> {
           },
         );
       }),
+      MenuEntry('回報問題', icon: Icons.feedback_outlined, onTap: () => showWordReport(context, w)),
       MenuEntry('刪除單字', icon: Icons.delete_rounded, destructive: true, onTap: () {
         confirmAction(
           context,

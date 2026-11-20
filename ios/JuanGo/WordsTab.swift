@@ -507,6 +507,7 @@ struct WordDetailView: View {
     @State private var confirmDelete = false
     @State private var confirmReset = false
     @State private var confirmDictMeaning = false
+    @State private var reporting = false
 
     /// Picked once when the page opens: as a computed property it reshuffled on every redraw (tapping ♡,
     /// showing the translation, an example saved in the background) and the chips changed under the finger.
@@ -600,12 +601,14 @@ struct WordDetailView: View {
                         Button("改用字典的解釋", pulso: "book") { confirmDictMeaning = true }
                     }
                     Button("重設學習進度", pulso: "arrow.counterclockwise") { confirmReset = true }
+                    Button("回報問題", pulso: "exclamationmark.bubble") { reporting = true }
                     Button("刪除單字", pulso: "trash", role: .destructive) { confirmDelete = true }
                 } label: { LIcon("ellipsis") }
                 .accessibilityLabel("更多")
             }
         }
         .sheet(item: $lookup) { WordConfirmSheet(term: $0.term) }
+        .sheet(isPresented: $reporting) { WordReportSheet(word: word) }
         .sheet(isPresented: $showLists) {
             AddToListSheet { list in
                 guard WordQuota.admit(word, in: ctx) else { return }

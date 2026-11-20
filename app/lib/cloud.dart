@@ -425,6 +425,13 @@ class Cloud extends ChangeNotifier {
     return c.length == 8 ? '${c.substring(0, 4)}-${c.substring(4)}' : c;
   }
 
+  /// 回報單字問題：沒登入也能送。回傳 ok 或 duplicate（已經收過，或今天回報過同一件事）
+  Future<String> reportWord(Map<String, dynamic> args) async {
+    final body = await _send(_rest('rpc/report_word'), 'POST', json: args, auth: signedIn);
+    final v = jsonDecode(body);
+    return v is String ? v : 'ok';
+  }
+
   // MARK: 連線
 
   Future<String> _send(Uri url, String method, {Map<String, dynamic>? json, String? prefer, bool auth = true}) async {
