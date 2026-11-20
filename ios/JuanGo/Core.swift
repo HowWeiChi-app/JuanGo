@@ -329,6 +329,8 @@ enum SRS {
     var level: String { didSet { d.set(level, forKey: "level") } }
     /// Set once all 18 questions of the level test are answered; online battles need it.
     var levelTested: Bool { didSet { d.set(levelTested, forKey: "levelTested") } }
+    /// The server asked for the level test again (ranked battles); cleared once the new level is sent.
+    var levelRetest: Bool { didSet { d.set(levelRetest, forKey: "levelRetest") } }
     var dailyGoal: Int { didSet { d.set(dailyGoal, forKey: "dailyGoal") } }
     var reminderOn: Bool { didSet { d.set(reminderOn, forKey: "reminderOn"); Reminders.sync(self) } }
     var reminderMinutes: Int { didSet { d.set(reminderMinutes, forKey: "reminderMinutes"); Reminders.sync(self) } }
@@ -374,6 +376,7 @@ enum SRS {
         let storedLevel = d.string(forKey: "level")!
         level = cefrToExam[storedLevel] ?? storedLevel
         levelTested = d.bool(forKey: "levelTested")
+        levelRetest = d.bool(forKey: "levelRetest")
         dailyGoal = d.integer(forKey: "dailyGoal")
         reminderOn = d.bool(forKey: "reminderOn")
         reminderMinutes = d.integer(forKey: "reminderMinutes")

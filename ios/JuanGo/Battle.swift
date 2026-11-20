@@ -61,6 +61,8 @@ struct BattlePlayer: Decodable {
     var freeLeft: Int? = nil
     var hidden: Bool? = nil
     var badges: [Badge]? = nil
+    /// the developer asked this player to take the level test again (battle_players.retest)
+    var retest: Bool? = nil
 }
 
 /// 第 2 級 used to be shown for the tier; the server now names it (尊貴鉑金…傳奇卷神).
@@ -517,6 +519,7 @@ struct BattleView: View {
             #endif
             if !placing { start() }
         }
+        .onChange(of: model?.me?.retest) { _, r in if r == true { retest() } }
         .onChange(of: model?.phase) { _, p in UIApplication.shared.isIdleTimerDisabled = p == .playing }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
     }
@@ -527,7 +530,8 @@ struct BattleView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("對戰前先測程度").font(.app(.title2, .bold))
-                    Text("做完 18 題，積分會從你的程度開始。").font(.app(.subheadline)).foregroundStyle(.secondary)
+                    Text(settings.levelRetest ? "重新做 18 題，這一季的積分會從新的程度重新開始。" : "做完 18 題，積分會從你的程度開始。")
+                        .font(.app(.subheadline)).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button { dismiss() } label: { GlassCircleIcon(systemName: "xmark") }
@@ -535,6 +539,26 @@ struct BattleView: View {
             }
             .padding(.horizontal, 20).padding(.top, 16)
             OnboardingView(testOnly: true) { _ in placing = false; start() }
+        }
+    }
+
+    /// The server asked for the level test again: take it now, or, once it has been taken since, send the new level.
+    private func retest() {
+        if settings.levelRetest && settings.levelTested {
+            Task {
+                do {
+                    _ = try await Cloud.shared.rpc("battle_retest_done", ["p_level": Int(settings.level) ?? 3], timeout: 10)
+                    settings.levelRetest = false
+                    await model?.load()
+                } catch {
+                    model?.error = BattleModel.clean(error)
+                }
+            }
+        } else {
+            settings.levelTested = false
+            settings.levelRetest = true
+            model = nil
+            placing = true
         }
     }
 

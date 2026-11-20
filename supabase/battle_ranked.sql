@@ -1134,6 +1134,30 @@ begin
   return res;
 end $$;
 
+-- Asking a player to take the 18-question level test again (run in the SQL Editor):
+--   update public.battle_players set retest = true where user_id = '<uuid>';
+-- battle_me tells the app, which shows the test before the next battle and then calls battle_retest_done.
+alter table public.battle_players add column if not exists retest boolean not null default false;
+
+-- The new level replaces the old one, and this season's rating starts again from it (games and wins stay).
+create or replace function public.battle_retest_done(p_level int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  me uuid := auth.uid();
+  lv int := least(6, greatest(1, coalesce(p_level, 3)));
+  st int := battle_start_rating(lv);
+begin
+  if me is null then raise exception '請先登入'; end if;
+  update battle_players set placed_level = lv, rating = st, retest = false where user_id = me and retest;
+  if found then
+    update battle_ratings set rating = st, start_rating = st, peak_rating = st
+    where user_id = me and season = battle_season();
+  end if;
+  return battle_me(lv);
+end $$;
+revoke execute on function public.battle_retest_done(int) from public, anon;
+grant execute on function public.battle_retest_done(int) to authenticated;
+
 create or replace function public.battle_me(p_level int) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
@@ -1159,7 +1183,7 @@ begin
     'games', coalesce(r.games, 0), 'wins', coalesce(r.wins, 0), 'losses', coalesce(r.losses, 0), 'draws', coalesce(r.draws, 0),
     'streak', coalesce(r.win_streak, 0),
     'season', battle_season_label(s), 'season_notice', notice, 'open', battle_phase() = 'open',
-    'free_left', battle_free_left(p.user_id), 'hidden', p.hide_board, 'name_locked', p.name_locked,
+    'free_left', battle_free_left(p.user_id), 'hidden', p.hide_board, 'name_locked', p.name_locked, 'retest', p.retest,
     'badges', coalesce((select jsonb_agg(jsonb_build_object('season', battle_season_label(b.season), 'name', b.name) order by b.season desc)
                         from battle_badges b where b.user_id = p.user_id), '[]'::jsonb));
 end $$;
