@@ -17,6 +17,7 @@ class AccountPage extends StatefulWidget {
 class _AccountPageState extends State<AccountPage> {
   final _email = TextEditingController();
   bool _sending = false;
+  bool _deleting = false;
   String? _sentTo;
 
   Cloud get _cloud => Cloud.shared;
@@ -75,6 +76,25 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
+  Future<void> _confirmDelete() => showAlert(
+        context,
+        '刪除帳號？',
+        message: '會永久刪除這個帳號和雲端上的所有資料，無法復原。這台裝置上的單字和進度會保留。有訂閱的話，要另外到 Google Play 取消。',
+        actions: [const AlertAction('取消'), AlertAction('刪除', destructive: true, bold: true, onTap: _delete)],
+      );
+
+  Future<void> _delete() async {
+    setState(() => _deleting = true);
+    try {
+      await _cloud.deleteAccount();
+      if (mounted) showAlert(context, '帳號已刪除');
+    } catch (e) {
+      if (mounted) showAlert(context, '$e');
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
   Future<void> _sync() async {
     try {
       final r = await _cloud.sync();
@@ -97,7 +117,10 @@ class _AccountPageState extends State<AccountPage> {
           ),
         ]),
         _sharedLists(p),
-        Sec(children: [RowTile(title: '登出', titleColor: p.destructive, onTap: _cloud.signOut)]),
+        Sec(footer: '刪除帳號會刪掉雲端上的備份和分享中的清單，這台裝置上的單字和進度會保留。', children: [
+          RowTile(title: '登出', titleColor: p.destructive, onTap: _cloud.signOut),
+          RowTile(title: _deleting ? '刪除中…' : '刪除帳號', titleColor: p.destructive, onTap: _deleting ? null : _confirmDelete),
+        ]),
       ];
 
   Widget _sharedLists(Palette p) {

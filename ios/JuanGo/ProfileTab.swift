@@ -274,8 +274,9 @@ struct SettingsView: View {
                 Section {
                     LabeledContent("字典", value: "\(Dictionary_.all.count) 個內建單字")
                     LabeledContent("版本", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
+                    NavigationLink("關於與授權") { AboutView() }
                 } footer: {
-                    Text("大考詞彙與分級：大學入學考試中心《高中英文參考詞彙表》（111 學年度起適用），僅供非營利學習使用。國中小 1200：教育部十二年國教英語文課綱附錄五。多益：TOEIC Service List 1.2（CC BY-SA 4.0）。雅思、托福字表與中文解釋、音標整理自 ECDICT（MIT 授權），內容可能有誤，可在單字頁自行編輯。學習資料只存在這台裝置；設定自訂 API 後，字典沒有的字會傳到該 API。")
+                    Text("大考詞彙和學測考古題永遠免費。資料來源、授權和隱私說明請見「關於與授權」。")
                 }
             }.listRowBackground(Color.cardFill) }.themedBackground()
             .navigationTitle("設定")
@@ -396,6 +397,8 @@ struct AccountView: View {
     @State private var sentTo: String?
     @State private var message: String?
     @State private var lists: [Cloud.SharedList] = []
+    @State private var confirmDelete = false
+    @State private var deleting = false
     private var cloud: Cloud { .shared }
 
     var body: some View {
@@ -431,7 +434,12 @@ struct AccountView: View {
                 } header: { Text("我分享的清單") } footer: {
                     Text("代碼 72 小時後失效並從雲端刪除；從清單再分享一次可以延長。左滑停止分享。")
                 }
-                Section { Button("登出", role: .destructive) { cloud.signOut(); lists = [] } }
+                Section {
+                    Button("登出", role: .destructive) { cloud.signOut(); lists = [] }
+                    Button(deleting ? "刪除中…" : "刪除帳號", role: .destructive) { confirmDelete = true }.disabled(deleting)
+                } footer: {
+                    Text("刪除帳號會刪掉雲端上的備份和分享中的清單，這台裝置上的單字和進度會保留。")
+                }
             } else {
                 Section {
                     TextField("Email", text: $email)
@@ -456,6 +464,17 @@ struct AccountView: View {
         .navigationTitle("雲端備份")
         .task { await loadLists() }
         .onChange(of: cloud.signedIn) { _, _ in Task { await loadLists() } }
+        .confirmationDialog("刪除帳號？", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("刪除帳號", role: .destructive) {
+                Task {
+                    deleting = true; defer { deleting = false }
+                    do { try await cloud.deleteAccount(); lists = []; message = "帳號已刪除" }
+                    catch { message = error.localizedDescription }
+                }
+            }
+        } message: {
+            Text("會永久刪除這個帳號和雲端上的所有資料，無法復原。這台裝置上的單字和進度會保留。有訂閱的話，要另外到 App Store 取消。")
+        }
         .alert(message ?? "", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("好") { message = nil }
         }

@@ -30,6 +30,8 @@ final class AppFont {
     /// bumped when a Chinese face finishes downloading, so every `Font.app` is rebuilt
     private(set) var version = 0
     private(set) var downloading: String?
+    /// false while the Chinese face picked in 字體 is still being loaded at launch; the launch mask waits for it
+    private(set) var ready = false
     private(set) var failed: String?
     @ObservationIgnored private var cache: [String: Font] = [:]
     @ObservationIgnored private var requested: Set<String> = []
@@ -57,7 +59,7 @@ final class AppFont {
 
     /// Downloads the current option's Chinese faces if iOS doesn't have them yet.
     func prepare() {
-        guard let names = option.cjk, !names.allSatisfy(Self.installed) else { return }
+        guard let names = option.cjk, !names.allSatisfy(Self.installed) else { ready = true; return }
         let key = names.joined()
         guard !requested.contains(key) else { return }
         requested.insert(key)
@@ -71,6 +73,7 @@ final class AppFont {
                 Task { @MainActor in
                     let s = AppFont.shared
                     s.downloading = nil
+                    s.ready = true
                     if !names.allSatisfy(Self.installed) { s.failed = label; s.requested.remove(key) }
                     s.cache = [:]; s.readyCache = [:]; s.version += 1
                     s.applyAppearance()
@@ -79,6 +82,7 @@ final class AppFont {
                 Task { @MainActor in
                     let s = AppFont.shared
                     s.downloading = nil; s.failed = label; s.requested.remove(key)
+                    s.ready = true
                 }
             default: break
             }

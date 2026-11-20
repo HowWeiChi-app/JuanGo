@@ -202,6 +202,17 @@ class Cloud extends ChangeNotifier {
     }
   }
 
+  /// 刪除帳號和雲端上的所有資料；這台裝置上的單字會保留
+  Future<void> deleteAccount() async {
+    await _send(_rest('rpc/delete_my_account'), 'POST', json: {});
+    _store(null);
+    lastSync = null;
+    notifyListeners();
+    try {
+      (await SharedPreferences.getInstance()).remove(_lastSyncKey);
+    } catch (_) {}
+  }
+
   static DateTime _expiry(num seconds) => DateTime.now().add(Duration(seconds: seconds.toInt() - 60));
 
   void _store(CloudSession? s) {
