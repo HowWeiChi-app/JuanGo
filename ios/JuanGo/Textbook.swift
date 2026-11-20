@@ -23,6 +23,8 @@ nonisolated struct TBWord: Codable, Hashable {
     var bold: Bool?
     var core: String { TBText.core(t) }
     var isBold: Bool { bold == true }
+    /// `box` as a rect
+    var rect: CGRect? { box.flatMap { $0.count == 4 ? CGRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) : nil } }
 }
 nonisolated struct TBSentence: Codable, Hashable { var words: [TBWord] }
 nonisolated struct TBParagraph: Codable, Hashable {
@@ -602,13 +604,17 @@ nonisolated enum PageReader {
         var words: [TBWord]
         /// normalised, top-left origin
         var box: CGRect
+        /// lines of one block (a paragraph's lines, of one size) share a number; a new block starts a new paragraph
+        var block = 0
     }
 
     /// A word-list page (read with Chinese too, for the meanings) or lesson text (read as English, with
-    /// titles and bold words).
+    /// titles and bold words). What isn't the page's text is cleared first (see PageCleaner), then laid out.
     static func read(_ cg: CGImage) async -> TBContent {
-        if let vocab = VocabPage.read(await recognize(cg, languages: ["zh-Hant", "en-US"])) { return vocab }
-        var lines = await recognize(cg, languages: ["en-US"])
+        let picture = PictureMap(cg)
+        let chinese = await recognize(cg, languages: ["zh-Hant", "en-US"])
+        if let vocab = VocabPage.read(PageCleaner.clean(chinese, picture: picture, mode: .list)) { return vocab }
+        var lines = PageCleaner.clean(await recognize(cg, languages: ["en-US"]), picture: picture, mode: .lesson, chinese: chinese)
         if let ink = InkMap(cg) { BoldDetector.mark(&lines, ink: ink) }
         return layout(lines)
     }
@@ -654,7 +660,7 @@ nonisolated enum PageReader {
 
     /// Lines → paragraphs → sentences: drops page numbers and running headers/footers, keeps titles and
     /// subtitles as their own paragraphs, joins words broken with a hyphen at the end of a line, and starts a
-    /// new paragraph at a gap, an indent or a short last line.
+    /// new paragraph at a new block, a gap, an indent or a short last line.
     static func layout(_ raw: [Line]) -> TBContent {
         let all = raw.filter { !$0.words.isEmpty }
         guard !all.isEmpty else { return TBContent() }
@@ -681,7 +687,7 @@ nonisolated enum PageReader {
                 let newColumn = gap < -lineH * 1.5
                 let indented = line.box.minX - left > lineH * 1.2
                 let shortLast = p.box.width < fullW * 0.8
-                if st != currentStyle || (st != nil && gap > lineH * 0.9) {
+                if st != currentStyle || line.block != p.block || (st != nil && gap > lineH * 0.9) {
                     close()
                 } else if st != nil {
                     // a title that wraps onto a second line stays one title

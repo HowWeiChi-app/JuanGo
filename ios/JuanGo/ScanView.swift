@@ -99,11 +99,18 @@ enum PhotoScanner {
                 let req = TextRecognition.request(languages: ["zh-Hant", "en-US"])
                 try? VNImageRequestHandler(cgImage: cg, orientation: .up).perform([req])
                 let ink = InkMap(cg)
+                // lines cut off at the photo's edge and text printed on pictures (map labels, speech bubbles) aren't offered
+                let results = (req.results ?? []).filter { $0.topCandidates(1).first != nil }
+                let boxes = results.map { o in
+                    PageReader.Line(words: [TBWord(t: o.topCandidates(1)[0].string)],
+                                    box: CGRect(x: o.boundingBox.minX, y: 1 - o.boundingBox.maxY, width: o.boundingBox.width, height: o.boundingBox.height))
+                }
+                let keep = PageCleaner.regions(boxes, picture: PictureMap(cg), mode: .list).keep
                 var out: [(text: String, rect: CGRect, loc: Int)] = []
                 var full = ""
                 var lines: [(text: String, box: CGRect)] = []
                 var hyphenated: Int?          // index of a word broken across lines ("trans-")
-                for obs in req.results ?? [] {
+                for (k, obs) in results.enumerated() where keep[k] {
                     guard let cand = obs.topCandidates(1).first else { continue }
                     let s = cand.string
                     lines.append((s, obs.boundingBox))

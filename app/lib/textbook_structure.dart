@@ -42,16 +42,7 @@ class InkMap {
 /// 用筆畫粗細找粗體字：每個字的框裡，一列上連續深色像素的平均長度除以框高。
 /// 粗體字的筆畫明顯比這頁一般的字粗
 class BoldDetector {
-  /// 在背景執行緒跑：照片（辨識用的同一張）和每個字的框 → 每個字的筆畫粗細，量不出來是 null
-  static List<double?> strokes((List<int>, List<List<double>?>) args) {
-    final (bytes, boxes) = args;
-    final image = img.decodeImage(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
-    if (image == null) return [for (final _ in boxes) null];
-    final ink = InkMap.from(image);
-    return [for (final b in boxes) b == null || b.length != 4 ? null : stroke(ink, ui.Rect.fromLTWH(b[0], b[1], b[2], b[3]))];
-  }
-
-  /// strokes 的順序和 lines 裡的字一樣
+  /// strokes（PageImage.analyze 量的）的順序和 lines 裡的字一樣
   static void mark(List<OcrLine> lines, List<double?> strokes) {
     final found = <(TBWord, double)>[];
     var i = 0;
@@ -106,6 +97,360 @@ class BoldDetector {
     }
     if (runs < 3) return null;
     return dark / runs / (y1 - y0);
+  }
+}
+
+// MARK: 圖片在哪裡
+
+/// 照片上哪裡是圖片的粗略地圖：顏色鮮豔、或有照片那種很多中間色調的格子（印刷字只有紙和墨，中間色調很少）。
+/// 淺色底的方框、陰影和紙都不算
+class PictureMap {
+  PictureMap(this.cols, this.rows, this.cells) : _text = Uint8List(cols * rows);
+  final int cols, rows;
+
+  /// 1 是圖片
+  final Uint8List cells;
+
+  /// 辨識到的字底下的格子，判斷一塊字周圍是什麼時不算
+  final Uint8List _text;
+
+  static PictureMap? from(img.Image image, {int longSide = 768, int cell = 8}) {
+    final scale = min(1.0, longSide / max(image.width, image.height));
+    final small = scale < 1
+        ? img.copyResize(image,
+            width: max(cell, (image.width * scale).round()),
+            height: max(cell, (image.height * scale).round()),
+            interpolation: img.Interpolation.average)
+        : image;
+    final cols = small.width ~/ cell, rows = small.height ~/ cell;
+    if (cols == 0 || rows == 0) return null;
+    final cells = Uint8List(cols * rows);
+    final lum = List<int>.filled(cell * cell, 0);
+    for (var cy = 0; cy < rows; cy++) {
+      for (var cx = 0; cx < cols; cx++) {
+        var sat = 0.0;
+        var lo = 255, hi = 0, k = 0;
+        for (var y = 0; y < cell; y++) {
+          for (var x = 0; x < cell; x++) {
+            final p = small.getPixel(cx * cell + x, cy * cell + y);
+            final r = (p.rNormalized * 255).round(), g = (p.gNormalized * 255).round(), b = (p.bNormalized * 255).round();
+            final mx = max(r, max(g, b)), mn = min(r, min(g, b));
+            if (mx > 60) sat += (mx - mn) / mx;
+            final l = (r * 299 + g * 587 + b * 114) ~/ 1000;
+            lum[k++] = l;
+            if (l < lo) lo = l;
+            if (l > hi) hi = l;
+          }
+        }
+        var textured = false;
+        if (hi - lo > 60) {
+          final a = lo + (hi - lo) ~/ 4, b = hi - (hi - lo) ~/ 4;
+          textured = lum.where((v) => v > a && v < b).length > lum.length * 0.45;
+        }
+        if (sat / (cell * cell) > 0.22 || textured) cells[cy * cols + cx] = 1;
+      }
+    }
+    return PictureMap(cols, rows, cells);
+  }
+
+  /// 把這些框（0~1，左上角為原點）底下的格子標成字
+  void cover(Iterable<ui.Rect> boxes) {
+    for (final b in boxes) {
+      final x0 = max(0, (b.left * cols).toInt()), x1 = min(cols - 1, (b.right * cols).toInt());
+      final y0 = max(0, (b.top * rows).toInt()), y1 = min(rows - 1, (b.bottom * rows).toInt());
+      for (var y = y0; y <= y1; y++) {
+        for (var x = x0; x <= x1; x++) {
+          _text[y * cols + x] = 1;
+        }
+      }
+    }
+  }
+
+  /// r 外圍一圈（離 r inner 到 outer 之間）有多少是圖片：整圈和上、右、下、左各邊。
+  /// 字底下的格子不算；剩下的格子太少就是 null
+  ({double? all, List<double?> sides}) around(ui.Rect r, double inner, double outer) {
+    final i = r.inflate(inner), o = r.inflate(outer);
+    final x0 = max(0, (o.left * cols).toInt()), x1 = min(cols - 1, (o.right * cols).toInt());
+    final y0 = max(0, (o.top * rows).toInt()), y1 = min(rows - 1, (o.bottom * rows).toInt());
+    final hit = [0, 0, 0, 0], n = [0, 0, 0, 0];
+    var allHit = 0, allN = 0;
+    for (var cy = y0; cy <= y1; cy++) {
+      for (var cx = x0; cx <= x1; cx++) {
+        if (_text[cy * cols + cx] == 1) continue;
+        final c = ui.Offset((cx + 0.5) / cols, (cy + 0.5) / rows);
+        if (!o.contains(c) || i.contains(c)) continue;
+        final p = cells[cy * cols + cx] == 1;
+        allN++;
+        if (p) allHit++;
+        for (final (s, on) in [c.dy < i.top, c.dx > i.right, c.dy > i.bottom, c.dx < i.left].indexed) {
+          if (!on) continue;
+          n[s]++;
+          if (p) hit[s]++;
+        }
+      }
+    }
+    return (all: allN >= 6 ? allHit / allN : null, sides: [for (var s = 0; s < 4; s++) n[s] >= 3 ? hit[s] / n[s] : null]);
+  }
+}
+
+/// 在背景執行緒把照片解碼一次：每個字的筆畫粗細（量粗體用）和圖片地圖
+class PageImage {
+  static (List<double?>, PictureMap?) analyze((List<int>, List<List<double>?>) args) {
+    final (bytes, boxes) = args;
+    final image = img.decodeImage(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
+    if (image == null) return ([for (final _ in boxes) null], null);
+    final ink = InkMap.from(image);
+    final strokes = [
+      for (final b in boxes) b == null || b.length != 4 ? null : BoldDetector.stroke(ink, ui.Rect.fromLTWH(b[0], b[1], b[2], b[3])),
+    ];
+    return (strokes, PictureMap.from(image));
+  }
+}
+
+// MARK: 不是課文的東西
+
+/// 課文：下面全部；list：單字表和掃單字，只去掉被切到的行和圖片上的字，其他照單字表自己的版面
+enum CleanMode { lesson, list }
+
+/// 排版前把照片上不是課文的東西清掉（跟 iOS 的 PageCleaner 一樣）：
+/// - 被照片邊緣切到的行（拍到隔壁頁）
+/// - 印在圖片上的字（地圖上的地名、對話框、照片上的引言）
+/// - 圖說：圖片旁邊比較小的字
+/// - 側欄：課文旁邊自成一欄的小字（Language Highlight、Note the Details），和課本自己的小方框（Word Bank、Scan and Watch）
+/// - 邊上的行號、字上的註記數字和星號、項目符號和記號（®、™、▶、•）
+/// - 英文辨識器把中文讀成的亂碼
+class PageCleaner {
+  /// 要讀的行，每行標上是第幾塊。課文會照閱讀順序排好（一塊一塊、同一行被拆開的接回去），
+  /// 中文和字上的記號都拿掉；chinese 是同一頁用中文辨識器讀的結果，用來找中文在哪裡
+  static List<OcrLine> clean(List<OcrLine> raw, PictureMap? picture, CleanMode mode, {List<OcrLine> chinese = const []}) {
+    var lines = raw.where((l) => l.words.isNotEmpty).toList();
+    if (mode == CleanMode.lesson) lines = dropChinese(lines, chinese);
+    if (lines.isEmpty) return [];
+    final r = regions(lines, picture, mode);
+    var kept = <OcrLine>[
+      for (final (i, l) in lines.indexed)
+        if (r.keep[i]) OcrLine(l.words, l.box, block: r.block[i]),
+    ];
+    if (mode != CleanMode.lesson || kept.isEmpty) return kept;
+    final lineH = median(kept.map((l) => l.box.height));
+    kept = [for (final l in joinDropCaps(kept, lineH)) ?tidy(l, lineH)];
+    return order(kept);
+  }
+
+  static double median(Iterable<double> v) {
+    if (v.isEmpty) return 0;
+    final s = v.toList()..sort();
+    return s[s.length ~/ 2];
+  }
+
+  // MARK: 分塊
+
+  /// 被照片邊緣切到
+  static bool cutOff(ui.Rect r) => r.left < 0.006 || r.right > 0.994 || r.top < 0.004 || r.bottom > 0.996;
+
+  /// 同一塊的兩行：字差不多大，是同一行被拆開，或一行接在另一行下面
+  static bool together(ui.Rect a, ui.Rect b) {
+    final h = min(a.height, b.height);
+    if (h <= 0 || max(a.height, b.height) / h >= 1.35) return false;
+    final vGap = max(a.top, b.top) - min(a.bottom, b.bottom);
+    final hGap = max(a.left, b.left) - min(a.right, b.right);
+    if (vGap < -h * 0.5) return hGap < h * 0.8;
+    return vGap < h * 1.3 && -hGap > min(a.width, b.width) * 0.3;
+  }
+
+  /// 課本在課文旁邊印的小方框（這塊開頭的字，小寫）
+  static const boxLabels = ['word bank', 'language highlight', 'note the details', 'scan and watch', 'scan to watch', 'scan to listen'];
+
+  /// 每行要不要留、是第幾塊
+  static ({List<bool> keep, List<int> block}) regions(List<OcrLine> lines, PictureMap? picture, CleanMode mode) {
+    final boxes = [for (final l in lines) l.box];
+    final n = boxes.length;
+    final keep = [for (final b in boxes) !cutOff(b)];
+    final parent = List<int>.generate(n, (i) => i);
+    int find(int i) {
+      while (parent[i] != i) {
+        parent[i] = parent[parent[i]];
+        i = parent[i];
+      }
+      return i;
+    }
+
+    for (var a = 0; a < n; a++) {
+      if (!keep[a]) continue;
+      for (var b = a + 1; b < n; b++) {
+        if (keep[b] && together(boxes[a], boxes[b])) parent[find(a)] = find(b);
+      }
+    }
+    final block = [for (var i = 0; i < n; i++) find(i)];
+    final groups = <int, List<int>>{};
+    for (var i = 0; i < n; i++) {
+      if (keep[i]) (groups[block[i]] ??= []).add(i);
+    }
+    if (groups.isEmpty) return (keep: keep, block: block);
+    // 這頁的課文：行數最多的那塊
+    final body = groups.values.reduce((a, b) => b.length > a.length || (b.length == a.length && b[0] < a[0]) ? b : a);
+    ui.Rect frame(List<int> g) => g.skip(1).fold(boxes[g[0]], (r, i) => r.expandToInclude(boxes[i]));
+    final bodyH = median(body.map((i) => boxes[i].height));
+    final bodyX = frame(body);
+    picture?.cover(boxes);
+    for (final g in groups.values) {
+      final h = median(g.map((i) => boxes[i].height));
+      final f = frame(g);
+      var drop = false;
+      if (picture != null) {
+        // 在圖片上：周圍大多是圖片，或三邊都是
+        final a = picture.around(f, h * 0.6, h * 2.5);
+        if ((a.all ?? 0) >= 0.5 || a.sides.where((s) => (s ?? 0) >= 0.35).length >= 3) drop = true;
+        // 圖說：緊貼圖片、比課文小的幾行字
+        if (!drop && mode == CleanMode.lesson && h < bodyH * 0.85 && g.length <= 6) {
+          final c = picture.around(f, h * 0.6, h * 4);
+          if ((c.all ?? 0) >= 0.25 || c.sides.any((s) => (s ?? 0) >= 0.6)) drop = true;
+        }
+      }
+      if (!drop && mode == CleanMode.lesson && !identical(g, body)) {
+        // 側欄：比課文小、自成一欄的字
+        final overlap = min(f.right, bodyX.right) - max(f.left, bodyX.left);
+        if (h < bodyH * 0.88 && overlap < f.width * 0.3) drop = true;
+        final top = g.reduce((a, b) => boxes[b].top < boxes[a].top ? b : a);
+        final first = lines[top].words.map((w) => w.t).join(' ').toLowerCase();
+        if (boxLabels.any(first.startsWith)) drop = true;
+      }
+      if (drop) {
+        for (final i in g) {
+          keep[i] = false;
+        }
+      }
+    }
+    return (keep: keep, block: block);
+  }
+
+  /// 一塊一塊從上到下（左右並排的先左邊），每塊裡的行從上到下，同一行被拆開的接成一行
+  static List<OcrLine> order(List<OcrLine> lines) {
+    final frames = <int, ui.Rect>{};
+    for (final l in lines) {
+      frames[l.block] = frames[l.block]?.expandToInclude(l.box) ?? l.box;
+    }
+    final blocks = frames.keys.toList()
+      ..sort((a, b) {
+        final x = frames[a]!, y = frames[b]!;
+        if (min(x.bottom, y.bottom) - max(x.top, y.top) > min(x.height, y.height) * 0.5 && x.left != y.left) {
+          return x.left.compareTo(y.left);
+        }
+        return x.top != y.top ? x.top.compareTo(y.top) : a.compareTo(b);
+      });
+    final out = <OcrLine>[];
+    for (final b in blocks) {
+      final ls = lines.where((l) => l.block == b).toList()
+        ..sort((p, q) => p.box.top != q.box.top ? p.box.top.compareTo(q.box.top) : p.box.left.compareTo(q.box.left));
+      final rows = <List<OcrLine>>[];
+      for (final l in ls) {
+        if (rows.isNotEmpty && (rows.last.first.box.center.dy - l.box.center.dy).abs() < min(rows.last.first.box.height, l.box.height) * 0.5) {
+          rows.last.add(l);
+        } else {
+          rows.add([l]);
+        }
+      }
+      for (final r in rows) {
+        r.sort((p, q) => p.box.left.compareTo(q.box.left));
+        out.add(OcrLine([for (final p in r) ...p.words], r.skip(1).fold(r[0].box, (u, p) => u.expandToInclude(p.box)), block: b));
+      }
+    }
+    return out;
+  }
+
+  // MARK: 字
+
+  /// 中文辨識器找到中文字的地方，英文辨識器讀出來的「字」都是亂碼
+  static List<OcrLine> dropChinese(List<OcrLine> lines, List<OcrLine> chinese) {
+    final han = [
+      for (final l in chinese)
+        for (final w in l.words)
+          if (_han.hasMatch(w.t) && w.rect != null) w.rect!,
+    ];
+    if (han.isEmpty) return lines;
+    final out = <OcrLine>[];
+    for (final l in lines) {
+      final words = l.words.where((w) {
+        final r = w.rect;
+        return r == null || !han.any((h) => h.contains(r.center));
+      }).toList();
+      if (words.isNotEmpty) out.add(OcrLine(words, l.box, block: l.block));
+    }
+    return out;
+  }
+
+  /// 首字放大（第一個字母印得很大，跨好幾行）接回它的字："H" + "ave you…" → "Have you…"
+  static List<OcrLine> joinDropCaps(List<OcrLine> lines, double lineH) {
+    final used = <int>{};
+    for (final (i, cap) in lines.indexed) {
+      if (cap.words.length != 1 || cap.words[0].t.length != 1 || !RegExp('[A-Z]').hasMatch(cap.words[0].t) || cap.box.height < lineH * 1.8) {
+        continue;
+      }
+      int? j;
+      for (final (k, l) in lines.indexed) {
+        if (k == i || used.contains(k) || l.box.height >= cap.box.height * 0.7) continue;
+        if (l.box.left <= cap.box.right - lineH || l.box.left >= cap.box.right + lineH * 2.5) continue;
+        if (l.box.center.dy <= cap.box.top || l.box.center.dy >= cap.box.bottom) continue;
+        if (j == null || l.box.top < lines[j].box.top) j = k;
+      }
+      if (j == null) continue;
+      lines[j].words = _joined(cap.words[0], lines[j].words);
+      used.add(i);
+    }
+    // 首字和後面的字被讀成同一行："H ave you…"
+    for (final (i, l) in lines.indexed) {
+      if (used.contains(i) || l.words.length < 2) continue;
+      final w = l.words[0];
+      if (w.t.length != 1 || !RegExp('[B-HJ-Z]').hasMatch(w.t)) continue;
+      l.words = _joined(w, l.words.sublist(1));
+    }
+    return [for (final (i, l) in lines.indexed) if (!used.contains(i)) l];
+  }
+
+  /// 接上去會變成一個字就接（"A" + "lthough"），不然當自己一個字（"A" "long"）
+  static List<TBWord> _joined(TBWord cap, List<TBWord> words) {
+    if (words.isEmpty || !RegExp('^[a-z]').hasMatch(words.first.t)) return [cap, ...words];
+    final first = words.first;
+    final alone = Dict.lookup(first.core)?.w.toLowerCase() == first.core.toLowerCase();
+    if ((cap.t == 'A' || cap.t == 'I') && alone) return [cap, ...words];
+    first.t = cap.t + first.t;
+    return words;
+  }
+
+  /// 印在字旁邊的記號，不會是字的一部分
+  static final _markers = RegExp('[*＊†‡§¶®©™•●○◦◆◇■□▪▫★☆▲△▼▽▶▷►◀◁※#|¦⁰¹²³⁴⁵⁶⁷⁸⁹]');
+  static final _footnote = RegExp(r'''^([("“‘']*[A-Za-z][A-Za-z'’-]*[a-z])\d{1,2}([.,;:!?)\]"”’']*)$''');
+  static final _number = RegExp(r'^\d{1,3}$');
+
+  /// "accompany²," → "accompany,"、"deceased*" → "deceased"、"accompany2"（註記數字被讀成一般數字）→ "accompany"
+  static String strip(String t) => t.replaceAll(_markers, '').replaceAllMapped(_footnote, (m) => '${m[1]}${m[2]}');
+
+  /// 去掉邊上的行號（"5  on end, …"）和字上的記號；什麼都不剩就是 null
+  static OcrLine? tidy(OcrLine line, double lineH) {
+    final words = List.of(line.words);
+    double? gap(TBWord a, TBWord b) {
+      final x = a.rect, y = b.rect;
+      return x == null || y == null ? null : y.left - x.right;
+    }
+
+    if (words.length >= 2 && _number.hasMatch(words[0].t) && (gap(words[0], words[1]) ?? 0) > lineH * 0.8) words.removeAt(0);
+    if (words.length >= 2 && _number.hasMatch(words.last.t) && (gap(words[words.length - 2], words.last) ?? 0) > lineH * 0.8) {
+      words.removeLast();
+    }
+    final out = <TBWord>[];
+    for (final w in words) {
+      final printed = w.t;
+      w.t = strip(printed);
+      if (w.t.isEmpty) continue;
+      if (w.t != printed && w.core.isEmpty) {
+        // 記號拿掉後只剩標點（"afterlife" "*."），標點接回前一個字
+        if (out.isNotEmpty) out.last.t += w.t;
+        continue;
+      }
+      out.add(w);
+    }
+    if (out.isEmpty) return null;
+    return OcrLine(out, line.box, block: line.block);
   }
 }
 
