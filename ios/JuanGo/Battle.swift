@@ -27,6 +27,9 @@ struct BattleState: Decodable {
         var outcome: String, reason: String, delta: Int, words: [Word]
         var breakdown: [Part]? = nil
         var tierFrom: Int? = nil, tierNext: Int? = nil, nextName: String? = nil
+        /// a friend match only: 再來一場 is open, "mine" (waiting for the friend) or "theirs" (the friend is waiting)
+        var rematch: String? = nil
+        var canRematch: Bool? = nil
     }
 
     var id: String, status: String, rated: Bool, code: String?, round: Int
@@ -41,6 +44,8 @@ struct BattleState: Decodable {
     var rounds: Int? = nil, roundMs: Int? = nil
     /// shown on the countdown, e.g. 你們今天已經對戰 3 場，這場不計分
     var note: String? = nil
+    /// the hidden computer's opening line; set only when it is the opponent
+    var boss: String? = nil
 }
 
 struct BattlePlayer: Decodable {
@@ -62,18 +67,26 @@ struct BattlePlayer: Decodable {
 func tierText(_ name: String?, _ tier: Int) -> String { name ?? levelLabel(String(tier)) }
 
 private struct BattleTicket: Decodable { var match: String?; var code: String?; var waited: Int? }
+private struct RematchTicket: Decodable { var match: String; var waiting: Bool }
 
 // MARK: - Match flow
 
 @MainActor @Observable
 final class BattleModel {
-    enum Phase: Equatable { case home, searching, room(String), playing, finished }
+    enum Phase: Equatable { case home, searching, room(String), rematch, playing, finished }
 
     private(set) var phase = Phase.home
     private(set) var me: BattlePlayer?
     private(set) var meFailed = false
     private(set) var state: BattleState?
     private(set) var waited = 0
+    /// the match whose hidden-computer entrance has covered the screen; until then the search screen stays underneath
+    var bossCovered: String?
+    /// The hidden computer's entrance is flowing in over the search screen.
+    var bossOverSearch: Bool {
+        guard let s = state else { return false }
+        return s.boss != nil && s.round == 1 && s.last == nil && bossCovered != s.id
+    }
     /// when this search began, for the clock on the search screen (the server's count only arrives once a second)
     private(set) var searchStarted = Date.now
     private(set) var current: BattleState.Question?
@@ -256,12 +269,14 @@ final class BattleModel {
             phase = .playing
         } else if s.status == "finished", s.result != nil, phase != .finished {
             if case .room = phase { phase = .home; return }
+            if phase == .rematch { phase = .home; return }
             // the last answer stays on screen for a moment before the result
             let played = s.last != nil && s.result?.reason == "score"
             Task {
                 if played { try? await Task.sleep(for: .seconds(3)) }
                 phase = .finished
                 await load()
+                if s.result?.canRematch == true { await watchRematch(s.id) }
                 #if DEBUG
                 autoNext()
                 #endif
@@ -364,6 +379,32 @@ final class BattleModel {
     }
     #endif
 
+    /// After a friend match: keeps the result fresh so 對方想再來一場 shows up while the page is open.
+    private func watchRematch(_ id: String) async {
+        loop?.cancel()
+        loop = Task {
+            while !Task.isCancelled, phase == .finished {
+                try? await Task.sleep(for: .seconds(2))
+                guard phase == .finished, let s: BattleState = try? await call("battle_state", ["p_match": id]),
+                      phase == .finished, s.id == state?.id else { continue }
+                state = s
+            }
+        }
+    }
+
+    /// 再來一場: the first to tap waits for the other; the second starts the match at once.
+    func rematch() {
+        guard let id = state?.id else { return }
+        reset(.searching)
+        loop = Task {
+            do {
+                let t: RematchTicket = try await call("battle_rematch", ["p_match": id])
+                if t.waiting { phase = .rematch }
+                await poll(t.match)
+            } catch { fail(error) }
+        }
+    }
+
     /// Stops whatever is running. During a match this loses it.
     func leave() {
         let id = state?.status == "finished" ? nil : state?.id
@@ -424,7 +465,14 @@ final class BattleModel {
                             starts: now - 3200, ends: now + 6800, answered: false, opponentAnswered: true, question: q,
                             rounds: 10, roundMs: 10_000)
         phase = .playing
-        if step == "count" { s.round = 1; s.starts = now + 60_000; s.question = nil; current = nil }
+        if step == "count" || step == "boss" { s.round = 1; s.starts = now + 60_000; s.question = nil; current = nil }
+        if step == "boss" {
+            s.boss = "我要把你當掉"
+            s.starts = now + 8000
+            s.opponentAnswered = false
+            s.you.score = 0
+            s.opponent = .init(name: "優質霸王", rating: 9999, tier: 6, score: 0, pid: "demo-boss", tierName: "扛不住")
+        }
         if step == "reveal" {
             picks[3] = 0
             s.round = 4; s.starts = now + 60_000; s.ends = now + 70_000; s.question = nil
@@ -510,7 +558,13 @@ struct BattleView: View {
         case .home: BattleHome(model: m) { dismiss() }
         case .searching: BattleSearching(model: m)
         case .room(let code): BattleRoom(code: code, model: m)
-        case .playing: BattleGame(model: m)
+        case .rematch: BattleRematchWait(model: m)
+        case .playing:
+            // the hidden computer's entrance flows in over the search screen; the countdown page comes in behind it
+            ZStack {
+                if m.bossOverSearch { BattleSearching(model: m) }
+                BattleGame(model: m)
+            }
         case .finished: BattleResult(model: m)
         }
     }
@@ -694,10 +748,10 @@ private struct BattleSearching: View {
     private func radar(_ t: Double) -> some View {
         ZStack {
             ForEach(0..<3, id: \.self) { i in
-                // each ring grows out and fades over 2.4 s, a third of a cycle behind the one before
+                // each ring grows out from the edge of the halo and fades over 2.4 s, a third of a cycle behind the one before
                 let f = reduceMotion ? 0.35 + Double(i) * 0.25 : (t / 2.4 + Double(i) / 3).truncatingRemainder(dividingBy: 1)
                 Circle().stroke(Color.themeAccent.opacity(0.5 * (1 - f)), lineWidth: 2)
-                    .frame(width: 96 + 150 * f, height: 96 + 150 * f)
+                    .frame(width: 120 + 126 * f, height: 120 + 126 * f)
             }
             Circle().fill(Color.themeAccent.opacity(0.12)).frame(width: 120, height: 120)
             // a sweeping beam
@@ -719,12 +773,17 @@ private struct BattleSearching: View {
 
     private var initial: String { String(model.me?.name.first ?? "我") }
 
-    /// The server starts at ±10 and widens the window by 10 a second, up to ±100.
+    /// The server starts at ±10 and widens the window by 10 a second for ten seconds, then searches ±200.
     @ViewBuilder private func rangeChip(_ t: Double) -> some View {
         let s = Int(t)
         Group {
-            if let r = model.me?.rating {
-                let w = min(100, 10 + 10 * s)
+            // after ten seconds the server searches ±200 for six seconds, then brings the computer in 4–7 seconds later
+            if s >= 16 {
+                Text("正在尋找實力相當的對手")
+            } else if s >= 10 {
+                Text("正在擴大範圍搜尋")
+            } else if let r = model.me?.rating {
+                let w = 10 + 10 * s
                 Text("積分 \(max(0, r - w))–\(r + w)").monospacedDigit()
             } else {
                 Text("尋找積分相近的對手")
@@ -756,18 +815,54 @@ private struct BattleRoom: View {
     }
 }
 
+private struct BattleRematchWait: View {
+    let model: BattleModel
+    var body: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            ProgressView()
+            Text("等朋友按「再來一場」").font(.app(.title3, .semibold))
+            Text("朋友按下後立刻開始。朋友對戰不影響積分。")
+                .font(.app(.subheadline)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Spacer()
+            Button("取消") { model.leaveRoom("") }.buttonStyle(PillButtonStyle())
+        }
+        .padding(24)
+    }
+}
+
 private struct BattleGame: View {
     let model: BattleModel
     @Environment(AppSettings.self) private var settings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var confirmLeave = false
+    /// the match whose hidden-computer entrance has finished
+    @State private var bossDone: String?
+    /// where the entrance's avatar, name and tier land on the page (global frames)
+    @State private var bossSpots: [BossSpot: CGRect] = [:]
+
+    /// The hidden computer's entrance is still on screen: its avatar, name and tier on the page wait for it to land.
+    private func bossPlaying(_ s: BattleState) -> Bool {
+        s.boss != nil && s.opponent != nil && s.round == 1 && s.last == nil && bossDone != s.id
+    }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.1)) { _ in
-            if let s = model.state { page(s, now: model.serverNow) }
+            if let s = model.state, !model.bossOverSearch { page(s, now: model.serverNow) }
         }
         .padding(.horizontal, 20).padding(.bottom, 12)
-        .confirmationDialog("離開這場對戰？", isPresented: $confirmLeave, titleVisibility: .visible) {
+        // full screen even while the page is held back, so the entrance laid over it covers everything
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onPreferenceChange(BossSpotKey.self) { bossSpots = $0 }
+        .overlay {
+            if let s = model.state, let line = s.boss, let boss = s.opponent, bossPlaying(s) {
+                BossTakeover(boss: boss, line: line, late: (s.starts ?? 0) - model.serverNow < 5000, spots: bossSpots,
+                             onCovered: { model.bossCovered = s.id }) { bossDone = s.id }
+                    .id(s.id)
+            }
+        }
+        .alert("離開這場對戰？", isPresented: $confirmLeave) {
+            Button("繼續對戰", role: .cancel) {}
             Button("離開並判負", role: .destructive) { model.leave() }
         } message: { Text("對戰進行中離開會算輸。") }
         .sensoryFeedback(trigger: model.state?.last?.n) { _, _ in
@@ -792,7 +887,7 @@ private struct BattleGame: View {
             } else {
                 Spacer()
                 let left = max(1, Int(ceil(((s.starts ?? now) - now) / 1000)))
-                if s.round == 1, s.last == nil { BattleIntro(you: s.you, opponent: s.opponent) }
+                if s.round == 1, s.last == nil { BattleIntro(you: s.you, opponent: s.opponent, bossLanding: bossPlaying(s)) }
                 ZStack {
                     Text("\(left)").font(.app(size: 72, .bold)).monospacedDigit()
                         .id(left)
@@ -832,19 +927,24 @@ private struct BattleGame: View {
         HStack(alignment: .top, spacing: 12) {
             side(s.you, trailing: false, done: false)
             Text("VS").font(.app(.caption, .bold)).foregroundStyle(.tertiary).padding(.top, 8)
-            if let o = s.opponent { side(o, trailing: true, done: s.opponentAnswered == true && s.last?.n != s.round) }
+            if let o = s.opponent {
+                side(o, trailing: true, done: s.opponentAnswered == true && s.last?.n != s.round, landing: bossPlaying(s))
+            }
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous).fill(Color.cardFill))
     }
 
-    private func side(_ p: BattleState.Side, trailing: Bool, done: Bool) -> some View {
+    /// `landing`: the hidden computer's name and tier are still flying here, so they wait hidden (and report where they are).
+    private func side(_ p: BattleState.Side, trailing: Bool, done: Bool, landing: Bool = false) -> some View {
         VStack(alignment: trailing ? .trailing : .leading, spacing: 2) {
             Text(p.name).font(.app(.caption, .semibold)).lineLimit(1).minimumScaleFactor(0.8)
+                .bossSpot(.name, active: trailing).opacity(landing ? 0 : 1)
             Text("\(p.score)").font(.app(size: 30, .bold)).monospacedDigit().contentTransition(.numericText())
                 .animation(.spring(duration: 0.6), value: p.score)
             Text(verbatim: done ? "已作答" : "\(tierText(p.tierName, p.tier))・\(p.rating)")
                 .font(.app(.caption)).foregroundStyle(done ? Color.themeAccent : .secondary).lineLimit(1)
+                .bossSpot(.tier, active: trailing).opacity(landing ? 0 : 1)
         }
         .frame(maxWidth: .infinity, alignment: trailing ? .trailing : .leading)
         .accessibilityElement(children: .combine)
@@ -991,7 +1091,7 @@ private struct BattleResult: View {
                 HStack(spacing: 10) {
                     Button("只練答錯的字") {
                         // the words go into 我的單字 so the practice keeps their progress
-                        let words = missed.compactMap { w in Dictionary_.lookup(w.term).map { Library.add($0, in: ctx) } }
+                        let words = missed.compactMap { w in Dictionary_.lookup(w.term).flatMap { Library.add($0, in: ctx) } }
                         try? ctx.save()
                         saved = true
                         if !words.isEmpty { practice = StudyRequest(title: "答錯的字", words: words) }
@@ -1005,8 +1105,19 @@ private struct BattleResult: View {
                     .buttonStyle(PillButtonStyle()).disabled(saved)
                 }
             }
-            Button("完成") { model.leave() }
-                .buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
+            if r.canRematch == true {
+                if r.rematch == "theirs" {
+                    Text("朋友想再來一場").font(.app(.subheadline, .semibold)).foregroundStyle(Color.themeAccent)
+                }
+                HStack(spacing: 10) {
+                    Button("完成") { model.leave() }.buttonStyle(PillButtonStyle())
+                    Button("再來一場") { model.rematch() }
+                        .buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
+                }
+            } else {
+                Button("完成") { model.leave() }
+                    .buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
+            }
         }
     }
 
@@ -1028,6 +1139,8 @@ private struct BattleResult: View {
 private struct BattleIntro: View {
     let you: BattleState.Side
     let opponent: BattleState.Side?
+    /// the hidden computer's avatar is still flying into the opponent's card
+    var bossLanding = false
     @State private var shown = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1045,13 +1158,233 @@ private struct BattleIntro: View {
 
     private func card(_ p: BattleState.Side, leading: Bool) -> some View {
         VStack(spacing: 6) {
+            // one piece: without the geometry group the letter took its own spring path and lagged behind the circle
             Circle().fill(leading ? Color.themeAccent : Color.secondary.opacity(0.35)).frame(width: 56, height: 56)
                 .overlay { Text(String(p.name.first ?? "?")).font(.app(size: 24, .bold)).foregroundStyle(leading ? Color.onAccent : .primary) }
+                .geometryGroup()
+                .bossSpot(.avatar, active: !leading).opacity(!leading && bossLanding ? 0 : 1)
             Text(p.name).font(.app(.subheadline, .semibold)).lineLimit(1).minimumScaleFactor(0.7)
             Text(verbatim: "\(tierText(p.tierName, p.tier))・\(p.rating)").font(.app(.caption)).foregroundStyle(.secondary).monospacedDigit()
         }
         .frame(maxWidth: .infinity).padding(.vertical, 14)
         .background(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous).fill(Color.cardFill))
+        .geometryGroup()
+    }
+}
+
+/// Where the hidden computer's entrance hands over to the page: the opponent's avatar in the countdown's card,
+/// and its name and tier in the scoreboard.
+enum BossSpot: Hashable { case avatar, name, tier }
+
+struct BossSpotKey: PreferenceKey {
+    static var defaultValue: [BossSpot: CGRect] = [:]
+    static func reduce(value: inout [BossSpot: CGRect], nextValue: () -> [BossSpot: CGRect]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+extension View {
+    /// Reports this view's place on screen as `spot` (when `active`) for the hidden computer's entrance to land on.
+    func bossSpot(_ spot: BossSpot, active: Bool = true) -> some View {
+        background {
+            if active {
+                GeometryReader { g in Color.clear.preference(key: BossSpotKey.self, value: [spot: g.frame(in: .global)]) }
+            }
+        }
+    }
+}
+
+/// The hidden computer's entrance before the countdown, in the app's own colours: a sheet of the accent colour
+/// flows up over the screen with a wavy edge (a lighter layer just ahead of it), the opponent's card rises in
+/// part by part and its line pops up in a chip. Then the sheet flows on off the top while the avatar, name and
+/// tier glide into their places on the page behind it (`spots`), so the entrance ends in the countdown itself.
+private struct BossTakeover: View {
+    let boss: BattleState.Side
+    let line: String
+    /// less than five seconds to the first question (say, after reconnecting): skip it
+    let spots: [BossSpot: CGRect]
+    /// the sheet has covered the whole screen
+    let onCovered: () -> Void
+    let onDone: () -> Void
+    /// decided once, when the entrance first appears (the time left keeps shrinking while it plays)
+    @State private var late: Bool
+
+    init(boss: BattleState.Side, line: String, late: Bool, spots: [BossSpot: CGRect],
+         onCovered: @escaping () -> Void, onDone: @escaping () -> Void) {
+        self.boss = boss; self.line = line; self.spots = spots; self.onCovered = onCovered; self.onDone = onDone
+        _late = State(initialValue: late)
+    }
+    @State private var start = Date.now
+    @State private var hits = 0
+    /// where the avatar, name and tier sit in the card (global frames), the start of each one's glide
+    @State private var rests: [BossSpot: CGRect] = [:]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let flowIn = 0.7, partsAt = 0.5, chipAt = 1.25, outAt = 2.9, flowOut = 0.8, glide = 0.85
+    private static var total: Double { outAt + max(flowOut, glide) }
+
+    var body: some View {
+        TimelineView(.animation(paused: late)) { ctx in
+            if !late { scene(max(0, ctx.date.timeIntervalSince(start))) }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(!late)
+        .sensoryFeedback(.impact(weight: .medium), trigger: hits)
+        .task { await run() }
+    }
+
+    private func run() async {
+        if late { onCovered(); onDone(); return }
+        start = .now
+        try? await Task.sleep(for: .seconds(Self.flowIn))
+        onCovered()
+        try? await Task.sleep(for: .seconds(Self.chipAt - Self.flowIn))
+        hits += 1
+        try? await Task.sleep(for: .seconds(Self.total - Self.chipAt))
+        onDone()
+    }
+
+    private func scene(_ t: Double) -> some View {
+        GeometryReader { geo in
+            let h = geo.size.height
+            let origin = geo.frame(in: .global).origin
+            let pin = smooth(t / Self.flowIn)
+            let pout = smooth((t - Self.outAt) / Self.flowOut)
+            let glide = smooth((t - Self.outAt) / Self.glide)
+            // the sheet's top edge sweeps up on the way in, its bottom edge on the way out
+            let front = FlowSheet(top: lerp(h + 60, -80, pin), bottom: lerp(h + 60, -80, pout),
+                                  wave: reduceMotion ? 0 : 34 * (sin(.pi * pin) + sin(.pi * pout)), phase: t * 5)
+            let back = FlowSheet(top: lerp(h + 60, -80, smooth((t + 0.12) / Self.flowIn)),
+                                 bottom: lerp(h + 60, -80, smooth((t - Self.outAt - 0.14) / Self.flowOut)),
+                                 wave: reduceMotion ? 0 : 46 * (sin(.pi * pin) + sin(.pi * pout)), phase: t * 4 + 1.7)
+            ZStack(alignment: .topLeading) {
+                back.fill(Color.themeAccent.opacity(0.4))
+                front.fill(Color.themeAccent)
+                card(t, gliding: t >= Self.outAt, fade: pout)
+                    .frame(width: geo.size.width, height: h)
+                    .mask(front)
+                if t >= Self.outAt {
+                    flying(.avatar, p: glide, origin: origin) { avatar(p: glide) }
+                    flying(.name, p: glide, origin: origin) { nameText(p: glide) }
+                    flying(.tier, p: glide, origin: origin) { tierLine(p: glide) }
+                }
+            }
+        }
+    }
+
+    /// The card at rest in the middle of the sheet. While its avatar, name and tier glide away, they are left out here.
+    private func card(_ t: Double, gliding: Bool, fade: Double) -> some View {
+        VStack(spacing: 0) {
+            Text("隱藏對手").font(.app(.footnote, .semibold)).tracking(6).foregroundStyle(Color.onAccent.opacity(0.75))
+                .modifier(Rise(p: part(t, 0) * (1 - fade)))
+            avatar(p: 0)
+                .background {
+                    // one ring spreading out as the card settles
+                    let r = clamp((t - Self.partsAt - 0.15) / 0.9)
+                    Circle().stroke(Color.onAccent.opacity(0.5 * (1 - r)), lineWidth: 2).scaleEffect(1 + 0.8 * r)
+                }
+                .modifier(Rest(spot: .avatar, rests: $rests))
+                .opacity(gliding ? 0 : 1)
+                .padding(.top, 32)
+                .modifier(Rise(p: part(t, 1)))
+            nameText(p: 0)
+                .modifier(Rest(spot: .name, rests: $rests))
+                .opacity(gliding ? 0 : 1)
+                .padding(.top, 26)
+                .modifier(Rise(p: part(t, 2)))
+            tierLine(p: 0)
+                .modifier(Rest(spot: .tier, rests: $rests))
+                .opacity(gliding ? 0 : 1)
+                .padding(.top, 10)
+                .modifier(Rise(p: part(t, 3)))
+            let c = spring(clamp((t - Self.chipAt) / 0.45))
+            Text(verbatim: "「\(line)」").font(.app(.title3, .bold)).foregroundStyle(Color.themeAccent)
+                .padding(.horizontal, 26).padding(.vertical, 14)
+                .background(Capsule().fill(Color.onAccent))
+                .scaleEffect(reduceMotion ? 1 : 0.6 + 0.4 * c)
+                .opacity(clamp((t - Self.chipAt) / 0.15) * (1 - fade))
+                .padding(.top, 52)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // The three parts that glide. `p` runs 0 (in the card) to 1 (in their places on the page), their colours
+    // turning from the sheet's into the page's along the way.
+    private func avatar(p: Double) -> some View {
+        Circle().fill(Color.onAccent.mix(with: Color.secondary.opacity(0.35), by: p))
+            .frame(width: 112, height: 112)
+            .overlay {
+                Text(String(boss.name.first ?? "?")).font(.app(size: 50, .bold))
+                    .foregroundStyle(Color.themeAccent.mix(with: .primary, by: p))
+            }
+    }
+
+    private func nameText(p: Double) -> some View {
+        Text(boss.name).font(.app(size: 44, .bold)).foregroundStyle(Color.onAccent.mix(with: .primary, by: p)).fixedSize()
+    }
+
+    private func tierLine(p: Double) -> some View {
+        Text(verbatim: "\(tierText(boss.tierName, boss.tier))・\(boss.rating)")
+            .font(.app(.headline, .semibold)).monospacedDigit()
+            .foregroundStyle(Color.onAccent.opacity(0.8).mix(with: .secondary, by: p)).fixedSize()
+    }
+
+    /// One part on its way from its place in the card to its place on the page, growing or shrinking to fit.
+    @ViewBuilder private func flying(_ spot: BossSpot, p: Double, origin: CGPoint, @ViewBuilder _ view: () -> some View) -> some View {
+        if let from = rests[spot], let to = spots[spot], from.height > 0 {
+            let scale = lerp(1, to.height / from.height, p)
+            view()
+                .scaleEffect(scale)
+                .position(x: lerp(from.midX, to.midX, p) - origin.x, y: lerp(from.midY, to.midY, p) - origin.y)
+        }
+    }
+
+    /// Notes where a part of the card sits, once it has settled.
+    private struct Rest: ViewModifier {
+        let spot: BossSpot
+        @Binding var rests: [BossSpot: CGRect]
+        func body(content: Content) -> some View {
+            content.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rests[spot] = $0 }
+        }
+    }
+
+    /// How far part `i` of the card has risen into place: one after another, 0.09 s apart.
+    private func part(_ t: Double, _ i: Int) -> Double { smooth((t - Self.partsAt - 0.09 * Double(i)) / 0.5) }
+
+    private struct Rise: ViewModifier {
+        let p: Double
+        func body(content: Content) -> some View { content.opacity(p).offset(y: 26 * (1 - p)) }
+    }
+
+    private func clamp(_ x: Double) -> Double { min(1, max(0, x)) }
+    private func lerp(_ a: Double, _ b: Double, _ p: Double) -> Double { a + (b - a) * p }
+    private func smooth(_ x: Double) -> Double {
+        let v = clamp(x)
+        return v < 0.5 ? 4 * v * v * v : 1 - pow(-2 * v + 2, 3) / 2
+    }
+    /// settles with one small overshoot
+    private func spring(_ x: Double) -> Double { 1 - exp(-6 * x) * cos(9 * x) }
+}
+
+/// The band between two wavy edges across the full width, for the flowing sheet.
+private struct FlowSheet: Shape {
+    var top: Double
+    var bottom: Double
+    var wave: Double
+    var phase: Double
+
+    func path(in rect: CGRect) -> Path {
+        func y(_ base: Double, _ x: Double, _ shift: Double) -> Double {
+            let u = x / max(1, rect.width) * 2 * .pi
+            return base + wave * (sin(u * 1.2 + phase + shift) * 0.65 + sin(u * 2.6 - phase * 1.3 + shift) * 0.35)
+        }
+        var p = Path()
+        let xs = stride(from: 0.0, through: rect.width, by: 6).map { $0 } + [rect.width]
+        p.move(to: CGPoint(x: 0, y: y(top, 0, 0)))
+        for x in xs { p.addLine(to: CGPoint(x: x, y: y(top, x, 0))) }
+        for x in xs.reversed() { p.addLine(to: CGPoint(x: x, y: max(y(top, x, 0), y(bottom, x, 2.1)))) }
+        p.closeSubpath()
+        return p
     }
 }
 

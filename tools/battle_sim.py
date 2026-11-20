@@ -90,7 +90,8 @@ class Player:
         else:
             opp_rating = self.rating + random.randint(-60, 60)
             opp_acc = tier(opp_rating)["bot"]
-        opp_ms = (b["ms_min"] + b["ms_max"]) / 2 - b["ms_tier_step"] * (tier(opp_rating)["index"] - 1)
+        lo, hi = b["speed_ms"][min(tier(opp_rating)["index"], len(b["speed_ms"])) - 1]
+        opp_ms = (lo + hi) / 2
         s1, c1, ms, s2, c2 = play(self.acc, self.ms, opp_acc, opp_ms)
         outcome = "win" if (s1, c1) > (s2, c2) else "loss" if (s1, c1) < (s2, c2) else "draw"
         self.games += 1

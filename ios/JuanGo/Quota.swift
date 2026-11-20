@@ -8,7 +8,7 @@ extension WordQuota {
         counts(cefr: w.cefr, fromExam: w.fromExam, inMyWords: w.inMyWords, favorite: w.favorite, inList: !w.lists.isEmpty)
     }
 
-    static var unlimited: Bool { ProStore.shared.isPro }
+    static var unlimited: Bool { ProStore.shared.has(.words) }
 
     static func isOver(_ words: [Word]) -> Bool { !unlimited && words.filter(counts).count > limit }
 

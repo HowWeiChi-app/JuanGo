@@ -339,16 +339,17 @@ struct ChoiceQuestion: View {
         // only saved words the dictionary knows: a misread scan ("anfegetaball") makes a give-away option
         let own: [(term: String, zh: String, pos: String)] = library.filter { Dictionary_.lookup($0.term) != nil }
             .map { ($0.term, $0.primaryMeaning, $0.pos) }
-        let dictSame = (Dictionary_.byPos[word.pos] ?? []).shuffled().prefix(40).map { ($0.w, $0.zh.first ?? "", $0.pos) }
+        // like 大考 options: the same part of speech, about the same level, often the same stem or ending
+        let dictSame = Dictionary_.examLike(word.term, pos: word.pos).map { ($0.w, $0.zh.first ?? "", $0.pos) }
         let dictAny = (0..<40).compactMap { _ in Dictionary_.all.randomElement() }.map { ($0.w, $0.zh.first ?? "", $0.pos) }
-        let pool: [(term: String, zh: String, pos: String)] = own + dictSame + dictAny
+        let pool: [(term: String, zh: String, pos: String)] = dictSame + own.shuffled() + dictAny
         // nothing that would also be right: one of this word's other meanings, or its British / American twin
         let mine = Set(word.meanings)
         let others = pool.filter {
             $0.term != word.term && !$0.zh.isEmpty && $0.zh != word.primaryMeaning && !mine.contains($0.zh)
                 && !SpellingQuestion.variants($0.term.lowercased(), word.term.lowercased())
         }
-        let samePos = others.filter { $0.pos == word.pos }.shuffled()
+        let samePos = others.filter { $0.pos == word.pos }   // kept in examLike's order, closest first
         // a phrase among single words gives itself away, so English options for a phrase are phrases first
         let phrases = !answersInZh && word.term.contains(" ")
             ? (others + Dictionary_.phrases.map { ($0.w, $0.zh.first ?? "", $0.pos) })
@@ -673,5 +674,44 @@ struct SpellingField: UIViewRepresentable {
         func textFieldDidBeginEditing(_ f: UITextField) { if !parent.focused { parent.focused = true } }
         func textFieldDidEndEditing(_ f: UITextField) { if parent.focused { parent.focused = false } }
         func textFieldShouldReturn(_ f: UITextField) -> Bool { parent.onSubmit(); return false }
+    }
+}
+
+extension Dictionary_ {
+    /// 大考 order of difficulty; the other word lists sit where their words usually do
+    static func levelRank(_ lv: String) -> Int {
+        switch lv {
+        case "國中小": return 0
+        case "多益": return 4
+        case "托福", "雅思": return 6
+        default: return Int(lv) ?? 3
+        }
+    }
+
+    /// How much `b` looks like a 大考 distractor for `a`: same level, then a shared start or ending
+    /// (impress / improve, attention / addition) and a similar length.
+    static func examScore(_ a: String, _ aLevel: Int, _ b: String, _ bLevel: Int) -> Double {
+        let x = Array(a.lowercased()), y = Array(b.lowercased())
+        let head = zip(x, y).prefix { $0 == $1 }.count
+        let tail = zip(x.reversed(), y.reversed()).prefix { $0 == $1 }.count
+        var s = -Double(abs(aLevel - bLevel)) * 1.5
+        if head >= 3 { s += 2 } else if head == 2 { s += 0.5 }
+        if tail >= 3 { s += 1.5 }
+        if abs(x.count - y.count) <= 2 { s += 1 }
+        return s
+    }
+
+    /// Same-part-of-speech single words ranked as 大考 distractors for `term`, closest first, with some
+    /// chance mixed in so the same three don't come back every time. Scores a sample, not all 10k words.
+    static func examLike(_ term: String, pos: String, count: Int = 12) -> [DictEntry] {
+        let me = lookup(term), t = term.lowercased(), rank = levelRank(me?.lv ?? "3")
+        // near synonyms (reluctant / loath) would be a second right answer
+        let near = Set(me?.sim ?? [])
+        let pool = (byPos[pos] ?? []).filter {
+            $0.w != t && !$0.w.contains(" ") && abs(levelRank($0.lv) - rank) <= 1 && !near.contains($0.w) && !($0.sim ?? []).contains(t)
+        }
+        let sample = pool.count > 400 ? Array(pool.shuffled().prefix(400)) : pool
+        return sample.map { ($0, examScore(term, rank, $0.w, levelRank($0.lv)) + Double.random(in: 0..<1.5)) }
+            .sorted { $0.1 > $1.1 }.prefix(count).map(\.0)
     }
 }

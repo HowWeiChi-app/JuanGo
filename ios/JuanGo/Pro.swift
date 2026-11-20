@@ -36,6 +36,13 @@ enum ProPeriod: String, CaseIterable, Identifiable {
 
 // MARK: - Status
 
+/// The paid features that already exist, each of which the dev build can switch off (開發者選項).
+enum ProFeature: String, CaseIterable, Identifiable {
+    case words, battles
+    var id: String { rawValue }
+    var title: String { self == .words ? "「我的單字」不限個數" : "單字對戰不限場次" }
+}
+
 /// What the player owns. Purchases will come through RevenueCat (entitlement `juango_pro`, unlocked by
 /// `juango_pro_*` and `gos_pro_*`); until the store is set up, buying and restoring report that it isn't open yet.
 @MainActor @Observable
@@ -49,6 +56,18 @@ final class ProStore {
     private(set) var devUnlocked = false
 
     var isPro: Bool { plan != nil }
+
+    /// features switched off in 開發者選項, to try the free version without leaving the dev build
+    private(set) var devOff: Set<ProFeature> = Set((UserDefaults.standard.stringArray(forKey: "dev.proOff") ?? []).compactMap(ProFeature.init))
+
+    func has(_ f: ProFeature) -> Bool { isPro && !devOff.contains(f) }
+
+    func setDev(_ f: ProFeature, on: Bool) {
+        if on { devOff.remove(f) } else { devOff.insert(f) }
+        UserDefaults.standard.set(devOff.map(\.rawValue), forKey: "dev.proOff")
+        // the daily battle limit is counted on the server, for test accounts listed in battle_unlimited
+        if f == .battles { Task { _ = try? await Cloud.shared.rpc("battle_dev_limit", ["p_paused": !on], timeout: 10) } }
+    }
 
     struct NotOpen: LocalizedError {
         var errorDescription: String? { "商店還沒開通，App 上架後就能訂閱。" }
@@ -261,6 +280,21 @@ struct ProSettingsView: View {
                 }
             } footer: {
                 Text("大考詞彙和學測考古題不受付費限制。")
+            }
+            if pro.devUnlocked {
+                Section {
+                    ForEach(ProFeature.allCases) { f in
+                        Toggle(f.title, isOn: Binding(get: { !pro.devOff.contains(f) }, set: { pro.setDev(f, on: $0) }))
+                    }
+                    Button(pro.devOff.count == ProFeature.allCases.count ? "全部打開" : "全部關閉") {
+                        let on = pro.devOff.count == ProFeature.allCases.count
+                        for f in ProFeature.allCases { pro.setDev(f, on: on) }
+                    }
+                } header: {
+                    Text("開發者選項")
+                } footer: {
+                    Text("關掉的功能會照免費版運作，方便測試。對戰場次只對測試帳號有效。")
+                }
             }
         }.listRowBackground(Color.cardFill) }
         .themedBackground()

@@ -2,6 +2,7 @@
 // 排版照 iOS 版 Battle.swift。
 
 import 'dart:async';
+import 'dart:io' show Platform, Process;
 import 'dart:math' as math;
 
 import 'package:flutter/scheduler.dart' show Ticker;
@@ -15,6 +16,7 @@ import 'dictionary.dart';
 import 'exam.dart' show AnswerOption, AnswerState;
 import 'models.dart';
 import 'onboarding.dart';
+import 'pro.dart' show devGosPro;
 import 'settings.dart';
 import 'store.dart';
 import 'study_flow.dart';
@@ -83,8 +85,11 @@ class BattleLast {
       answer = j['answer'] as int,
       pick = j['pick'] as int?,
       points = j['points'] as int,
-      opponentPoints = j['opponent_points'] as int;
+      opponentPoints = j['opponent_points'] as int,
+      term = j['term'] as String? ?? '',
+      zh = j['zh'] as String? ?? '';
   final int n, answer, points, opponentPoints;
+  final String term, zh;
   final int? pick;
 }
 
@@ -106,8 +111,14 @@ class BattleOutcome {
       ],
       tierFrom = j['tier_from'] as int?,
       tierNext = j['tier_next'] as int?,
-      nextName = j['next_name'] as String?;
+      nextName = j['next_name'] as String?,
+      rematch = j['rematch'] as String?,
+      canRematch = j['can_rematch'] as bool? ?? false;
   final String outcome, reason;
+
+  /// 朋友對戰才有：「再來一場」開了，mine 是在等朋友，theirs 是朋友在等
+  final String? rematch;
+  final bool canRematch;
   final int delta;
   final List<BattleWord> words;
 
@@ -134,8 +145,12 @@ class BattleState {
       result = j['result'] == null ? null : BattleOutcome(j['result'] as Map<String, dynamic>),
       rounds = j['rounds'] as int? ?? 10,
       roundMs = j['round_ms'] as int? ?? 10000,
-      note = j['note'] as String?;
+      note = j['note'] as String?,
+      boss = j['boss'] as String?;
   final int rounds, roundMs;
+
+  /// 隱藏電腦的開場台詞；只有對手是它的時候才有
+  final String? boss;
 
   /// 倒數畫面的說明，例如「你們今天已經對戰 3 場，這場不計分」
   final String? note;
@@ -151,7 +166,44 @@ class BattleState {
   final BattleOutcome? result;
 }
 
-enum BattlePhase { home, searching, room, playing, finished }
+/// 自動對戰（tools/battle_autoplay_android.sh）：開發版讀 debug.juango.autoplay 這個系統屬性，
+/// 有秒數就一打開 App 就進單字對戰配對，每題開始後那麼多秒選正確答案，打完 5 秒後再開下一場，
+/// 每一步都印到 logcat（腳本會顯示在終端機）
+class BattleAutoplay {
+  static double? delay;
+
+  /// debug.juango.battle 有值（例如 boss）就不連伺服器，直接打開那個展示畫面
+  static String? demoStep;
+
+  static Future<void> read() async {
+    if (!devGosPro || !Platform.isAndroid) return;
+    try {
+      final r = await Process.run('getprop', ['debug.juango.autoplay']);
+      delay = double.tryParse('${r.stdout}'.trim());
+      final d = '${(await Process.run('getprop', ['debug.juango.battle'])).stdout}'.trim();
+      demoStep = d.isEmpty ? null : d;
+    } catch (_) {}
+  }
+
+  static void log(String line) {
+    final t = DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    // ignore: avoid_print
+    print('[JuanGo 自動對戰 ${two(t.hour)}:${two(t.minute)}:${two(t.second)}] $line');
+  }
+
+  /// 伺服器事後才說哪個是正解，所以用內建字典判斷
+  static int? rightOption(BattleQuestion q) {
+    List<String> meanings(String term) => Dict.lookup(term)?.zh ?? const [];
+    bool matches(String zh, List<String> list) => list.any((m) => m == zh || m.contains(zh) || zh.contains(m));
+    final i = q.toZh
+        ? q.options.indexWhere((o) => matches(o, meanings(q.prompt)))
+        : q.options.indexWhere((o) => matches(q.prompt, meanings(o)));
+    return i < 0 ? null : i;
+  }
+}
+
+enum BattlePhase { home, searching, room, rematch, playing, finished }
 
 class BattleModel extends ChangeNotifier {
   /// 沒做完 18 題程度測驗時 level 是 null，伺服器就不讓這個人配對
@@ -359,15 +411,18 @@ class BattleModel extends ChangeNotifier {
       _clockOffset = s.now - (sent + received) / 2;
     }
     final q = s.question;
-    if (q != null && q.n != current?.n) {
+    final fresh = q != null && q.n != current?.n;
+    if (fresh) {
       previous = current;
       current = q;
     }
     state = s;
+    _autoReport(s);
+    if (fresh) _autoplay(q, s.starts, run);
     if (s.status == 'playing') {
       phase = BattlePhase.playing;
     } else if (s.status == 'finished' && s.result != null && phase != BattlePhase.finished) {
-      if (phase == BattlePhase.room) {
+      if (phase == BattlePhase.room || phase == BattlePhase.rematch) {
         _reset(BattlePhase.home);
         return;
       }
@@ -383,6 +438,37 @@ class BattleModel extends ChangeNotifier {
     if (run != _run) return;
     _set(() => phase = BattlePhase.finished);
     await load();
+    _autoNext(run);
+    final s = state;
+    if (s != null && (s.result?.canRematch ?? false)) await _watchRematch(s.id, run);
+  }
+
+  /// 朋友對戰結束後繼續更新結果，結果頁才看得到「朋友想再來一場」
+  Future<void> _watchRematch(String id, int run) async {
+    while (run == _run && phase == BattlePhase.finished) {
+      await _wait(const Duration(seconds: 2));
+      if (run != _run || phase != BattlePhase.finished) return;
+      try {
+        final j = await _rpc('battle_state', {'p_match': id}) as Map<String, dynamic>;
+        if (run == _run && phase == BattlePhase.finished) _set(() => state = BattleState(j));
+      } catch (_) {}
+    }
+  }
+
+  /// 再來一場：先按的人等朋友，後按的人一按就開始
+  Future<void> rematch() async {
+    final id = state?.id;
+    if (id == null) return;
+    _reset(BattlePhase.searching);
+    final run = _run;
+    try {
+      final t = await _rpc('battle_rematch', {'p_match': id}) as Map<String, dynamic>;
+      if (run != _run) return;
+      if (t['waiting'] == true) _set(() => phase = BattlePhase.rematch);
+      await _poll(t['match'] as String, run);
+    } catch (e) {
+      _fail(run, e);
+    }
   }
 
   void answer(int i) {
@@ -397,6 +483,62 @@ class BattleModel extends ChangeNotifier {
           .then((j) => _apply(BattleState(j as Map<String, dynamic>), sent, run))
           .catchError((Object e) => debugPrint('送出答案失敗：$e')),
     );
+  }
+
+  int _reported = 0, _games = 0, _wins = 0;
+
+  /// 自動對戰：開始配對下一場
+  void autoFind() {
+    if (BattleAutoplay.delay == null) return;
+    if (!_cloud.signedIn) return BattleAutoplay.log('沒有登入，不能對戰：先在 App 裡登入');
+    _games++;
+    BattleAutoplay.log('—— 第 $_games 場：開始配對 ——');
+    _reported = 0;
+    unawaited(find());
+  }
+
+  void _autoNext(int run) {
+    if (BattleAutoplay.delay == null) return;
+    unawaited(_wait(const Duration(seconds: 5)).then((_) {
+      if (phase == BattlePhase.finished) autoFind();
+    }));
+  }
+
+  void _autoplay(BattleQuestion q, double? starts, int run) {
+    final delay = BattleAutoplay.delay;
+    if (delay == null) return;
+    final options = [for (var i = 0; i < q.options.length; i++) '${String.fromCharCode(65 + i)} ${q.options[i]}'].join('  ');
+    final pick = BattleAutoplay.rightOption(q);
+    if (pick == null) return BattleAutoplay.log('第 ${q.n} 題：${q.prompt}｜$options｜字典判斷不出答案，不作答');
+    final wait = (starts ?? serverNow) + delay * 1000 - serverNow;
+    unawaited(_wait(Duration(milliseconds: wait > 0 ? wait.round() : 0)).then((_) {
+      if (run != _run) return;
+      answer(pick);
+      BattleAutoplay.log('第 ${q.n} 題：${q.prompt}｜$options｜選 ${String.fromCharCode(65 + pick)} ${q.options[pick]}');
+    }));
+  }
+
+  void _autoReport(BattleState s) {
+    if (BattleAutoplay.delay == null) return;
+    final o = s.opponent;
+    if (_reported == 0 && o != null) {
+      _reported = -1;
+      BattleAutoplay.log('配對到 ${o.name}（${o.tierText}・${o.rating}），${s.rated ? '排位' : '不計分'}');
+    }
+    final l = s.last;
+    if (l != null && l.n > math.max(_reported, 0)) {
+      _reported = l.n;
+      final mine = l.points > 0 ? '答對 +${l.points}' : l.pick == null ? '沒作答' : '答錯（正解 ${l.term} ${l.zh}）';
+      BattleAutoplay.log('　→ $mine｜對手 +${l.opponentPoints}｜比分 ${s.you.score} : ${s.opponent?.score ?? 0}');
+    }
+    final r = s.result;
+    if (s.status == 'finished' && r != null && _reported != 1 << 30) {
+      _reported = 1 << 30;
+      if (r.outcome == 'win') _wins++;
+      final word = const {'win': '贏了', 'loss': '輸了', 'draw': '平手'}[r.outcome] ?? r.outcome;
+      final delta = r.delta > 0 ? '+${r.delta}' : '${r.delta}';
+      BattleAutoplay.log('結果：$word（${r.reason}），積分 $delta → ${s.you.rating + r.delta}｜目前 $_wins 勝 / $_games 場，5 秒後下一場');
+    }
   }
 
   /// 離開目前的畫面。對戰進行中離開算輸
@@ -462,6 +604,22 @@ class BattleModel extends ChangeNotifier {
     if (step == 'room') {
       phase = BattlePhase.room;
       code = 'K7Q3';
+      return;
+    }
+    if (step == 'boss') {
+      state = BattleState({
+        'id': 'demo',
+        'status': 'playing',
+        'rated': true,
+        'round': 1,
+        'now': now,
+        'boss': '我要把你當掉',
+        'you': {'name': '勇敢的水獺08', 'pid': 'demo-me', 'rating': 1218, 'tier': 3, 'tier_name': '至尊星耀', 'score': 0},
+        'opponent': {'name': '優質霸王', 'pid': 'demo-boss', 'rating': 9999, 'tier': 6, 'tier_name': '扛不住', 'score': 0},
+        'starts': now + 8000,
+        'ends': now + 16000,
+      });
+      phase = BattlePhase.playing;
       return;
     }
     final reveal = step == 'reveal';
@@ -557,7 +715,9 @@ class _BattlePageState extends State<BattlePage> {
 
   void _start() {
     _model = widget.model ?? BattleModel();
-    unawaited(_m.load());
+    unawaited(_m.load().then((_) {
+      if (mounted && BattleAutoplay.delay != null && _m.phase == BattlePhase.home) _m.autoFind();
+    }));
   }
 
   void _signedInChanged() {
@@ -638,6 +798,7 @@ class _BattlePageState extends State<BattlePage> {
           BattlePhase.home => _Home(model: _m),
           BattlePhase.searching => _Searching(model: _m),
           BattlePhase.room => _Room(model: _m),
+          BattlePhase.rematch => _RematchWait(model: _m),
           BattlePhase.playing => _Game(model: _m, onLeave: _askLeave),
           BattlePhase.finished => _Result(model: _m),
         },
@@ -908,9 +1069,13 @@ class _SearchingState extends State<_Searching> with SingleTickerProviderStateMi
     final t = DateTime.now().difference(m.searchStarted).inMilliseconds / 1000;
     final sec = t.floor().clamp(0, 5999);
     final r = m.me?.rating;
-    // 伺服器從 ±10 開始，每秒放寬 10，最多 ±100
-    final w = math.min(100, 10 + 10 * sec);
-    final range = r != null ? '積分 ${(r - w).clamp(0, 99999)}–${r + w}' : '尋找積分相近的對手';
+    // 伺服器從 ±10 開始，每秒放寬 10（10 秒），再用 ±200 擴大範圍找 6 秒，之後再過 4～7 秒配電腦
+    final w = 10 + 10 * sec;
+    final range = sec >= 16
+        ? '正在尋找實力相當的對手'
+        : sec >= 10
+        ? '正在擴大範圍搜尋'
+        : (r != null ? '積分 ${(r - w).clamp(0, 99999)}–${r + w}' : '尋找積分相近的對手');
     final name = m.me?.name ?? '';
     return SafeArea(
       child: Padding(
@@ -975,7 +1140,7 @@ class _Radar extends CustomPainter {
       final f = t == null ? .35 + i * .25 : (t! / 2.4 + i / 3) % 1;
       canvas.drawCircle(
         c,
-        (96 + 150 * f) / 2,
+        (120 + 126 * f) / 2,
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2
@@ -1003,6 +1168,32 @@ class _Radar extends CustomPainter {
 
   @override
   bool shouldRepaint(_Radar old) => old.t != t || old.color != color;
+}
+
+class _RematchWait extends StatelessWidget {
+  const _RematchWait({required this.model});
+  final BattleModel model;
+  @override
+  Widget build(BuildContext context) {
+    final p = Palette.of(context);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            const Spacer(),
+            const CircularProgressIndicator(),
+            const SizedBox(height: 18),
+            Text('等朋友按「再來一場」', style: ts(F.title3, w: w6, c: p.ink)),
+            const SizedBox(height: 10),
+            Text('朋友按下後立刻開始。朋友對戰不影響積分。', textAlign: TextAlign.center, style: ts(F.sub, c: p.sec)),
+            const Spacer(),
+            PillButton(label: '取消', width: double.infinity, onTap: () => unawaited(model.leave())),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _Room extends StatelessWidget {
@@ -1109,6 +1300,24 @@ class _TimeBarState extends State<_TimeBar> with SingleTickerProviderStateMixin 
 class _GameState extends State<_Game> {
   late final Timer _tick;
 
+  /// 已經播完隱藏電腦開場的那場對戰
+  String? _bossDone;
+
+  /// 開場色塊已經蓋滿畫面的那場對戰；蓋滿之前底下維持配對等待畫面
+  String? _bossCovered;
+
+  /// 隱藏電腦開場結束時，頭像、名字、段位各自落到頁面上的位置
+  final _spots = {for (final k in _Spot.values) k: GlobalKey()};
+
+  bool _bossPlaying(BattleState s) =>
+      s.boss != null && s.opponent != null && s.round == 1 && s.last == null && _bossDone != s.id;
+
+  Rect? _spotRect(_Spot k) {
+    final box = _spots[k]!.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return null;
+    return box.localToGlobal(Offset.zero) & box.size;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1171,7 +1380,8 @@ class _GameState extends State<_Game> {
       final left = (((starts ?? now) - now) / 1000).ceil().clamp(1, 9);
       body = [
         const Spacer(),
-        if (s.round == 1 && s.last == null) _Intro(you: s.you, opponent: s.opponent),
+        if (s.round == 1 && s.last == null)
+          _Intro(you: s.you, opponent: s.opponent, avatarKey: _spots[_Spot.avatar], hideAvatar: _bossPlaying(s)),
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 350),
           switchInCurve: Curves.easeOutBack,
@@ -1196,6 +1406,24 @@ class _GameState extends State<_Game> {
       ];
     }
 
+    return Stack(children: [
+      if (_bossPlaying(s) && _bossCovered != s.id) _Searching(model: _m) else _page(p, s, n, body),
+      if (_bossPlaying(s))
+        Positioned.fill(
+          child: _BossTakeover(
+            key: ValueKey(s.id),
+            boss: s.opponent!,
+            line: s.boss!,
+            late: (s.starts ?? 0) - now < 5000,
+            target: _spotRect,
+            onCovered: () => setState(() => _bossCovered = s.id),
+            onDone: () => setState(() => _bossDone = s.id),
+          ),
+        ),
+    ]);
+  }
+
+  Widget _page(Palette p, BattleState s, int n, List<Widget> body) {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
@@ -1243,20 +1471,29 @@ class _GameState extends State<_Game> {
               style: ts(F.cap, w: w7, c: p.ter),
             ),
           ),
-          Expanded(child: o == null ? const SizedBox.shrink() : _side(p, o, true, s.opponentAnswered && s.last?.n != s.round)),
+          Expanded(
+            child: o == null
+                ? const SizedBox.shrink()
+                : _side(p, o, true, s.opponentAnswered && s.last?.n != s.round, landing: _bossPlaying(s)),
+          ),
         ],
       ),
     );
   }
 
-  Widget _side(Palette p, BattleSide x, bool end, bool done) => Column(
+  /// landing：隱藏電腦的名字和段位還在飛過來，先藏著（對手那邊也標出位置給開場動畫）
+  Widget _side(Palette p, BattleSide x, bool end, bool done, {bool landing = false}) => Column(
     crossAxisAlignment: end ? CrossAxisAlignment.end : CrossAxisAlignment.start,
     children: [
-      Text(
-        x.name,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: ts(F.cap, w: w6, c: p.ink),
+      Opacity(
+        key: end ? _spots[_Spot.name] : null,
+        opacity: landing ? 0 : 1,
+        child: Text(
+          x.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: ts(F.cap, w: w6, c: p.ink),
+        ),
       ),
       TweenAnimationBuilder<double>(
         tween: Tween(end: x.score.toDouble()),
@@ -1264,11 +1501,15 @@ class _GameState extends State<_Game> {
         curve: Curves.easeOutCubic,
         builder: (_, v, _) => Text('${v.round()}', style: ts(30, w: w7, c: p.ink, h: 1.2)),
       ),
-      Text(
-        done ? '已作答' : '${x.tierText}・${x.rating}',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: ts(F.cap, c: done ? p.accent : p.sec),
+      Opacity(
+        key: end ? _spots[_Spot.tier] : null,
+        opacity: landing ? 0 : 1,
+        child: Text(
+          done ? '已作答' : '${x.tierText}・${x.rating}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: ts(F.cap, c: done ? p.accent : p.sec),
+        ),
       ),
     ],
   );
@@ -1341,7 +1582,8 @@ class _ResultState extends State<_Result> {
   List<Word> _saveMissed(List<BattleWord> missed) {
     final words = [
       for (final w in missed)
-        if (Dict.lookup(w.term) case final e?) AppStore.shared.add(e),
+        if (Dict.lookup(w.term) case final e?)
+          if (AppStore.shared.add(e) case final x?) x,
     ];
     setState(() => _saved = true);
     return words;
@@ -1528,7 +1770,18 @@ class _ResultState extends State<_Result> {
                   ]),
                   const SizedBox(height: 10),
                 ],
-                PrimaryButton(label: '完成', width: double.infinity, onTap: () => unawaited(widget.model.leave())),
+                if (r.canRematch) ...[
+                  if (r.rematch == 'theirs') ...[
+                    Text('朋友想再來一場', style: ts(F.sub, w: w6, c: p.accent)),
+                    const SizedBox(height: 8),
+                  ],
+                  Row(children: [
+                    Expanded(child: PillButton(label: '完成', width: double.infinity, onTap: () => unawaited(widget.model.leave()))),
+                    const SizedBox(width: 10),
+                    Expanded(child: PrimaryButton(label: '再來一場', width: double.infinity, onTap: () => unawaited(widget.model.rematch()))),
+                  ]),
+                ] else
+                  PrimaryButton(label: '完成', width: double.infinity, onTap: () => unawaited(widget.model.leave())),
               ],
             ),
           ),
@@ -1542,9 +1795,13 @@ class _ResultState extends State<_Result> {
 
 /// 第一題前，兩邊玩家從左右滑進來，中間是 VS
 class _Intro extends StatefulWidget {
-  const _Intro({required this.you, required this.opponent});
+  const _Intro({required this.you, required this.opponent, this.avatarKey, this.hideAvatar = false});
   final BattleSide you;
   final BattleSide? opponent;
+
+  /// 對手頭像的位置（隱藏電腦開場的頭像落在這裡）；還在飛過來時先藏著
+  final GlobalKey? avatarKey;
+  final bool hideAvatar;
   @override
   State<_Intro> createState() => _IntroState();
 }
@@ -1574,12 +1831,16 @@ class _IntroState extends State<_Intro> with SingleTickerProviderStateMixin {
         padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
         decoration: BoxDecoration(color: p.card, borderRadius: BorderRadius.circular(Radii.lg)),
         child: Column(children: [
-          Container(
-            width: 56,
-            height: 56,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(color: mine ? p.accent : p.sec.withValues(alpha: .35), shape: BoxShape.circle),
-            child: Text(x.name.isEmpty ? '?' : x.name.characters.first, style: ts(24, w: w7, c: mine ? p.onAccent : p.ink)),
+          Opacity(
+            key: mine ? null : widget.avatarKey,
+            opacity: !mine && widget.hideAvatar ? 0 : 1,
+            child: Container(
+              width: 56,
+              height: 56,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(color: mine ? p.accent : p.sec.withValues(alpha: .35), shape: BoxShape.circle),
+              child: Text(x.name.isEmpty ? '?' : x.name.characters.first, style: ts(24, w: w7, c: mine ? p.onAccent : p.ink)),
+            ),
           ),
           const SizedBox(height: 6),
           Text(x.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: ts(F.sub, w: w6, c: p.ink)),
@@ -1609,6 +1870,274 @@ class _IntroState extends State<_Intro> with SingleTickerProviderStateMixin {
       ),
     );
   }
+}
+
+/// 隱藏電腦開場交棒給頁面的三個位置：倒數畫面對手卡片的頭像，上方記分卡的名字和段位
+enum _Spot { avatar, name, tier }
+
+/// 隱藏電腦的開場，用 App 自己的顏色：主色的色塊帶著波浪邊緣從下往上流過整個畫面（前面有一層淡的），
+/// 對手卡片一塊一塊升上來，台詞用膠囊跳出來。接著色塊繼續往上流走，頭像、名字、段位同時滑到
+/// 頁面上各自的位置（target），開場就接在倒數畫面上結束
+class _BossTakeover extends StatefulWidget {
+  const _BossTakeover({
+    super.key,
+    required this.boss,
+    required this.line,
+    required this.late,
+    required this.target,
+    required this.onCovered,
+    required this.onDone,
+  });
+  final BattleSide boss;
+  final String line;
+
+  /// 進來時離開始不到五秒（例如重新連上），就不播
+  final bool late;
+  final Rect? Function(_Spot) target;
+
+  /// 色塊蓋滿整個畫面了
+  final VoidCallback onCovered;
+  final VoidCallback onDone;
+  @override
+  State<_BossTakeover> createState() => _BossTakeoverState();
+}
+
+class _BossTakeoverState extends State<_BossTakeover> with SingleTickerProviderStateMixin {
+  static const _flowIn = .7, _partsAt = .5, _chipAt = 1.25, _outAt = 2.9, _flowOut = .8, _glide = .85;
+  static const _total = _outAt + _glide;
+  late final AnimationController _c = AnimationController(vsync: this, duration: Duration(milliseconds: (_total * 1000).round()));
+  final _rests = {for (final k in _Spot.values) k: GlobalKey()};
+
+  /// 三塊在卡片裡的位置（全螢幕座標）
+  final _restRects = <_Spot, Rect>{};
+
+  /// 滑行開始那一刻定下的起點和終點（全螢幕座標）
+  Map<_Spot, (Rect, Rect)>? _paths;
+  bool _buzzed = false, _covered = false;
+
+  double get _t => _c.value * _total;
+
+  /// 只在開場剛出現時判斷一次（播的過程中剩下的時間一直在變少）
+  late final bool _late = widget.late;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_late) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        widget.onCovered();
+        widget.onDone();
+      });
+      return;
+    }
+    _c.addListener(() {
+      if (!_covered && _t >= _flowIn) {
+        _covered = true;
+        widget.onCovered();
+      }
+      if (!_buzzed && _t >= _chipAt) {
+        _buzzed = true;
+        if (AppSettings.shared.haptics) unawaited(HapticFeedback.mediumImpact());
+      }
+      if (_paths == null && _t >= _outAt) _measure();
+    });
+    _c.forward().whenComplete(() {
+      if (mounted) widget.onDone();
+    });
+  }
+
+  void _recordRests() {
+    if (!mounted) return;
+    for (final k in _Spot.values) {
+      final box = _rests[k]!.currentContext?.findRenderObject() as RenderBox?;
+      if (box != null && box.hasSize && box.attached) _restRects[k] = box.localToGlobal(Offset.zero) & box.size;
+    }
+  }
+
+  void _measure() {
+    final paths = <_Spot, (Rect, Rect)>{};
+    for (final k in _Spot.values) {
+      final from = _restRects[k], to = widget.target(k);
+      if (from != null && to != null && from.height > 0) paths[k] = (from, to);
+    }
+    _paths = paths;
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  static double _clamp(double x) => x.clamp(0.0, 1.0);
+  static double _smooth(double x) {
+    final v = _clamp(x);
+    return v < .5 ? 4 * v * v * v : 1 - math.pow(-2 * v + 2, 3) / 2;
+  }
+
+  static double _lerp(double a, double b, double p) => a + (b - a) * p;
+
+  /// 卡片第 i 塊升到定位的進度：一塊接一塊，間隔 0.09 秒
+  double _part(double t, int i) => _smooth((t - _partsAt - .09 * i) / .5);
+
+  Widget _rise(double p, Widget child) => Opacity(opacity: p, child: Transform.translate(offset: Offset(0, 26 * (1 - p)), child: child));
+
+  // 會滑行的三塊。p 從 0（在卡片裡）到 1（落到頁面上），顏色一路從色塊上的換成頁面上的
+  Widget _avatar(Palette p, double k) => Container(
+    width: 112,
+    height: 112,
+    alignment: Alignment.center,
+    decoration: BoxDecoration(color: Color.lerp(p.onAccent, p.sec.withValues(alpha: .35), k), shape: BoxShape.circle),
+    child: Text(
+      widget.boss.name.isEmpty ? '?' : widget.boss.name.characters.first,
+      style: ts(50, w: w7, c: Color.lerp(p.accent, p.ink, k)),
+    ),
+  );
+
+  Widget _name(Palette p, double k) => Text(widget.boss.name, style: ts(44, w: w7, c: Color.lerp(p.onAccent, p.ink, k)));
+
+  Widget _tier(Palette p, double k) => Text(
+    '${widget.boss.tierText}・${widget.boss.rating}',
+    style: ts(F.headline, w: w6, c: Color.lerp(p.onAccent.withValues(alpha: .8), p.sec, k)),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    if (_late) return const SizedBox.shrink();
+    final p = Palette.of(context);
+    final still = MediaQuery.disableAnimationsOf(context);
+    return LayoutBuilder(
+      builder: (context, box) => AnimatedBuilder(
+        animation: _c,
+        builder: (context, _) {
+          final t = _t, h = box.maxHeight;
+          final pin = _smooth(t / _flowIn), pout = _smooth((t - _outAt) / _flowOut), glide = _smooth((t - _outAt) / _glide);
+          final gliding = t >= _outAt;
+          final wave = still ? 0.0 : math.sin(math.pi * pin) + math.sin(math.pi * pout);
+          // 進場時色塊的上緣往上掃，出場時換下緣往上掃
+          final front = _FlowSheet(top: _lerp(h + 60, -80, pin), bottom: _lerp(h + 60, -80, pout), wave: 34 * wave, phase: t * 5);
+          final back = _FlowSheet(
+            top: _lerp(h + 60, -80, _smooth((t + .12) / _flowIn)),
+            bottom: _lerp(h + 60, -80, _smooth((t - _outAt - .14) / _flowOut)),
+            wave: 46 * wave,
+            phase: t * 4 + 1.7,
+          );
+          final ring = _clamp((t - _partsAt - .15) / .9);
+          final chip = _clamp((t - _chipAt) / .45);
+          final pop = 1 - math.exp(-6 * chip) * math.cos(9 * chip);
+          Widget rest(_Spot k, Widget child) => Opacity(key: _rests[k], opacity: gliding ? 0 : 1, child: child);
+          // 卡片還在原位時，每一格記下三塊的位置，滑行就從最後記到的地方出發
+          if (!gliding) WidgetsBinding.instance.addPostFrameCallback((_) => _recordRests());
+          final card = Column(mainAxisSize: MainAxisSize.min, children: [
+            _rise(_part(t, 0) * (1 - pout), Text('隱 藏 對 手', style: ts(F.foot, w: w6, c: p.onAccent.withValues(alpha: .75)))),
+            const SizedBox(height: 32),
+            _rise(
+              _part(t, 1),
+              Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
+                Transform.scale(
+                  scale: 1 + .8 * ring,
+                  child: Container(
+                    width: 112,
+                    height: 112,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: p.onAccent.withValues(alpha: .5 * (1 - ring)), width: 2),
+                    ),
+                  ),
+                ),
+                rest(_Spot.avatar, _avatar(p, 0)),
+              ]),
+            ),
+            const SizedBox(height: 26),
+            _rise(_part(t, 2), rest(_Spot.name, _name(p, 0))),
+            const SizedBox(height: 10),
+            _rise(_part(t, 3), rest(_Spot.tier, _tier(p, 0))),
+            const SizedBox(height: 52),
+            Opacity(
+              opacity: _clamp((t - _chipAt) / .15) * (1 - pout),
+              child: Transform.scale(
+                scale: still ? 1 : .6 + .4 * pop,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 14),
+                  decoration: BoxDecoration(color: p.onAccent, borderRadius: BorderRadius.circular(999)),
+                  child: Text('「${widget.line}」', style: ts(F.title3, w: w7, c: p.accent)),
+                ),
+              ),
+            ),
+          ]);
+          final me = context.findRenderObject() as RenderBox?;
+          final origin = me != null && me.hasSize ? me.localToGlobal(Offset.zero) : Offset.zero;
+          Widget fly(_Spot k, Widget child) {
+            final path = _paths?[k];
+            if (path == null) return const SizedBox.shrink();
+            final (from, to) = path;
+            final scale = _lerp(1, to.height / from.height, glide);
+            final c = Offset.lerp(from.center, to.center, glide)! - origin;
+            return Positioned(
+              left: c.dx - from.width / 2,
+              top: c.dy - from.height / 2,
+              width: from.width,
+              height: from.height,
+              child: Transform.scale(scale: scale, child: OverflowBox(maxWidth: double.infinity, child: child)),
+            );
+          }
+
+          return Stack(clipBehavior: Clip.none, children: [
+            Positioned.fill(child: CustomPaint(painter: _FlowPainter(back, p.accent.withValues(alpha: .4)))),
+            Positioned.fill(child: CustomPaint(painter: _FlowPainter(front, p.accent))),
+            Positioned.fill(child: ClipPath(clipper: _FlowClipper(front), child: Center(child: card))),
+            if (gliding) ...[
+              fly(_Spot.avatar, _avatar(p, glide)),
+              fly(_Spot.name, _name(p, glide)),
+              fly(_Spot.tier, _tier(p, glide)),
+            ],
+          ]);
+        },
+      ),
+    );
+  }
+}
+
+/// 整個寬度上，夾在兩條波浪邊緣中間的帶狀色塊
+class _FlowSheet {
+  const _FlowSheet({required this.top, required this.bottom, required this.wave, required this.phase});
+  final double top, bottom, wave, phase;
+
+  Path path(Size size) {
+    double y(double base, double x, double shift) {
+      final u = x / math.max(1, size.width) * 2 * math.pi;
+      return base + wave * (math.sin(u * 1.2 + phase + shift) * .65 + math.sin(u * 2.6 - phase * 1.3 + shift) * .35);
+    }
+
+    final xs = [for (var x = 0.0; x < size.width; x += 6) x, size.width];
+    final p = Path()..moveTo(0, y(top, 0, 0));
+    for (final x in xs) {
+      p.lineTo(x, y(top, x, 0));
+    }
+    for (final x in xs.reversed) {
+      p.lineTo(x, math.max(y(top, x, 0), y(bottom, x, 2.1)));
+    }
+    return p..close();
+  }
+}
+
+class _FlowPainter extends CustomPainter {
+  _FlowPainter(this.sheet, this.color);
+  final _FlowSheet sheet;
+  final Color color;
+  @override
+  void paint(Canvas canvas, Size size) => canvas.drawPath(sheet.path(size), Paint()..color = color);
+  @override
+  bool shouldRepaint(_FlowPainter old) => true;
+}
+
+class _FlowClipper extends CustomClipper<Path> {
+  _FlowClipper(this.sheet);
+  final _FlowSheet sheet;
+  @override
+  Path getClip(Size size) => sheet.path(size);
+  @override
+  bool shouldReclip(_FlowClipper old) => true;
 }
 
 /// 新題目出現時，題目和選項一個接一個往上滑進來

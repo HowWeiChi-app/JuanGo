@@ -82,7 +82,7 @@ class WordQuota {
   static bool countsWord(Word w) => counts(
       cefr: w.cefr, fromExam: w.fromExam, inMyWords: w.inMyWords, favorite: w.favorite, inList: w.lists.isNotEmpty);
 
-  static bool get unlimited => ProStore.shared.isPro;
+  static bool get unlimited => ProStore.shared.has(ProFeature.words);
 
   static int used([Iterable<Word>? words]) => (words ?? AppStore.shared.words).where(countsWord).length;
 

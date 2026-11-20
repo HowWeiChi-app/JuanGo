@@ -178,6 +178,22 @@ end $$;
 
 -- ------------------------------------------------------------------ starting a match
 
+-- Two words clash when a player could fairly pick either: a shared meaning, the same meaning once 使/被/把 and
+-- 的/地 are dropped, or one shown meaning inside the other's (二字以上), e.g. 痛苦 / 痛苦的, 興奮的 / 令人興奮的.
+create or replace function public.battle_norm(s text) returns text
+language sql immutable as $$ select regexp_replace(replace(s, '…', ''), '^(使|被|把)|(的|地)$', '', 'g') $$;
+
+create or replace function public.battle_close(p text, q text) returns boolean
+language sql immutable as $$ select length(p) >= 2 and length(q) >= 2 and (strpos(p, q) > 0 or strpos(q, p) > 0) $$;
+
+create or replace function public.battle_clash(a text[], b text[], az text, bz text) returns boolean
+language sql immutable as $$
+  select a && b
+    or exists (select 1 from unnest(a) x, unnest(b) y where battle_norm(x) = battle_norm(y))
+    or exists (select 1 from unnest(b) y where battle_close(battle_norm(az), battle_norm(y)))
+    or exists (select 1 from unnest(a) x where battle_close(battle_norm(bz), battle_norm(x)))
+$$;
+
 create or replace function public.battle_make_round(p_match uuid, p_n int, p_lv int) returns void
 language plpgsql security definer set search_path = public as $$
 declare
@@ -198,7 +214,7 @@ begin
       select distinct on (c.zh) c as d, c.pos = w.pos as same, random() as k
       from battle_words c
       where c.lv = p_lv and c.term <> w.term and lower(c.term) <> lower(w.term)
-        and not c.meanings && w.meanings
+        and not battle_clash(w.meanings, c.meanings, w.zh, c.zh)
       order by c.zh, random()
     ) s order by same desc, k limit 3
   ) t(x);

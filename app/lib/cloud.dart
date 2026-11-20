@@ -378,6 +378,16 @@ class Cloud extends ChangeNotifier {
     }
   }
 
+  /// 開發版：把私人空間 dev-builds 裡的安裝檔換成 10 分鐘有效的下載網址（只有內測名單的帳號可以）
+  Future<String> signDevBuild(String path) async {
+    final body = jsonDecode(await _send(
+      Uri.parse('${CloudConfig.url}/storage/v1/object/sign/dev-builds/$path'),
+      'POST',
+      json: {'expiresIn': 600},
+    )) as Map<String, dynamic>;
+    return '${CloudConfig.url}/storage/v1${body['signedURL']}&download=JuanGo-dev.apk';
+  }
+
   // MARK: 分享代碼
 
   static const _shareCodesKey = 'cloud.shareCodes';
@@ -436,6 +446,13 @@ class Cloud extends ChangeNotifier {
   static String pretty(String code) {
     final c = code.toUpperCase().replaceAll(RegExp('[^A-Z0-9]'), '');
     return c.length == 8 ? '${c.substring(0, 4)}-${c.substring(4)}' : c;
+  }
+
+  /// 回報單字問題：沒登入也能送。回傳 ok 或 duplicate（已經收過，或今天回報過同一件事）
+  Future<String> reportWord(Map<String, dynamic> args) async {
+    final body = await _send(_rest('rpc/report_word'), 'POST', json: args, auth: signedIn);
+    final v = jsonDecode(body);
+    return v is String ? v : 'ok';
   }
 
   // MARK: 連線

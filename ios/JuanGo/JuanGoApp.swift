@@ -76,6 +76,7 @@ struct RootView: View {
                 Reminders.sync(settings, studiedToday: n > 0, dueDates: due)
             }
             if p == .active, cloud.signedIn { Task { try? await cloud.sync(ctx) } }
+            if p == .active { Task { await WordReport.flush() } }
         }
         .alert(cloud.notice ?? "", isPresented: Binding(get: { cloud.notice != nil }, set: { if !$0 { cloud.notice = nil } })) {
             Button("好") { cloud.notice = nil }

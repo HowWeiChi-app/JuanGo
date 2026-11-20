@@ -2,9 +2,13 @@
 // 之後用 RevenueCat 購買（entitlement `juango_pro`，由 juango_pro_* 和 gos_pro_* 解鎖）；
 // 商店還沒開通前，購買和恢復購買都會說明還不能用。
 
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'cloud.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -38,11 +42,46 @@ enum ProPeriod {
   final String unit;
 }
 
+/// 已經做好的付費功能，開發版可以在「開發者選項」一個個關掉
+enum ProFeature {
+  words('「我的單字」不限個數'),
+  battles('單字對戰不限場次');
+
+  const ProFeature(this.title);
+  final String title;
+}
+
 class ProStore extends ChangeNotifier {
   ProStore._() {
     if (devGosPro) {
       plan = ProPlan.gos;
       devUnlocked = true;
+      unawaited(_loadDev());
+    }
+  }
+
+  /// 開發者選項關掉的功能，照免費版運作
+  final Set<ProFeature> devOff = {};
+
+  bool has(ProFeature f) => isPro && !devOff.contains(f);
+
+  Future<void> _loadDev() async {
+    final names = (await SharedPreferences.getInstance()).getStringList('dev.proOff') ?? const [];
+    devOff.addAll(ProFeature.values.where((f) => names.contains(f.name)));
+    notifyListeners();
+  }
+
+  Future<void> setDev(ProFeature f, bool on) async {
+    on ? devOff.remove(f) : devOff.add(f);
+    notifyListeners();
+    await (await SharedPreferences.getInstance()).setStringList('dev.proOff', [for (final x in devOff) x.name]);
+    // 對戰每天的場次是伺服器算的，只對 battle_unlimited 裡的測試帳號有效
+    if (f == ProFeature.battles) {
+      try {
+        await Cloud.shared.rpc('battle_dev_limit', {'p_paused': !on}, const Duration(seconds: 10));
+      } catch (e) {
+        debugPrint('開發者選項：對戰場次沒有改成功：$e');
+      }
     }
   }
   static final shared = ProStore._();
@@ -312,6 +351,21 @@ class ProSettingsPage extends StatelessWidget {
                 ),
               if (pro.isPro && !pro.devUnlocked) RowTile(title: '管理訂閱', titleColor: p.accent, onTap: () => _open(ProStore.manage)),
             ]),
+            if (pro.devUnlocked)
+              Sec(header: '開發者選項', footer: '關掉的功能會照免費版運作，方便測試。對戰場次只對測試帳號有效。', children: [
+                for (final f in ProFeature.values)
+                  SwitchRow(title: f.title, value: !pro.devOff.contains(f), onChanged: (v) => unawaited(pro.setDev(f, v))),
+                RowTile(
+                  title: pro.devOff.length == ProFeature.values.length ? '全部打開' : '全部關閉',
+                  titleColor: p.accent,
+                  onTap: () {
+                    final on = pro.devOff.length == ProFeature.values.length;
+                    for (final f in ProFeature.values) {
+                      unawaited(pro.setDev(f, on));
+                    }
+                  },
+                ),
+              ]),
           ]);
         },
       );

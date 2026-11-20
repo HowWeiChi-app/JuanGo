@@ -247,6 +247,12 @@ final class Cloud {
         return try Self.decode(data)
     }
 
+    /// 回報單字問題: anyone can send one. Returns "ok" or "duplicate" (already in, or already reported today).
+    func reportWord(_ args: [String: Any]) async throws -> String {
+        let d = try await send(rest("rpc/report_word"), method: "POST", json: args, auth: session != nil)
+        return (try? JSONSerialization.jsonObject(with: d, options: .fragmentsAllowed) as? String) ?? "ok"
+    }
+
     func myLists() async throws -> [SharedList] {
         var c = URLComponents(url: rest("shared_lists"), resolvingAgainstBaseURL: false)!
         c.queryItems = [URLQueryItem(name: "select", value: "code,name,word_count,updated_at,expires_at"),

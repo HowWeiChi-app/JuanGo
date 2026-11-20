@@ -29,7 +29,7 @@ insert into public.battle_rules (id, rules) values (1, $rules${
   "streak": { "from": 3, "first": 2, "step": 1, "max": 5 },
   "floor": { "win": 5, "loss": 5 },
   "rookie": { "games": 10, "factor": 1.5, "cap": 300, "until": 1200, "bot_bonus": 0.05, "bot_max": 0.90 },
-  "match": { "start": 10, "grow": 10, "max": 100, "bot_extra_s": 3 },
+  "match": { "start": 10, "grow": 10, "grow_s": 10, "wide": 200, "wide_s": 6, "bot_s": [4, 7] },
   "bot": {
     "base_penalty": 3,
     "rating_spread": 30,
@@ -39,9 +39,9 @@ insert into public.battle_rules (id, rules) values (1, $rules${
     "max": 0.97,
     "min_samples": 30,
     "level_step": 0.05,
-    "ms_min": 2000,
-    "ms_max": 7000,
-    "ms_tier_step": 300
+    "speed_ms": [[3000, 6000], [2500, 5500], [2000, 5000], [2000, 4500], [2000, 4000], [1500, 3500]],
+    "speed_recent": 5,
+    "speed_adjust_ms": 1000
   },
   "pair_daily_ranked": 3,
   "free_daily": 10,
@@ -95,6 +95,8 @@ alter table public.battle_players add column if not exists flagged int not null 
 alter table public.battle_matches add column if not exists season text;
 alter table public.battle_matches add column if not exists note text;          -- pair_limit
 alter table public.battle_matches add column if not exists bot_accuracy numeric;
+alter table public.battle_matches add column if not exists rematch uuid;
+alter table public.battle_matches add column if not exists boss text;          -- the hidden computer's opening line, null otherwise         -- the room match 再來一場 opened
 alter table public.battle_matches add column if not exists p1_breakdown jsonb;
 alter table public.battle_matches add column if not exists p2_breakdown jsonb;
 
@@ -324,11 +326,24 @@ create table if not exists public.battle_unlimited (
   created_at timestamptz not null default now()
 );
 alter table public.battle_unlimited enable row level security;
+-- the dev build's 開發者選項 can switch it off for a while, to try the free version's limit
+alter table public.battle_unlimited add column if not exists paused boolean not null default false;
+-- set by hand in the SQL editor (for recording the hidden computer's entrance): the next computer match is it
+alter table public.battle_unlimited add column if not exists boss_next boolean not null default false;
+
+-- 開發者選項 › 單字對戰不限場次. Only changes an existing test account row, so it can't grant anything.
+create or replace function public.battle_dev_limit(p_paused boolean) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  update battle_unlimited set paused = p_paused where user_id = auth.uid();
+  return found;
+end $$;
 
 -- the number of ranked matches the caller may still start today, null with Pro (games that don't count are free)
 create or replace function public.battle_free_left(p_user uuid) returns int
 language sql stable security definer set search_path = public as $$
-  select case when has_pro(p_user) or exists (select 1 from battle_unlimited u where u.user_id = p_user) then null else greatest(0, (battle_rules()->>'free_daily')::int - (
+  select case when not exists (select 1 from battle_unlimited u where u.user_id = p_user and u.paused)
+              and (has_pro(p_user) or exists (select 1 from battle_unlimited u where u.user_id = p_user)) then null else greatest(0, (battle_rules()->>'free_daily')::int - (
     select count(*) from battle_matches m
     where m.code is null and m.rated and p_user in (m.p1, m.p2) and battle_local(m.created_at)::date = battle_local()::date))::int end
 $$;
@@ -344,14 +359,23 @@ language sql immutable set search_path = public as $$ select substr(md5('juango-
 
 create or replace function public.battle_bot_names() returns text[]
 language sql immutable set search_path = public as $$
+  -- names real players pick or never change: the default 形容詞+動物+兩位數, account-style English, nicknames
   select array[
-    'Kevin','Amy','Jason','Ethan','Chloe','Ian','Vivian','Leo','Grace','Ryan','Annie','Max','Yuki','Eric','Joyce',
-    'Wendy','Alan','Iris','Daniel','Sandy','小安','阿哲','柚子','布丁','小熊','阿凱','芋圓','小魚','豆花','阿翔',
-    '小米','阿誠','奶茶','湯圓','小葵','阿宏','小晴','麻糬','阿瑋','小宇','睡不飽','想放假','背單字中','學測加油',
-    '英文好難','今天也要讀書','高三生存中','單字狂','早八戰士','考前衝刺','三分鐘熱度','珍奶續命','不想早起','讀書好累']
+    '勇敢的水獺08','安靜的石虎41','快樂的黑熊17','認真的貓頭鷹63','聰明的海豚29','好奇的藍鵲05','溫柔的穿山甲72','機靈的梅花鹿36','認真的水獺90','快樂的藍鵲24','安靜的海豚58',
+    '好奇的石虎13','機靈的黑熊81','溫柔的貓頭鷹47','勇敢的穿山甲66','聰明的梅花鹿02','kevin0812','amy_chen','jason.lin','ethan_wu','chloe1103',
+    'ian_huang','vivi_0920','leo.tsai','grace_lai','ryan27','annie.c','max_0505','yuki_tw','eric0716','joyce.h',
+    'wendy_yang','alan1029','iris_ko','daniel.lee','sandy0313','yuchen_','tingyu0228','weiting.c','hsuan_0619',
+    'pinyu_','yihsuan1107','chiahao_tw','tzuyu.w','po_han','shihyu0901','柚子茶加冰','一條鹹魚','肥宅快樂水','香菜退散','吐司邊','黑糖珍奶','雞排加辣','蘿蔔糕','小籠包控','綠茶無糖','今天吃什麼','窩不知道','數學好難QQ',
+    '壞掉的鬧鐘','安安你好','啾咪','起司貓','阿嬤的芭樂','林小柚','陳品妤','王小捲','蕭蕭','歐陽','品品','Ting','Yi',
+    'yu._.','chen','莓果優格','芒果冰','咖哩飯','鹽酥雞','豬豬','好想吃火鍋','隔壁的阿明','早餐店奶茶','卷卷','睡不飽','想放假','不想早起','珍奶續命','早八戰士','三分鐘熱度','讀書好累','一直想睡','今天也很累',
+    '肚子餓了','zzz','hihi','嗯嗯','好喔','qq','路過','隨便啦']
 $$;
 
 -- a computer name nobody uses, that wasn't reported, and that the caller hasn't blocked
+-- A hidden computer, 1 in 100 computer matches: 10% more accurate, 10% faster and rated 10% higher.
+-- Not part of battle_rules() on purpose, so nothing in the apps describes it.
+create or replace function public.battle_boss_name() returns text language sql immutable as $$ select '優質霸王' $$;
+
 create or replace function public.battle_bot_name(p_for uuid) returns text
 language sql volatile security definer set search_path = public as $$
   select n from unnest(battle_bot_names()) as n
@@ -404,6 +428,22 @@ begin
   return (t->>'bot')::numeric;
 end $$;
 
+-- Two words clash when a player could fairly pick either: a shared meaning, the same meaning once 使/被/把 and
+-- 的/地 are dropped, or one shown meaning inside the other's (二字以上), e.g. 痛苦 / 痛苦的, 興奮的 / 令人興奮的.
+create or replace function public.battle_norm(s text) returns text
+language sql immutable as $$ select regexp_replace(replace(s, '…', ''), '^(使|被|把)|(的|地)$', '', 'g') $$;
+
+create or replace function public.battle_close(p text, q text) returns boolean
+language sql immutable as $$ select length(p) >= 2 and length(q) >= 2 and (strpos(p, q) > 0 or strpos(q, p) > 0) $$;
+
+create or replace function public.battle_clash(a text[], b text[], az text, bz text) returns boolean
+language sql immutable as $$
+  select a && b
+    or exists (select 1 from unnest(a) x, unnest(b) y where battle_norm(x) = battle_norm(y))
+    or exists (select 1 from unnest(b) y where battle_close(battle_norm(az), battle_norm(y)))
+    or exists (select 1 from unnest(a) x where battle_close(battle_norm(bz), battle_norm(x)))
+$$;
+
 create or replace function public.battle_make_round(p_match uuid, p_n int, p_lv int) returns void
 language plpgsql security definer set search_path = public as $$
 declare
@@ -422,7 +462,7 @@ begin
       select distinct on (c.zh) c as d, c.pos = w.pos as same, random() as k
       from battle_words c
       where c.lv = p_lv and c.term <> w.term and lower(c.term) <> lower(w.term)
-        and not c.meanings && w.meanings
+        and not battle_clash(w.meanings, c.meanings, w.zh, c.zh)
       order by c.zh, random()
     ) s order by same desc, k limit 3
   ) t(x);
@@ -437,6 +477,37 @@ begin
 end $$;
 
 -- Ten questions at the word level of the pair's average rating, only English→Chinese and Chinese→English.
+-- How long the computer takes on one question: a normal curve over its tier's range (so the middle is most
+-- likely), moved by up to a second toward how fast the player answered their last five questions.
+create or replace function public.battle_bot_ms(p_user uuid, p_tier int) returns int
+language plpgsql security definer set search_path = public as $$
+declare
+  rules jsonb := battle_rules();
+  b   jsonb := rules->'bot';
+  rng jsonb := b->'speed_ms'->(least(greatest(p_tier, 1), jsonb_array_length(b->'speed_ms')) - 1);
+  lo  numeric := (rng->>0)::numeric;
+  hi  numeric := (rng->>1)::numeric;
+  mid numeric := (lo + hi) / 2;
+  adj numeric := (b->>'speed_adjust_ms')::numeric;
+  recent numeric;
+  shift numeric := 0;
+  x   numeric;
+begin
+  select avg(coalesce(ms, (rules->>'round_ms')::int)) into recent from (
+    select case when mm.p1 = p_user then r.p1_ms else r.p2_ms end as ms
+    from battle_rounds r join battle_matches mm on mm.id = r.match_id
+    where (mm.p1 = p_user or mm.p2 = p_user) and r.closed_at is not null
+    order by r.closed_at desc limit (b->>'speed_recent')::int
+  ) q;
+  if recent is not null then shift := least(adj, greatest(-adj, recent - mid)); end if;
+  -- Box-Muller; the range is ±2 standard deviations, and a draw outside it is drawn again
+  for i in 1..10 loop
+    x := mid + sqrt(-2 * ln(greatest(random(), 1e-9))) * cos(2 * pi() * random()) * (hi - lo) / 4;
+    exit when x between lo and hi;
+  end loop;
+  return round(least(hi, greatest(lo, x)) + shift)::int;
+end $$;
+
 -- Against the computer, which questions it gets right follows how players of the tier do on each word.
 create or replace function public.battle_start(p_match uuid) returns void
 language plpgsql security definer set search_path = public as $$
@@ -461,6 +532,7 @@ begin
 
   if m.bot_rating is not null then
     target := battle_bot_target(m.p1);
+    if m.boss is not null then target := least(0.99, target * 1.1); end if;
     ptier := battle_tier((battle_rating(m.p1)).rating);
     plv := battle_word_level((battle_rating(m.p1)).rating);
     -- how many it gets right: the target over ten questions, give or take one
@@ -478,23 +550,22 @@ begin
     )
     update battle_rounds x set
       bot_pick = case when p.right_one then x.answer else (x.answer + 1 + floor(random() * 3)::int) % 4 end,
-      bot_ms = least(9500, greatest(1200, case
-        when p.attempts >= (b->>'min_samples')::int and p.avg_ms is not null then round(p.avg_ms * (0.8 + random() * 0.4))
-        else round((b->>'ms_min')::int + random() * ((b->>'ms_max')::int - (b->>'ms_min')::int)) - (b->>'ms_tier_step')::int * (ptier - 1)
-      end))::int
+      bot_ms = round(battle_bot_ms(m.p1, ptier) * case when m.boss is not null then 0.9 else 1 end)::int
     from picked p where x.match_id = p_match and x.n = p.n;
     update battle_matches set bot_accuracy = target where id = p_match;
   end if;
 
-  update battle_rounds set starts_at = t + interval '4 seconds',
-    ends_at = t + interval '4 seconds' + (rules->>'round_ms')::int * interval '1 millisecond'
+  -- the hidden computer's entrance (about 4 seconds) plays before the usual 4-second countdown
+  update battle_rounds set starts_at = t + case when m.boss is not null then interval '8 seconds' else interval '4 seconds' end,
+    ends_at = t + case when m.boss is not null then interval '8 seconds' else interval '4 seconds' end
+              + (rules->>'round_ms')::int * interval '1 millisecond'
   where match_id = p_match and n = 1;
   update battle_matches set status = 'playing', round = 1, p1_seen = t, p2_seen = t, season = battle_season(t)
   where id = p_match;
 end $$;
 
 -- Looks for an opponent; the app calls this about once a second while waiting. The rating window starts at
--- ±10 and opens by 10 a second up to ±100; when that finds no one, the computer plays (not announced).
+-- ±10 and opens by 10 a second for 10 seconds, then ±200 for 6 seconds; after that the computer plays (not announced).
 create or replace function public.battle_find(p_level int) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
@@ -548,7 +619,9 @@ begin
   delete from battle_queue where last_seen < t - interval '30 seconds';
 
   waited := floor(extract(epoch from t - q.joined_at))::int;
-  width := least((mr->>'max')::int, (mr->>'start')::int + (mr->>'grow')::int * waited);
+  -- ±start widening by grow a second for grow_s seconds, then ±wide for wide_s seconds
+  width := case when waited < (mr->>'grow_s')::int then (mr->>'start')::int + (mr->>'grow')::int * waited
+                else (mr->>'wide')::int end;
   select * into other from battle_queue o
   where o.user_id <> me.user_id and o.match_id is null and o.last_seen > t - interval '4 seconds'
     and abs(o.rating - mine.rating) <= width
@@ -557,10 +630,10 @@ begin
   limit 1 for update skip locked;
 
   if not found then
-    -- the window reaches its widest after (max - start) / grow seconds; the computer comes a little after,
-    -- by a different amount each search
-    full_s := ((mr->>'max')::int - (mr->>'start')::int) / (mr->>'grow')::int;
-    if waited < full_s + abs(hashtext(me.user_id::text || q.joined_at::text)) % ((mr->>'bot_extra_s')::int + 1) then
+    -- after the wide search the computer comes bot_s seconds later, a different amount each search
+    full_s := (mr->>'grow_s')::int + (mr->>'wide_s')::int + (mr->'bot_s'->>0)::int;
+    if waited < full_s + abs(hashtext(me.user_id::text || q.joined_at::text))
+                         % ((mr->'bot_s'->>1)::int - (mr->'bot_s'->>0)::int + 1) then
       return jsonb_build_object('match', null, 'waited', waited);
     end if;
     insert into battle_matches (rated, p1, bot_name, bot_rating)
@@ -568,6 +641,13 @@ begin
             greatest((rules->>'min_rating')::int, mine.rating + floor(random() * (2 * (rules->'bot'->>'rating_spread')::int + 1))::int
                      - (rules->'bot'->>'rating_spread')::int))
     returning id into mid;
+    if (random() < 0.01 and not exists (select 1 from battle_blocks b where b.blocker = me.user_id and b.bot_name = battle_boss_name()))
+       or exists (select 1 from battle_unlimited u where u.user_id = me.user_id and u.boss_next) then
+      update battle_unlimited set boss_next = false where user_id = me.user_id;
+      update battle_matches set bot_name = battle_boss_name(), bot_rating = round(bot_rating * 1.1)::int,
+        boss = (array['要扛住喔', '我要把你當掉'])[1 + floor(random() * 2)::int]
+      where id = mid;
+    end if;
     perform battle_start(mid);
     delete from battle_queue where user_id = me.user_id;
     return jsonb_build_object('match', mid);
@@ -627,6 +707,42 @@ begin
   update battle_matches set p2 = me.user_id where id = m.id;
   perform battle_start(m.id);
   return jsonb_build_object('match', m.id);
+end $$;
+
+-- 再來一場 after a room match: the first of the two to ask opens a new room (no code), the second joins it
+-- and it starts. Returns {match, waiting}.
+create or replace function public.battle_rematch(p_match uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  me uuid := auth.uid();
+  m  public.battle_matches;
+  n  public.battle_matches;
+  other uuid;
+  mid uuid;
+begin
+  perform battle_check_open();
+  select * into m from battle_matches where id = p_match for update;
+  if not found or m.rated or m.p2 is null or me not in (m.p1, m.p2) or m.status <> 'finished' then
+    raise exception '這場不能再來一場';
+  end if;
+  other := case when me = m.p1 then m.p2 else m.p1 end;
+  if battle_blocked_between(me, other) then raise exception '無法加入'; end if;
+  if m.rematch is not null then
+    select * into n from battle_matches where id = m.rematch for update;
+    if n.status = 'waiting' and n.p1 <> me and n.p1_seen >= clock_timestamp() - interval '15 seconds' then
+      update battle_matches set p2 = me where id = n.id;
+      perform battle_start(n.id);
+      return jsonb_build_object('match', n.id, 'waiting', false);
+    end if;
+    if n.status in ('waiting', 'playing') and (n.p1 = me or n.p2 = me) then
+      return jsonb_build_object('match', n.id, 'waiting', n.status = 'waiting');
+    end if;
+  end if;
+  update battle_matches set status = 'finished', reason = 'abandoned', finished_at = clock_timestamp()
+  where p1 = me and status = 'waiting';
+  insert into battle_matches (rated, p1) values (false, me) returning id into mid;
+  update battle_matches set rematch = mid where id = m.id;
+  return jsonb_build_object('match', mid, 'waiting', true);
 end $$;
 
 -- ------------------------------------------------------------------ finishing
@@ -879,6 +995,12 @@ begin
     next_start := greatest(closed + (rules->>'reveal_ms')::int * interval '1 millisecond', t + interval '1500 milliseconds');
     update battle_rounds set starts_at = next_start, ends_at = next_start + (rules->>'round_ms')::int * interval '1 millisecond'
     where match_id = p_match and n = m.round + 1;
+    -- the computer's speed follows the player's last five answers, this match's included
+    if m.p2 is null and m.bot_rating is not null then
+      update battle_rounds set bot_ms = round(battle_bot_ms(m.p1, battle_tier((battle_rating(m.p1)).rating))
+                                              * case when m.boss is not null then 0.9 else 1 end)::int
+      where match_id = p_match and n = m.round + 1;
+    end if;
     update battle_matches set round = round + 1 where id = p_match;
   end if;
 end $$;
@@ -931,6 +1053,11 @@ begin
     rating := p_bot_rating;
   end if;
   t := battle_tier_info(rating);
+  -- the hidden computer shows its own tier and 9999; its real rating (10% up) still drives the match
+  if p_user is null and p_bot_name = battle_boss_name() then
+    return jsonb_build_object('name', p_bot_name, 'pid', battle_bot_pid(p_bot_name),
+      'rating', 9999, 'tier', jsonb_array_length(battle_rules()->'tiers'), 'tier_name', '扛不住', 'score', p_score);
+  end if;
   return jsonb_build_object(
     'name', coalesce(p.name, p_bot_name),
     'pid', coalesce(p.pid, battle_bot_pid(p_bot_name)),
@@ -958,7 +1085,7 @@ begin
   other := case when first then m.p2 else m.p1 end;
 
   res := res || jsonb_build_object(
-    'id', m.id, 'status', m.status, 'rated', m.rated, 'code', m.code, 'round', m.round,
+    'id', m.id, 'status', m.status, 'rated', m.rated, 'code', m.code, 'round', m.round, 'boss', m.boss,
     'rounds', (rules->>'rounds')::int, 'round_ms', (rules->>'round_ms')::int,
     'note', case when m.note = 'pair_limit' then format('你們今天已經對戰 %s 場，這場不計分', (rules->>'pair_daily_ranked')::int) end,
     'you', battle_side(me, null, null, case when first then m.p1_score else m.p2_score end, me),
@@ -995,6 +1122,9 @@ begin
       'reason', m.reason,
       'delta', case when first then m.p1_delta else m.p2_delta end,
       'breakdown', coalesce(case when first then m.p1_breakdown else m.p2_breakdown end, '[]'::jsonb),
+      'can_rematch', not m.rated and m.p2 is not null and m.note is null,
+      'rematch', (select case when x.p1 = me then 'mine' else 'theirs' end from battle_matches x
+                  where x.id = m.rematch and x.status = 'waiting' and x.p1_seen >= t - interval '15 seconds'),
       'tier_from', (ti->>'from')::int, 'tier_next', (ti->>'next')::int, 'next_name', ti->>'next_name',
       'words', coalesce((select jsonb_agg(jsonb_build_object(
           'term', x.term, 'zh', x.zh,
@@ -1046,7 +1176,7 @@ begin
     raise exception '名稱有不能使用的字元';
   end if;
   if battle_name_problem(clean) is not null then raise exception '%', battle_name_problem(clean); end if;
-  if exists (select 1 from unnest(battle_bot_names()) n where lower(n) = lower(clean)) then raise exception '這個名稱已經有人使用'; end if;
+  if exists (select 1 from unnest(battle_bot_names() || battle_boss_name()) n where lower(n) = lower(clean)) then raise exception '這個名稱已經有人使用'; end if;
   perform pg_advisory_xact_lock(hashtext('battle_set_name'));
   if exists (select 1 from battle_players where lower(name) = lower(clean) and user_id <> me.user_id) then
     raise exception '這個名稱已經有人使用';
@@ -1164,7 +1294,7 @@ language plpgsql stable security definer set search_path = public as $$
 begin
   select p.user_id, null, p.name into who, bot, name from battle_players p where p.pid = p_pid;
   if who is null then
-    select n, n into bot, name from unnest(battle_bot_names()) n where battle_bot_pid(n) = p_pid;
+    select n, n into bot, name from unnest(battle_bot_names() || battle_boss_name()) n where battle_bot_pid(n) = p_pid;
   end if;
   if who is null and bot is null then raise exception '找不到這位玩家'; end if;
 end $$;
@@ -1250,7 +1380,8 @@ begin
 end $$;
 
 grant execute on function public.battle_me(int), public.battle_set_name(text, int), public.battle_find(int), public.battle_cancel_find(),
-  public.battle_create_room(int), public.battle_join(text, int), public.battle_state(uuid),
+  public.battle_create_room(int), public.battle_join(text, int), public.battle_rematch(uuid), public.battle_state(uuid),
   public.battle_answer(uuid, int, int, int), public.battle_quit(uuid), public.battle_board(), public.battle_report(text, text),
-  public.battle_block(text), public.battle_blocked(), public.battle_unblock(bigint), public.battle_set_hidden(boolean)
+  public.battle_block(text), public.battle_blocked(), public.battle_unblock(bigint), public.battle_set_hidden(boolean),
+  public.battle_dev_limit(boolean)
   to authenticated;

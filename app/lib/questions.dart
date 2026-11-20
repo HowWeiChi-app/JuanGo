@@ -417,10 +417,11 @@ class _ChoiceQuestionState extends State<ChoiceQuestion> {
       for (final x in AppStore.shared.words)
         if (Dict.lookup(x.term) != null) (term: x.term, zh: x.primaryMeaning, pos: x.pos),
     ];
-    final same = List.of(Dict.byPos[w.pos] ?? const <DictEntry>[])..shuffle(rng);
+    // 像大考的選項：同詞性、程度差不多，常常字首或字尾一樣
+    final same = Dict.examLike(w.term, w.pos, rng);
     final pool = <_Cand>[
-      ...own,
-      ...same.take(40).map(cand),
+      ...same.map(cand),
+      ...(List.of(own)..shuffle(rng)),
       if (Dict.all.isNotEmpty) ...List.generate(40, (_) => cand(_pick(Dict.all))),
     ];
     final mine = w.meanings.toSet();
@@ -434,7 +435,7 @@ class _ChoiceQuestionState extends State<ChoiceQuestion> {
             !mine.contains(c.zh) &&
             !spellingVariants(c.term.toLowerCase(), w.term.toLowerCase()))
         .toList();
-    final samePos = others.where((c) => c.pos == w.pos).toList()..shuffle(rng);
+    final samePos = others.where((c) => c.pos == w.pos).toList(); // 保留 examLike 的順序，最像的在前
     final isPhrase = w.term.contains(' ');
     final phrases = !_answersInZh && isPhrase
         ? ([...others, ...Dict.phrases.map(cand)].where((c) => c.term.contains(' ') && c.term != w.term).toList()..shuffle(rng))

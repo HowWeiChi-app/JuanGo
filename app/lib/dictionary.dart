@@ -1,6 +1,7 @@
 // 內建字典：查字（含字形還原）、搜尋建議、相似字詞。邏輯照 iOS 版的 Dictionary_。
 
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -119,6 +120,55 @@ class Dict {
   }
 
   /// 相似字詞：先用預先算好的清單，沒有才找中文意思相同的字
+  /// 大考的難度順序；其他字表放在它們的字通常落在的位置
+  static int levelRank(String lv) => switch (lv) {
+        '國中小' => 0,
+        '多益' => 4,
+        '托福' || '雅思' => 6,
+        _ => int.tryParse(lv) ?? 3,
+      };
+
+  /// b 有多像 a 在大考裡的錯誤選項：程度相同，再來是開頭或結尾一樣（impress / improve、attention / addition）、長度相近
+  static double examScore(String a, int aLevel, String b, int bLevel) {
+    final x = a.toLowerCase(), y = b.toLowerCase();
+    var head = 0;
+    while (head < x.length && head < y.length && x[head] == y[head]) {
+      head++;
+    }
+    var tail = 0;
+    while (tail < x.length && tail < y.length && x[x.length - 1 - tail] == y[y.length - 1 - tail]) {
+      tail++;
+    }
+    var s = -(aLevel - bLevel).abs() * 1.5;
+    if (head >= 3) {
+      s += 2;
+    } else if (head == 2) {
+      s += 0.5;
+    }
+    if (tail >= 3) s += 1.5;
+    if ((x.length - y.length).abs() <= 2) s += 1;
+    return s;
+  }
+
+  /// 同詞性的單字，照像不像大考錯誤選項排好，最像的在前；加一點隨機，才不會每次都是同三個。只抽樣算，不算全部一萬字
+  static List<DictEntry> examLike(String term, String pos, Random rng, {int count = 12}) {
+    final me = lookup(term), t = term.toLowerCase(), rank = levelRank(me?.lv ?? '3');
+    // 近義字（reluctant / loath）會變成第二個正確答案
+    final near = (me?.sim ?? const <String>[]).toSet();
+    var pool = (byPos[pos] ?? const <DictEntry>[])
+        .where((e) =>
+            e.w != t &&
+            !e.w.contains(' ') &&
+            (levelRank(e.lv) - rank).abs() <= 1 &&
+            !near.contains(e.w) &&
+            !e.sim.contains(t))
+        .toList();
+    if (pool.length > 400) pool = (pool..shuffle(rng)).take(400).toList();
+    final scored = [for (final e in pool) (e, examScore(term, rank, e.w, levelRank(e.lv)) + rng.nextDouble() * 1.5)]
+      ..sort((a, b) => b.$2.compareTo(a.$2));
+    return [for (final x in scored.take(count)) x.$1];
+  }
+
   static List<DictEntry> similar(String term, List<String> meanings, String pos, {int limit = 3}) {
     final listed = (lookup(term)?.sim ?? const <String>[])
         .map(lookup)

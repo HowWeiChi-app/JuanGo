@@ -1,11 +1,14 @@
 // JuanGo Android 版的入口：載入資料、切換新手導覽和五個分頁。
 
+import 'dart:async';
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'add_tab.dart';
+import 'battle.dart';
+import 'dev_update.dart';
 import 'cloud.dart';
 import 'demo.dart';
 import 'dictionary.dart';
@@ -21,6 +24,7 @@ import 'theme.dart';
 import 'widgets.dart';
 import 'words_tab.dart';
 import 'word_quota.dart';
+import 'word_report.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -169,7 +173,19 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     Reminders.sync();
     Cloud.shared.syncQuietly();
+    WordReport.flush();
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkQuota());
+    // 開發版：有新版就提醒下載
+    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(DevUpdate.check(() => appNavigator.currentContext ?? context)));
+    // 自動對戰（開發版）：一打開就進單字對戰
+    unawaited(BattleAutoplay.read().then((_) {
+      final c = appNavigator.currentContext;
+      if (c == null || !c.mounted) return;
+      final step = BattleAutoplay.demoStep;
+      // ignore: invalid_use_of_visible_for_testing_member
+      if (step != null) return unawaited(presentFull(c, BattlePage(model: BattleModel()..demo(step))));
+      if (BattleAutoplay.delay != null) unawaited(presentFull(c, const BattlePage()));
+    }));
   }
 
   /// 超過免費版上限時跳提醒，或到期刪字
@@ -192,6 +208,7 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
       Cloud.shared.backgroundPush();
     } else if (state == AppLifecycleState.resumed) {
       _checkQuota();
+      WordReport.flush();
       Cloud.shared.syncQuietly();
     }
   }
