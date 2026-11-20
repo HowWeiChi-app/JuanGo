@@ -91,17 +91,15 @@ struct ProPaywall: View {
                     } else {
                         Picker("週期", selection: $period) {
                             Text("月繳").tag(ProPeriod.monthly)
-                            Text("年繳・送 2 個月").tag(ProPeriod.yearly)
+                            Text("年繳").tag(ProPeriod.yearly)
                         }
                         .pickerStyle(.segmented)
                         HStack(alignment: .top, spacing: 12) {
                             ForEach(ProPlan.allCases) { card($0) }
                         }
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("訂閱 GOs PRO，包含所有未來推出的 App。")
-                            Text("現在是早鳥優惠價 NT$800／年（NT$80／月），只用捲字和校板也比分開買兩個 Pro 便宜。之後推出更多 App 時，新訂閱的價格會調高；早鳥期間訂閱的人，只要不中斷，續訂都維持早鳥價。")
-                        }
-                        .font(.app(.footnote)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        Text("訂閱 GOs PRO，解鎖包含捲字、校板和所有即將推出的 App 之進階功能。")
+                            .font(.app(.footnote)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                     }
                     features
                     if held != .gos { buy }
@@ -124,7 +122,7 @@ struct ProPaywall: View {
         VStack(spacing: 8) {
             LIcon("sparkles").font(.app(size: 40, .bold)).foregroundStyle(Color.themeAccent)
             Text(held == .juango ? "升級到 GOs PRO" : "解鎖捲字 Pro").font(.app(.title, .bold))
-            Text("大考詞彙和學測考古題永遠免費，Pro 收的是 App 功能的費用。")
+            Text("大考詞彙和考古題永遠免費，捲字 Pro 包含額外進階功能。")
                 .font(.app(.subheadline)).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
         .padding(.top, 8)
@@ -155,12 +153,12 @@ struct ProPaywall: View {
                     }
                 }
                 Text(p.blurb).font(.app(.caption)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 6)
                 Text("NT$\(price)").font(.app(size: 26, .bold)).monospacedDigit()
                 Text(period == .yearly ? "每年・約 NT$\(price / 12) / 月" : "每月").font(.app(.caption)).foregroundStyle(.secondary)
-                if p == .gos && !current { Text("早鳥優惠價").font(.app(.caption, .bold)).foregroundStyle(Color.themeAccent) }
                 if current { Text("目前方案").font(.app(.caption, .bold)).foregroundStyle(Color.themeAccent) }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(14)
             .background(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous).fill(Color.cardFill))
             .overlay(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous)
@@ -173,11 +171,12 @@ struct ProPaywall: View {
 
     private var features: some View {
         VStack(alignment: .leading, spacing: 12) {
-            feature("infinity", "「我的單字」不限個數", "免費版最多 1000 個，大考詞彙不算")
+            feature("infinity", "「我的單字」不限個數", "免費版最多 1000 個")
             feature("character.bubble", "內建 AI 翻譯與例句", "不用自己填 API key")
-            feature("bolt.fill", "單字對戰不限場次", "免費版每天 3 場")
+            feature("bolt.fill", "單字對戰不限場次", "免費版每天 10 場")
             feature("chart.bar.xaxis", "進階統計", "每週報告、常錯字、學測詞彙涵蓋率")
-            feature("paintpalette.fill", "額外主題色和 App 圖示", "")
+            feature("paintpalette.fill", "額外主題色和 App 圖示", "即將推出")
+            feature("sparkles", "更多即將推出的功能", "包含訂閱期間所有推出的新功能")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
@@ -225,7 +224,7 @@ struct ProPaywall: View {
 
     private var legal: some View {
         VStack(spacing: 8) {
-            Text("訂閱會自動續訂。首次訂閱可免費試用 7 天，試用結束才開始扣款。目前週期結束前 24 小時沒有取消就會續訂，可以隨時在 iPhone 的「設定 › Apple 帳號 › 訂閱項目」取消。")
+            Text("訂閱會自動續訂。首次訂閱可免費試用 7 天，試用結束才開始扣款。可隨時在 iPhone 的「設定 › Apple 帳號 › 訂閱項目」取消。")
             Text("Pro 到期後，超過 1000 個的單字會在 30 天後從最早加入的開始刪除，刪除前會通知你。")
             HStack(spacing: 16) {
                 Link("服務條款", destination: ProStore.termsURL)
