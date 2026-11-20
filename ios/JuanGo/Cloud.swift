@@ -115,6 +115,7 @@ final class Cloud {
     }
 
     private func store(_ s: Session?) {
+        if (s == nil) != (session == nil) { DevLog.add("cloud", s == nil ? "signed out" : "signed in") }
         session = s
         if let s, let d = try? JSONEncoder().encode(s) { Keychain.write("session", d) } else { Keychain.delete("session") }
     }
@@ -292,21 +293,34 @@ final class Cloud {
 
     private func send(_ url: URL, method: String, json: [String: Any]? = nil, prefer: String? = nil, auth: Bool = true,
                       timeout: TimeInterval = 30) async throws -> Data {
+        try await sendRaw(url, method: method, body: json.map { try JSONSerialization.data(withJSONObject: $0) },
+                          prefer: prefer, auth: auth, timeout: timeout)
+    }
+
+    /// Any signed-in request with a ready-made body: JSON arrays for the textbook tables, JPEG bytes for Storage.
+    func sendRaw(_ url: URL, method: String, body: Data? = nil, contentType: String = "application/json",
+                 prefer: String? = nil, headers: [String: String] = [:], auth: Bool = true,
+                 timeout: TimeInterval = 30) async throws -> Data {
         guard CloudConfig.configured else { throw Failure(message: "雲端還沒設定好") }
         var req = URLRequest(url: url, timeoutInterval: timeout)
         req.httpMethod = method
         req.setValue(CloudConfig.key, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(auth ? try await accessToken() : CloudConfig.key)", forHTTPHeaderField: "Authorization")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(contentType, forHTTPHeaderField: "Content-Type")
         if let prefer { req.setValue(prefer, forHTTPHeaderField: "Prefer") }
-        if let json { req.httpBody = try JSONSerialization.data(withJSONObject: json) }
+        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+        req.httpBody = body
         let data: Data, resp: URLResponse
         do { (data, resp) = try await URLSession.shared.data(for: req) }
-        catch { throw Failure(message: "連不上伺服器，請檢查網路") }
+        catch {
+            DevLog.add("cloud", "\(method) \(url.path) → no reply: \(error.localizedDescription)")
+            throw Failure(message: "連不上伺服器，請檢查網路")
+        }
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             let msg = (o?["msg"] ?? o?["message"] ?? o?["error_description"] ?? o?["error"]) as? String
+            DevLog.add("cloud", "\(method) \(url.path) → \(status) \(msg ?? "")")
             if status == 429 { throw Failure(message: "太頻繁了，請稍後再試", status: status) }
             throw Failure(message: "\(msg ?? "伺服器錯誤")（\(status)）", status: status)
         }

@@ -38,37 +38,45 @@ nonisolated enum GlossaryParser {
         var seen = Set<String>()
         var bilingualRows = 0
         for raw in rows {
-            // Chinese OCR prints ASCII brackets and letters full-width (［ ］ （adj.）)
-            let row = raw.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? raw
-            let hasHan = row.range(of: #"\p{Han}"#, options: .regularExpression) != nil
-            let hasLatin = row.range(of: "[A-Za-z]{2}", options: .regularExpression) != nil
-            guard hasHan && hasLatin else { continue }
+            guard let entries = entries(inRow: raw) else { continue }
             bilingualRows += 1
-            let ns = row as NSString
-            for m in regex.matches(in: row, range: NSRange(location: 0, length: ns.length)) {
-                var term = ns.substring(with: m.range(withName: "term")).trimmingCharacters(in: .whitespaces)
-                var posText = ns.substring(with: m.range(withName: "pos"))
-                // "capable adj 有能力的": an undotted abbreviation ends up in the term
-                var words = term.split(separator: " ").map(String.init)
-                if words.count > 1, let last = words.last, posMap[last.lowercased()] != nil {
-                    words.removeLast(); term = words.joined(separator: " "); posText = last + " " + posText
-                }
-                let tags = unique(posText.lowercased().components(separatedBy: CharacterSet.letters.inverted)
-                    .compactMap { posMap[$0] })
-                // Counts only if the page gives a part of speech, or the English part of the match is the
-                // whole start of the row ("abandon 放棄" lists without parts of speech).
-                let before = ns.substring(to: m.range.location)
-                let startsRow = before.range(of: "[A-Za-z]", options: .regularExpression) == nil
-                guard term.count >= 2, words.count <= 4, !tags.isEmpty || startsRow else { continue }
-                let meanings = meaningList(ns.substring(with: m.range(withName: "zh")))
-                guard !meanings.isEmpty else { continue }
-                let key = term.lowercased()
-                guard seen.insert(key).inserted else { continue }
-                found.append(GlossaryEntry(term: key, pos: tags.joined(separator: "/"), meanings: meanings))
-            }
+            for e in entries where seen.insert(e.term).inserted { found.append(e) }
         }
         return found.count >= 3 && found.count * 2 >= bilingualRows ? found : []
     }
+
+    /// The "word (pos) 中文" entries on one row; nil when the row isn't bilingual at all.
+    static func entries(inRow raw: String) -> [GlossaryEntry]? {
+        // Chinese OCR prints ASCII brackets and letters full-width (［ ］ （adj.）)
+        let row = halfwidth(raw)
+        let hasHan = row.range(of: #"\p{Han}"#, options: .regularExpression) != nil
+        let hasLatin = row.range(of: "[A-Za-z]{2}", options: .regularExpression) != nil
+        guard hasHan && hasLatin else { return nil }
+        var found: [GlossaryEntry] = []
+        let ns = row as NSString
+        for m in regex.matches(in: row, range: NSRange(location: 0, length: ns.length)) {
+            var term = ns.substring(with: m.range(withName: "term")).trimmingCharacters(in: .whitespaces)
+            var posText = ns.substring(with: m.range(withName: "pos"))
+            // "capable adj 有能力的": an undotted abbreviation ends up in the term
+            var words = term.split(separator: " ").map(String.init)
+            if words.count > 1, let last = words.last, posMap[last.lowercased()] != nil {
+                words.removeLast(); term = words.joined(separator: " "); posText = last + " " + posText
+            }
+            let tags = unique(posText.lowercased().components(separatedBy: CharacterSet.letters.inverted)
+                .compactMap { posMap[$0] })
+            // Counts only if the page gives a part of speech, or the English part of the match is the
+            // whole start of the row ("abandon 放棄" lists without parts of speech).
+            let before = ns.substring(to: m.range.location)
+            let startsRow = before.range(of: "[A-Za-z]", options: .regularExpression) == nil
+            guard term.count >= 2, words.count <= 4, !tags.isEmpty || startsRow else { continue }
+            let meanings = meaningList(ns.substring(with: m.range(withName: "zh")))
+            guard !meanings.isEmpty else { continue }
+            found.append(GlossaryEntry(term: term.lowercased(), pos: tags.joined(separator: "/"), meanings: meanings))
+        }
+        return found
+    }
+
+    static func halfwidth(_ s: String) -> String { s.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? s }
 
     /// "放棄；拋棄 2." → ["放棄", "拋棄"]; "藝術形式 *5" → ["藝術形式"]
     static func meaningList(_ raw: String) -> [String] {

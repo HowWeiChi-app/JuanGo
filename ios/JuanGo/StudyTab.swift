@@ -261,7 +261,7 @@ struct StudyTab: View {
                     Text("單字對戰").font(.app(.title2, .bold))
                     Text("即時配對，比準也比快").font(.app(.subheadline)).opacity(0.85)
                     HStack(spacing: 6) {
-                        ForEach(["5 回合", "每題 10 秒", "積分配對"], id: \.self) { t in
+                        ForEach(["10 回合", "每題 10 秒", "積分配對"], id: \.self) { t in
                             Text(t).font(.app(.caption, .semibold))
                                 .padding(.horizontal, 8).padding(.vertical, 4)
                                 .background(Capsule().fill(Color.onAccent.opacity(0.18)))
@@ -283,7 +283,7 @@ struct StudyTab: View {
             .contentShape(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("單字對戰，五回合即時對戰，比準也比快")
+        .accessibilityLabel("單字對戰，十回合即時對戰，比準也比快")
     }
 
     private func actionRow<I: View>(_ title: String, _ sub: String, @ViewBuilder icon: () -> I, action: @escaping () -> Void) -> some View {

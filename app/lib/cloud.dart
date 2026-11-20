@@ -10,6 +10,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'dev_log.dart';
 import 'store.dart';
 
 /// 這把 key 本來就要放在 App 裡，能碰到什麼由 supabase/schema.sql 的資料列權限決定
@@ -216,6 +217,7 @@ class Cloud extends ChangeNotifier {
   static DateTime _expiry(num seconds) => DateTime.now().add(Duration(seconds: seconds.toInt() - 60));
 
   void _store(CloudSession? s) {
+    if ((s == null) != (session == null)) DevLog.add('cloud', s == null ? '登出' : '登入');
     session = s;
     unawaited(_persist(s));
   }
@@ -465,29 +467,48 @@ class Cloud extends ChangeNotifier {
     bool auth = true,
     Duration timeout = const Duration(seconds: 30),
   }) async {
+    final res = await sendBytes(url, method,
+        body: json == null ? null : utf8.encode(jsonEncode(json)), prefer: prefer, auth: auth, timeout: timeout);
+    return utf8.decode(res, allowMalformed: true);
+  }
+
+  /// 任何要登入的請求，body 自己準備好：課文書架的資料表用 JSON 陣列，Storage 用 JPEG 位元組
+  Future<List<int>> sendBytes(
+    Uri url,
+    String method, {
+    List<int>? body,
+    String contentType = 'application/json',
+    String? prefer,
+    Map<String, String> headers = const {},
+    bool auth = true,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
     final bearer = auth ? await _accessToken() : CloudConfig.key;
     final req = http.Request(method, url)
       ..headers.addAll({
         'apikey': CloudConfig.key,
         'Authorization': 'Bearer $bearer',
-        'Content-Type': 'application/json',
+        'Content-Type': contentType,
         if (prefer != null) 'Prefer': prefer,
+        ...headers,
       });
-    if (json != null) req.body = jsonEncode(json);
+    if (body != null) req.bodyBytes = body;
     final http.Response res;
     try {
       res = await http.Response.fromStream(await _client.send(req).timeout(timeout));
     } catch (_) {
+      DevLog.add('cloud', '$method ${url.path} → 沒有回應');
       throw const CloudFailure('連不上伺服器，請檢查網路');
     }
-    final body = utf8.decode(res.bodyBytes, allowMalformed: true);
-    if (res.statusCode >= 200 && res.statusCode < 300) return body;
+    if (res.statusCode >= 200 && res.statusCode < 300) return res.bodyBytes;
+    final text = utf8.decode(res.bodyBytes, allowMalformed: true);
     if (res.statusCode == 429) throw _HttpFailure(429, '太頻繁了，請稍後再試');
     String? message;
     try {
-      final o = jsonDecode(body) as Map<String, dynamic>;
+      final o = jsonDecode(text) as Map<String, dynamic>;
       message = (o['msg'] ?? o['message'] ?? o['error_description'] ?? o['error']) as String?;
     } catch (_) {}
+    DevLog.add('cloud', '$method ${url.path} → ${res.statusCode} ${message ?? ''}');
     throw _HttpFailure(res.statusCode, '${message ?? '伺服器錯誤'}（${res.statusCode}）');
   }
 }

@@ -41,6 +41,17 @@ struct ScanResult: Identifiable {
     var glossary: [GlossaryEntry] = []
 }
 
+/// The one Vision text-recognition setup, shared by the word scanner and the textbook shelf (課文書架).
+nonisolated enum TextRecognition {
+    static func request(languages: [String]) -> VNRecognizeTextRequest {
+        let req = VNRecognizeTextRequest()
+        req.recognitionLevel = .accurate
+        req.recognitionLanguages = languages
+        req.usesLanguageCorrection = true
+        return req
+    }
+}
+
 enum PhotoScanner {
     /// Redraws the photo upright (so Vision boxes map straight onto it) and caps its size.
     static func upright(_ image: UIImage, maxSide: CGFloat = 2400) -> UIImage {
@@ -83,12 +94,9 @@ enum PhotoScanner {
     nonisolated private static func recognizeWords(_ cg: CGImage) async -> ([(text: String, rect: CGRect, loc: Int)], String, [(text: String, box: CGRect)]) {
         await withCheckedContinuation { cont in
             DispatchQueue.global(qos: .userInitiated).async {
-                let req = VNRecognizeTextRequest()
-                req.recognitionLevel = .accurate
                 // Chinese too: word lists print 中文意思 next to each word, and an English-only
                 // recogniser turns those characters into junk "words" (FA, EA…).
-                req.recognitionLanguages = ["zh-Hant", "en-US"]
-                req.usesLanguageCorrection = true
+                let req = TextRecognition.request(languages: ["zh-Hant", "en-US"])
                 try? VNImageRequestHandler(cgImage: cg, orientation: .up).perform([req])
                 let ink = InkMap(cg)
                 var out: [(text: String, rect: CGRect, loc: Int)] = []

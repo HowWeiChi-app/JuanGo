@@ -1,5 +1,6 @@
 // 新增：查字、匯入檔案、貼上單字清單。排版照 iOS 版 ImportTab。
-// iOS 的拍照掃描靠 Apple 的文字辨識，這一版先不放，不留按不了的按鈕。
+// iOS 的拍照抓單字靠 Apple 的文字辨識，這一版先不放，不留按不了的按鈕。
+// 課文書架（拍課文變電子書）用 ML Kit，入口在這頁。
 
 import 'dart:async';
 
@@ -12,6 +13,7 @@ import 'models.dart';
 import 'services.dart';
 import 'sheets.dart';
 import 'store.dart';
+import 'textbook_pages.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -174,6 +176,7 @@ class _AddTabState extends State<AddTab> {
           ),
         ),
       ]),
+      const Sec(footer: '掃描整篇課文，變成可以點字查詢的電子書。', children: [BookshelfRow()]),
       Sec(header: '其他加入方式', footer: '分享代碼是朋友分享清單時拿到的 8 碼，72 小時內有效，不用登入也能加入。', children: [
         RowTile(
           leading: Icon(Icons.description_outlined, size: 22, color: p.accent),

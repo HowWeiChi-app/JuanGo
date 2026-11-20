@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'cloud.dart';
+import 'dev_log.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -45,7 +46,8 @@ enum ProPeriod {
 /// 已經做好的付費功能，開發版可以在「開發者選項」一個個關掉
 enum ProFeature {
   words('「我的單字」不限個數'),
-  battles('單字對戰不限場次');
+  battles('單字對戰不限場次'),
+  textbook('課文書架不限課數');
 
   const ProFeature(this.title);
   final String title;
@@ -54,9 +56,9 @@ enum ProFeature {
 class ProStore extends ChangeNotifier {
   ProStore._() {
     if (devGosPro) {
-      plan = ProPlan.gos;
-      devUnlocked = true;
       unawaited(_loadDev());
+      // 登入、登出時 Pro 狀態跟著變
+      Cloud.shared.addListener(notifyListeners);
     }
   }
 
@@ -86,12 +88,16 @@ class ProStore extends ChangeNotifier {
   }
   static final shared = ProStore._();
 
-  ProPlan? plan;
+  /// 在商店買的方案（RevenueCat 還沒接上）
+  ProPlan? _bought;
+
+  /// 這個帳號有的方案：開發版登入時是 GOs PRO，不然就是買的
+  ProPlan? get plan => devUnlocked ? ProPlan.gos : _bought;
   ProPeriod? period;
   DateTime? expires;
 
-  /// 開發版解鎖，不是買的
-  bool devUnlocked = false;
+  /// 開發版的 Pro 綁在登入的帳號上：登出就跟免費版一樣，開發版的說明和開發者選項也不顯示
+  bool get devUnlocked => devGosPro && Cloud.shared.signedIn;
 
   bool get isPro => plan != null;
 
@@ -194,6 +200,7 @@ class _ProPaywallState extends State<ProPaywall> {
                   _feature(p, Icons.all_inclusive_rounded, '「我的單字」不限個數', '免費版最多 1000 個'),
                   _feature(p, Icons.translate_rounded, '內建 AI 翻譯與例句', '不用自己填 API key'),
                   _feature(p, Icons.bolt_rounded, '單字對戰不限場次', '免費版每天 10 場'),
+                  _feature(p, Icons.auto_stories_rounded, '課文書架', '掃描課文變成電子書，修正掃錯的字，免費版可試用 1 課'),
                   _feature(p, Icons.insights_rounded, '進階統計', '每週報告、常錯字、學測詞彙涵蓋率'),
                   _feature(p, Icons.palette_rounded, '額外主題色和 App 圖示', '即將推出'),
                   _feature(p, Icons.auto_awesome_rounded, '更多即將推出的功能', '包含訂閱期間所有推出的新功能', last: true),
@@ -317,7 +324,7 @@ class ProSettingsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-        listenable: ProStore.shared,
+        listenable: Listenable.merge([ProStore.shared, Cloud.shared]),
         builder: (context, _) {
           final p = Palette.of(context);
           final pro = ProStore.shared;
@@ -352,7 +359,7 @@ class ProSettingsPage extends StatelessWidget {
               if (pro.isPro && !pro.devUnlocked) RowTile(title: '管理訂閱', titleColor: p.accent, onTap: () => _open(ProStore.manage)),
             ]),
             if (pro.devUnlocked)
-              Sec(header: '開發者選項', footer: '關掉的功能會照免費版運作，方便測試。對戰場次只對測試帳號有效。', children: [
+              Sec(header: '開發者選項', footer: '關掉的功能會照免費版運作，方便測試。對戰場次只對測試帳號有效。開發版的 Pro 綁在登入的帳號上，登出就恢復免費版。', children: [
                 for (final f in ProFeature.values)
                   SwitchRow(title: f.title, value: !pro.devOff.contains(f), onChanged: (v) => unawaited(pro.setDev(f, v))),
                 RowTile(
@@ -365,6 +372,19 @@ class ProSettingsPage extends StatelessWidget {
                     }
                   },
                 ),
+              ]),
+            if (pro.devUnlocked)
+              Sec(footer: 'Log 只存在這支手機，按「回報問題」送出時才會連同你的說明一起上傳。', children: [
+                RowTile(
+                    leading: Icon(Icons.receipt_long_rounded, size: 22, color: p.accent),
+                    title: 'Log 紀錄',
+                    chevron: true,
+                    onTap: () => pushPage(context, const DevLogPage())),
+                RowTile(
+                    leading: Icon(Icons.feedback_outlined, size: 22, color: p.accent),
+                    title: '回報問題',
+                    chevron: true,
+                    onTap: () => pushPage(context, const DevReportPage())),
               ]),
           ]);
         },

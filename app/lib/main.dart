@@ -10,6 +10,7 @@ import 'add_tab.dart';
 import 'battle.dart';
 import 'dev_update.dart';
 import 'cloud.dart';
+import 'dev_log.dart';
 import 'demo.dart';
 import 'dictionary.dart';
 import 'exam.dart';
@@ -44,7 +45,10 @@ class _JuanGoAppState extends State<JuanGoApp> {
   // 字典有 3 MB，等它載入時先顯示主題底色，不讓畫面停在白屏
   // 資料都載入後才接登入連結，同步才不會蓋到還沒讀進來的資料
   late final Future<void> _ready = Future.wait([Dict.load(), AppStore.shared.load(), ExamStore.load(), Cloud.shared.load()])
-      .then((_) => Cloud.shared.listenForLinks());
+      .then((_) {
+    DevLog.add('app', '開啟 · ${DevLog.deviceSummary} · ${Cloud.shared.signedIn ? '已登入' : '未登入'}');
+    return Cloud.shared.listenForLinks();
+  });
 
   @override
   void initState() {
@@ -97,9 +101,41 @@ class _JuanGoAppState extends State<JuanGoApp> {
               );
             }
             if (snap.connectionState != ConnectionState.done) return ColoredBox(color: p.bg);
-            return const RootView();
+            return Stack(fit: StackFit.expand, children: [const RootView(), _FadeCover(color: p.bg)]);
           },
         ),
+      ),
+    );
+  }
+}
+
+/// 資料載入好後，主題底色的遮罩淡出，主畫面才不會一下子跳出來
+class _FadeCover extends StatefulWidget {
+  const _FadeCover({required this.color});
+  final Color color;
+  @override
+  State<_FadeCover> createState() => _FadeCoverState();
+}
+
+class _FadeCoverState extends State<_FadeCover> {
+  bool _shown = true, _gone = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => mounted ? setState(() => _shown = false) : null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_gone) return const SizedBox.shrink();
+    return IgnorePointer(
+      child: AnimatedOpacity(
+        opacity: _shown ? 1 : 0,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOut,
+        onEnd: () => setState(() => _gone = true),
+        child: ColoredBox(color: widget.color, child: const SizedBox.expand()),
       ),
     );
   }
@@ -202,6 +238,9 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.resumed) {
+      DevLog.add('app', state == AppLifecycleState.resumed ? '回到前景' : '到背景');
+    }
     if (state == AppLifecycleState.paused) {
       AppStore.shared.flush();
       Reminders.sync();

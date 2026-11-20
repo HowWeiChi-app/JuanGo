@@ -65,7 +65,9 @@ struct RootView: View {
                 Task { if let r = try? await cloud.sync(ctx) { cloud.notice = "已登入 \(cloud.session?.email ?? "")，\(r)" } }
             }
         }
+        .task { DevLog.add("app", "launch · \(DevLog.deviceSummary) · \(cloud.signedIn ? "signed in" : "signed out")") }
         .onChange(of: phase) { _, p in
+            if p != .inactive { DevLog.add("app", p == .active ? "foreground" : "background") }
             if p == .background {
                 cloud.backgroundPush(ctx)
                 // skip today's reminder when today's practice is already done
@@ -205,7 +207,7 @@ extension View { func themedBackground() -> some View { modifier(ThemedBackgroun
 
 
 /// A short dissolve between tabs: a picture of the tab being left, laid under the tab bar, fades out over the new one.
-/// Covers the first screen while the Chinese face picked in 字體 (圓體 or 宋體) loads, so the text doesn't
+/// A plain theme-coloured cover over the first screen while the Chinese face picked in 字體 (圓體 or 宋體) loads, so the text doesn't
 /// draw in 蘋方 and then jump. Gives up after a few seconds (no network on the first download) and fades out.
 struct FontLoadingMask: View {
     @Environment(AppSettings.self) private var settings
@@ -215,19 +217,13 @@ struct FontLoadingMask: View {
     var body: some View {
         ZStack {
             if !gone && !font.ready {
-                ZStack {
-                    settings.theme.background
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text("正在載入字型").font(.system(.footnote)).foregroundStyle(.secondary)
-                    }
-                }
-                .ignoresSafeArea()
+                settings.theme.background
+                    .ignoresSafeArea()
                 .transition(.opacity)
             }
         }
-        .animation(.easeOut(duration: 0.25), value: font.ready)
-        .animation(.easeOut(duration: 0.25), value: gone)
+        .animation(.easeOut(duration: 0.35), value: font.ready)
+        .animation(.easeOut(duration: 0.35), value: gone)
         .allowsHitTesting(!gone && !font.ready)
         .task {
             try? await Task.sleep(for: .seconds(4))

@@ -953,17 +953,17 @@ Future<void> confirmAction(BuildContext c, String title,
 
 /// 輸入一行文字（建立清單）
 Future<void> promptText(BuildContext c, String title,
-    {required String hint, required String confirm, required bool Function(String) valid, required ValueChanged<String> onDone}) {
+    {required String hint, required String confirm, required bool Function(String) valid, required ValueChanged<String> onDone, String initial = ''}) {
   return showDialog(
     context: c,
     useRootNavigator: true,
-    builder: (_) => _PromptBox(title: title, hint: hint, confirm: confirm, valid: valid, onDone: onDone),
+    builder: (_) => _PromptBox(title: title, hint: hint, confirm: confirm, valid: valid, onDone: onDone, initial: initial),
   );
 }
 
 class _PromptBox extends StatefulWidget {
-  const _PromptBox({required this.title, required this.hint, required this.confirm, required this.valid, required this.onDone});
-  final String title, hint, confirm;
+  const _PromptBox({required this.title, required this.hint, required this.confirm, required this.valid, required this.onDone, this.initial = ''});
+  final String title, hint, confirm, initial;
   final bool Function(String) valid;
   final ValueChanged<String> onDone;
   @override
@@ -971,7 +971,7 @@ class _PromptBox extends StatefulWidget {
 }
 
 class _PromptBoxState extends State<_PromptBox> {
-  final _c = TextEditingController();
+  late final _c = TextEditingController(text: widget.initial);
   @override
   void dispose() {
     _c.dispose();

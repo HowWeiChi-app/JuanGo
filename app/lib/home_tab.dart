@@ -239,7 +239,7 @@ class HomeTab extends StatelessWidget {
           child: Text(t, style: ts(F.cap, w: w6, c: fg)),
         );
     return Tap(
-      label: '單字對戰，五回合即時對戰，比準也比快',
+      label: '單字對戰，十回合即時對戰，比準也比快',
       onTap: () => presentFull(context, const BattlePage()),
       child: Container(
         padding: const EdgeInsets.all(18),
@@ -254,7 +254,7 @@ class HomeTab extends StatelessWidget {
               const SizedBox(height: 8),
               Text('即時配對，比準也比快', style: ts(F.sub, c: fg.withValues(alpha: .85))),
               const SizedBox(height: 10),
-              Wrap(spacing: 6, runSpacing: 6, children: [chip('5 回合'), chip('每題 10 秒'), chip('積分配對')]),
+              Wrap(spacing: 6, runSpacing: 6, children: [chip('10 回合'), chip('每題 10 秒'), chip('積分配對')]),
             ]),
           ),
           const SizedBox(width: 14),

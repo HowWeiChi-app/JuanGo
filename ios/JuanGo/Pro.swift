@@ -3,7 +3,7 @@ import StoreKit
 
 // MARK: - Build flags
 
-enum DevFlags {
+nonisolated enum DevFlags {
     /// The dev build (the local battle branch) has every paid feature unlocked as GOs PRO. Always false on main.
     static let gosPro = true
 }
@@ -38,9 +38,15 @@ enum ProPeriod: String, CaseIterable, Identifiable {
 
 /// The paid features that already exist, each of which the dev build can switch off (開發者選項).
 enum ProFeature: String, CaseIterable, Identifiable {
-    case words, battles
+    case words, battles, textbook
     var id: String { rawValue }
-    var title: String { self == .words ? "「我的單字」不限個數" : "單字對戰不限場次" }
+    var title: String {
+        switch self {
+        case .words: "「我的單字」不限個數"
+        case .battles: "單字對戰不限場次"
+        case .textbook: "課文書架不限課數和 AI 修正"
+        }
+    }
 }
 
 /// What the player owns. Purchases will come through RevenueCat (entitlement `juango_pro`, unlocked by
@@ -49,11 +55,15 @@ enum ProFeature: String, CaseIterable, Identifiable {
 final class ProStore {
     static let shared = ProStore()
 
-    private(set) var plan: ProPlan?
+    /// the plan bought in the store (RevenueCat, not connected yet)
+    private var bought: ProPlan?
+    /// what the account has: the dev build's GOs PRO while signed in, otherwise what was bought
+    var plan: ProPlan? { devUnlocked ? .gos : bought }
     private(set) var period: ProPeriod?
     private(set) var expires: Date?
-    /// unlocked by the dev build rather than bought
-    private(set) var devUnlocked = false
+    /// The dev build unlocks Pro for the signed-in account only: signing out locks every Pro feature again,
+    /// with the dev texts and 開發者選項 hidden, exactly like the free version.
+    var devUnlocked: Bool { DevFlags.gosPro && Cloud.shared.signedIn }
 
     var isPro: Bool { plan != nil }
 
@@ -73,12 +83,7 @@ final class ProStore {
         var errorDescription: String? { "商店還沒開通，App 上架後就能訂閱。" }
     }
 
-    private init() {
-        if DevFlags.gosPro {
-            plan = .gos
-            devUnlocked = true
-        }
-    }
+    private init() {}
 
     func purchase(_ plan: ProPlan, _ period: ProPeriod) async throws { throw NotOpen() }
     func restore() async throws { throw NotOpen() }
@@ -193,6 +198,7 @@ struct ProPaywall: View {
             feature("infinity", "「我的單字」不限個數", "免費版最多 1000 個")
             feature("character.bubble", "內建 AI 翻譯與例句", "不用自己填 API key")
             feature("bolt.fill", "單字對戰不限場次", "免費版每天 10 場")
+            feature("books.vertical.fill", "課文書架", "掃描課文變成電子書，Apple Intelligence 修正掃錯的字，免費版可試用 1 課")
             feature("chart.bar.xaxis", "進階統計", "每週報告、常錯字、學測詞彙涵蓋率")
             feature("paintpalette.fill", "額外主題色和 App 圖示", "即將推出")
             feature("sparkles", "更多即將推出的功能", "包含訂閱期間所有推出的新功能")
@@ -293,7 +299,13 @@ struct ProSettingsView: View {
                 } header: {
                     Text("開發者選項")
                 } footer: {
-                    Text("關掉的功能會照免費版運作，方便測試。對戰場次只對測試帳號有效。")
+                    Text("關掉的功能會照免費版運作，方便測試。對戰場次只對測試帳號有效。開發版的 Pro 綁在登入的帳號上，登出就恢復免費版。")
+                }
+                Section {
+                    NavigationLink { DevLogView() } label: { Label("Log 紀錄", pulso: "doc.text.magnifyingglass") }
+                    NavigationLink { DevReportView() } label: { Label("回報問題", pulso: "exclamationmark.bubble") }
+                } footer: {
+                    Text("Log 只存在這支手機，按「回報問題」送出時才會連同你的說明一起上傳。")
                 }
             }
         }.listRowBackground(Color.cardFill) }

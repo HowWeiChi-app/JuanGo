@@ -203,9 +203,11 @@ void main() {
       await t.tapIcon(Icons.tune_rounded);
       await t.tapText('捲字 Pro');
       await t.shot('${tag}_pro_settings');
-      // 開發版已經是 GOs PRO，付費牆仍然完整顯示，方便展示
-      if (devGosPro) expect(find.text('開發版：已解鎖所有 Pro 功能'), findsOneWidget);
-      await t.tapText(devGosPro ? '查看付費牆（展示用）' : '查看 Pro 方案');
+      // 開發版的 Pro 綁在登入的帳號上；測試沒有登入，所以跟免費版一樣，也看不到開發者選項
+      expect(find.text('免費版'), findsOneWidget);
+      expect(find.text('開發版：已解鎖所有 Pro 功能'), findsNothing);
+      expect(find.text('開發者選項'), findsNothing);
+      await t.tapText('查看 Pro 方案');
       await t.shot('${tag}_pro_paywall');
       await t.tapText('免費試用 7 天');
       expect(find.text(ProStore.notOpen), findsOneWidget);
