@@ -83,6 +83,9 @@ class _ProPaywallState extends State<ProPaywall> {
   bool _busy = false;
   ProStore get _pro => ProStore.shared;
 
+  /// 買了的方案；開發版的解鎖不算，付費牆才能完整展示
+  ProPlan? get _held => _pro.devUnlocked ? null : _pro.plan;
+
   Future<void> _run(Future<void> Function() f) async {
     setState(() => _busy = true);
     try {
@@ -96,8 +99,8 @@ class _ProPaywallState extends State<ProPaywall> {
   @override
   Widget build(BuildContext context) {
     final p = Palette.of(context);
-    final owned = _pro.plan == ProPlan.gos;
-    final upgrade = _pro.plan == ProPlan.juango;
+    final owned = _held == ProPlan.gos;
+    final upgrade = _held == ProPlan.juango;
     final price = _plan.price(_period);
     return NavPage(
       close: true,
@@ -210,7 +213,7 @@ class _ProPaywallState extends State<ProPaywall> {
       );
 
   Widget _card(Palette p, ProPlan plan) {
-    final selected = _plan == plan, current = _pro.plan == plan;
+    final selected = _plan == plan, current = _held == plan;
     final price = plan.price(_period);
     return Semantics(
       selected: selected,
@@ -301,9 +304,9 @@ class ProSettingsPage extends StatelessWidget {
               ),
             ]),
             Sec(footer: '大考詞彙和學測考古題不受付費限制。', children: [
-              if (plan != ProPlan.gos)
+              if (plan != ProPlan.gos || pro.devUnlocked)
                 RowTile(
-                  title: plan == ProPlan.juango ? '升級到 GOs PRO' : '查看 Pro 方案',
+                  title: pro.devUnlocked ? '查看付費牆（展示用）' : (plan == ProPlan.juango ? '升級到 GOs PRO' : '查看 Pro 方案'),
                   titleColor: p.accent,
                   onTap: () => presentFull(context, const ProPaywall()),
                 ),

@@ -78,13 +78,15 @@ struct ProPaywall: View {
     @State private var message: String?
     @State private var redeeming = false
     private var pro: ProStore { .shared }
+    /// the plan bought; the dev build's unlock is left out so the paywall shows in full for demos
+    private var held: ProPlan? { pro.devUnlocked ? nil : pro.plan }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 22) {
                     header
-                    if pro.plan == .gos {
+                    if held == .gos {
                         owned
                     } else {
                         Picker("週期", selection: $period) {
@@ -102,7 +104,7 @@ struct ProPaywall: View {
                         .font(.app(.footnote)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                     }
                     features
-                    if pro.plan != .gos { buy }
+                    if held != .gos { buy }
                     extras
                     legal
                 }
@@ -114,14 +116,14 @@ struct ProPaywall: View {
                 Button("好", role: .cancel) {}
             } message: { Text(message ?? "") }
             .offerCodeRedemption(isPresented: $redeeming) { _ in }
-            .onAppear { if pro.plan == .juango { plan = .gos } }
+            .onAppear { if held == .juango { plan = .gos } }
         }
     }
 
     private var header: some View {
         VStack(spacing: 8) {
             LIcon("sparkles").font(.app(size: 40, .bold)).foregroundStyle(Color.themeAccent)
-            Text(pro.plan == .juango ? "升級到 GOs PRO" : "解鎖捲字 Pro").font(.app(.title, .bold))
+            Text(held == .juango ? "升級到 GOs PRO" : "解鎖捲字 Pro").font(.app(.title, .bold))
             Text("大考詞彙和學測考古題永遠免費，Pro 收的是 App 功能的費用。")
                 .font(.app(.subheadline)).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
@@ -140,7 +142,7 @@ struct ProPaywall: View {
 
     private func card(_ p: ProPlan) -> some View {
         let selected = plan == p
-        let current = pro.plan == p
+        let current = held == p
         let price = p.price(period)
         return Button { if !current { plan = p } } label: {
             VStack(alignment: .leading, spacing: 6) {
@@ -201,11 +203,11 @@ struct ProPaywall: View {
                     busy = false
                 }
             } label: {
-                Text(pro.plan == .juango ? "升級到 GOs PRO" : "免費試用 7 天")
+                Text(held == .juango ? "升級到 GOs PRO" : "免費試用 7 天")
             }
             .buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
             .disabled(busy)
-            Text(pro.plan == .juango ? "改成 NT$\(plan.price(period)) / \(period.unit)，剩下的捲字 Pro 費用由 App Store 按比例退還。"
+            Text(held == .juango ? "改成 NT$\(plan.price(period)) / \(period.unit)，剩下的捲字 Pro 費用由 App Store 按比例退還。"
                  : "試用結束後 NT$\(plan.price(period)) / \(period.unit)，自動續訂。")
                 .font(.app(.footnote)).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
@@ -252,8 +254,8 @@ struct ProSettingsView: View {
                 .padding(.vertical, 6)
             }
             Section {
-                if pro.plan != .gos {
-                    Button(pro.plan == .juango ? "升級到 GOs PRO" : "查看 Pro 方案") { paywall = true }
+                if pro.plan != .gos || pro.devUnlocked {
+                    Button(pro.devUnlocked ? "查看付費牆（展示用）" : pro.plan == .juango ? "升級到 GOs PRO" : "查看 Pro 方案") { paywall = true }
                 }
                 if pro.isPro && !pro.devUnlocked {
                     Button("管理訂閱") { managing = true }
