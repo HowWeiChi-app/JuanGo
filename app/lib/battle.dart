@@ -2,8 +2,10 @@
 // 排版照 iOS 版 Battle.swift。
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/scheduler.dart' show Ticker;
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:material_ui/material_ui.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -119,11 +121,18 @@ class BattleModel extends ChangeNotifier {
   String? code, error;
   int waited = 0;
 
+  /// 這次配對開始的時間：等待畫面的時鐘用手機自己算，每秒都會跳，不用等伺服器
+  DateTime searchStarted = DateTime.now();
+
   double _clockOffset = 0, _bestTrip = double.infinity;
   int _run = 0; // 每次換畫面就加一，舊的輪詢看到不同的值就停
   bool _demo = false, _closed = false;
 
   Cloud get _cloud => Cloud.shared;
+
+  /// 逾時設短一點：以前一個卡住的請求會讓整場停住，直到 30 秒後才放棄
+  Future<Object?> _rpc(String name, [Map<String, dynamic> args = const {}]) =>
+      _cloud.rpc(name, args, const Duration(seconds: 5));
   double get _local => DateTime.now().millisecondsSinceEpoch.toDouble();
   double get serverNow => _local + _clockOffset;
 
@@ -139,6 +148,7 @@ class BattleModel extends ChangeNotifier {
     picks.clear();
     code = error = null;
     waited = 0;
+    searchStarted = DateTime.now();
     _bestTrip = double.infinity;
     if (!_closed) notifyListeners();
   }
@@ -159,7 +169,7 @@ class BattleModel extends ChangeNotifier {
       return null;
     }
     try {
-      final j = await _cloud.rpc('battle_set_name', {'p_name': name, 'p_level': level}) as Map<String, dynamic>;
+      final j = await _rpc('battle_set_name', {'p_name': name, 'p_level': level}) as Map<String, dynamic>;
       _set(() => me = BattlePlayer(j));
       return null;
     } catch (e) {
@@ -174,7 +184,7 @@ class BattleModel extends ChangeNotifier {
       return;
     }
     try {
-      final j = await _cloud.rpc('battle_me', {'p_level': level}) as Map<String, dynamic>;
+      final j = await _rpc('battle_me', {'p_level': level}) as Map<String, dynamic>;
       _set(() {
         me = BattlePlayer(j);
         meFailed = false;
@@ -193,7 +203,7 @@ class BattleModel extends ChangeNotifier {
     var failures = 0;
     while (run == _run) {
       try {
-        final t = await _cloud.rpc('battle_find', {'p_level': level}) as Map<String, dynamic>;
+        final t = await _rpc('battle_find', {'p_level': level}) as Map<String, dynamic>;
         if (run != _run) return;
         failures = 0;
         final id = t['match'] as String?;
@@ -210,7 +220,7 @@ class BattleModel extends ChangeNotifier {
     _reset(BattlePhase.searching);
     final run = _run;
     try {
-      final t = await _cloud.rpc('battle_create_room', {'p_level': level}) as Map<String, dynamic>;
+      final t = await _rpc('battle_create_room', {'p_level': level}) as Map<String, dynamic>;
       if (run != _run) return;
       _set(() {
         code = t['code'] as String;
@@ -226,7 +236,7 @@ class BattleModel extends ChangeNotifier {
     _reset(BattlePhase.searching);
     final run = _run;
     try {
-      final t = await _cloud.rpc('battle_join', {'p_code': roomCode, 'p_level': level}) as Map<String, dynamic>;
+      final t = await _rpc('battle_join', {'p_code': roomCode, 'p_level': level}) as Map<String, dynamic>;
       if (run == _run) await _poll(t['match'] as String, run);
     } catch (e) {
       _fail(run, e);
@@ -238,7 +248,7 @@ class BattleModel extends ChangeNotifier {
     while (run == _run) {
       try {
         final sent = _local;
-        final j = await _cloud.rpc('battle_state', {'p_match': id}) as Map<String, dynamic>;
+        final j = await _rpc('battle_state', {'p_match': id}) as Map<String, dynamic>;
         failures = 0;
         final s = BattleState(j);
         _apply(s, sent, run);
@@ -246,8 +256,19 @@ class BattleModel extends ChangeNotifier {
       } catch (e) {
         if (++failures >= 16) return _fail(run, e);
       }
-      await _wait(pollEvery);
+      await _wait(_nextPoll());
     }
+  }
+
+  /// 平常每 0.5 秒問一次；下一題快能拿到（開始前 1 秒）或時間快到時提早問，倒數才不會停在 1
+  Duration _nextPoll() {
+    final s = state;
+    if (s == null || s.status != 'playing') return pollEvery;
+    final now = serverNow;
+    final marks = [if (s.starts != null) s.starts! - 900, if (s.ends != null) s.ends! + 60].where((m) => m > now);
+    if (marks.isEmpty) return pollEvery;
+    final ms = (marks.reduce((a, b) => a < b ? a : b) - now).clamp(80, pollEvery.inMilliseconds.toDouble());
+    return Duration(milliseconds: ms.round());
   }
 
   void _apply(BattleState s, double sent, int run) {
@@ -306,9 +327,9 @@ class BattleModel extends ChangeNotifier {
     _reset(BattlePhase.home);
     try {
       if (id != null) {
-        await _cloud.rpc('battle_quit', {'p_match': id});
+        await _rpc('battle_quit', {'p_match': id});
       } else if (searching) {
-        await _cloud.rpc('battle_cancel_find');
+        await _rpc('battle_cancel_find');
       }
     } catch (e) {
       debugPrint('離開對戰失敗：$e');
@@ -340,6 +361,7 @@ class BattleModel extends ChangeNotifier {
     if (step == 'search') {
       phase = BattlePhase.searching;
       waited = 6;
+      searchStarted = DateTime.now().subtract(const Duration(seconds: 6));
       return;
     }
     if (step == 'room') {
@@ -357,7 +379,7 @@ class BattleModel extends ChangeNotifier {
       'round': reveal ? 4 : 3,
       'now': now,
       'you': {'name': '勇敢的水獺08', 'rating': 640, 'tier': 4, 'score': result ? 405 : 188},
-      'opponent': {'name': '好奇的石虎42', 'rating': 668, 'tier': 4, 'score': result ? 332 : 170},
+      'opponent': {'name': '柚子', 'rating': 668, 'tier': 4, 'score': result ? 332 : 170},
       'starts': reveal ? now + 60000 : now - 3200,
       'ends': reveal ? now + 70000 : now + 600000,
       'opponent_answered': true,
@@ -710,33 +732,125 @@ class _RenamePageState extends State<_RenamePage> {
   }
 }
 
-class _Searching extends StatelessWidget {
+/// 雷達波紋、等待時間和目前配對的積分範圍。時鐘用手機算，網路慢也會每秒跳
+class _Searching extends StatefulWidget {
   const _Searching({required this.model});
   final BattleModel model;
   @override
+  State<_Searching> createState() => _SearchingState();
+}
+
+class _SearchingState extends State<_Searching> with SingleTickerProviderStateMixin {
+  late final Ticker _ticker = createTicker((_) => setState(() {}))..start();
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final p = Palette.of(context);
+    final m = widget.model;
+    final still = MediaQuery.disableAnimationsOf(context);
+    final t = DateTime.now().difference(m.searchStarted).inMilliseconds / 1000;
+    final sec = t.floor().clamp(0, 5999);
+    final r = m.me?.rating;
+    // 伺服器每秒把範圍放寬 50，8 秒後誰都可以
+    final range = r != null && sec < 8 ? '積分 ${(r - 100 - 50 * sec).clamp(0, 99999)}–${r + 100 + 50 * sec}' : '擴大到所有玩家';
+    final name = m.me?.name ?? '';
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           children: [
             const Spacer(),
-            const CircularProgressIndicator(),
-            const SizedBox(height: 20),
-            Text(
-              '正在尋找對手',
-              style: ts(F.title3, w: w6, c: p.ink),
+            ExcludeSemantics(
+              child: SizedBox(
+                width: 250,
+                height: 250,
+                child: CustomPaint(
+                  painter: _Radar(t: still ? null : t, color: p.accent),
+                  child: Center(
+                    child: Transform.scale(
+                      scale: still ? 1 : 1 + .04 * math.sin(t * 4),
+                      child: Container(
+                        width: 76,
+                        height: 76,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(color: p.accent, shape: BoxShape.circle),
+                        child: Text(name.isEmpty ? '我' : name.characters.first, style: ts(30, w: w7, c: p.onAccent)),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
-            const SizedBox(height: 8),
-            Text('已等待 ${model.waited} 秒', style: ts(F.sub, c: p.sec)),
+            const SizedBox(height: 18),
+            Text('正在尋找對手', style: ts(F.title2, w: w7, c: p.ink)),
+            const SizedBox(height: 6),
+            Text('${sec ~/ 60}:${(sec % 60).toString().padLeft(2, '0')}', style: ts(F.title3, w: w6, c: p.accent)),
+            const SizedBox(height: 18),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              child: Container(
+                key: ValueKey(range),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                decoration: BoxDecoration(color: p.card, borderRadius: BorderRadius.circular(99)),
+                child: Text(range, style: ts(F.sub, w: w6, c: p.sec)),
+              ),
+            ),
             const Spacer(),
-            PillButton(label: '取消', width: double.infinity, onTap: () => unawaited(model.leave())),
+            PillButton(label: '取消', width: double.infinity, onTap: () => unawaited(m.leave())),
           ],
         ),
       ),
     );
   }
+}
+
+/// 三圈往外擴散的波紋加一道掃描光；t 是 null 時（減少動態效果）只畫靜止的圈
+class _Radar extends CustomPainter {
+  _Radar({required this.t, required this.color});
+  final double? t;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    for (var i = 0; i < 3; i++) {
+      final f = t == null ? .35 + i * .25 : (t! / 2.4 + i / 3) % 1;
+      canvas.drawCircle(
+        c,
+        (96 + 150 * f) / 2,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2
+          ..color = color.withValues(alpha: .5 * (1 - f)),
+      );
+    }
+    canvas.drawCircle(c, 60, Paint()..color = color.withValues(alpha: .12));
+    if (t != null) {
+      final a = t! * 150 * math.pi / 180;
+      final rect = Rect.fromCircle(center: c, radius: 60);
+      canvas.drawArc(
+        rect,
+        a - .18 * 2 * math.pi,
+        .18 * 2 * math.pi,
+        true,
+        Paint()
+          ..shader = SweepGradient(
+            startAngle: a - .18 * 2 * math.pi,
+            endAngle: a,
+            colors: [color.withValues(alpha: 0), color.withValues(alpha: .55)],
+          ).createShader(rect),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_Radar old) => old.t != t || old.color != color;
 }
 
 class _Room extends StatelessWidget {
@@ -884,9 +998,12 @@ class _GameState extends State<_Game> {
       body = [
         _bar(p, null),
         Expanded(child: _question(p, s, shown, l)),
-        Text(
-          l.points > 0 ? '+${l.points}' : (l.pick == null ? '時間到' : '答錯了'),
-          style: ts(F.title2, w: w7, c: l.points > 0 ? p.hsnuSky : p.hsnuMagenta),
+        _PopIn(
+          key: ValueKey('points${l.n}'),
+          child: Text(
+            l.points > 0 ? '+${l.points}' : (l.pick == null ? '時間到' : '答錯了'),
+            style: ts(F.title2, w: w7, c: l.points > 0 ? p.hsnuSky : p.hsnuMagenta),
+          ),
         ),
         Text('對手 +${l.opponentPoints}', style: ts(F.sub, c: p.sec)),
       ];
@@ -901,9 +1018,17 @@ class _GameState extends State<_Game> {
       final left = (((starts ?? now) - now) / 1000).ceil().clamp(1, 9);
       body = [
         const Spacer(),
-        Text(
-          '$left',
-          style: ts(72, w: w7, c: p.ink),
+        if (s.round == 1 && s.last == null) _Intro(you: s.you, opponent: s.opponent),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 350),
+          switchInCurve: Curves.easeOutBack,
+          transitionBuilder: (child, a) => MediaQuery.disableAnimationsOf(context)
+              ? FadeTransition(opacity: a, child: child)
+              : FadeTransition(
+                  opacity: a,
+                  child: ScaleTransition(scale: Tween(begin: 1.8, end: 1.0).animate(a), child: child),
+                ),
+          child: Text('$left', key: ValueKey(left), style: ts(72, w: w7, c: p.ink)),
         ),
         Text(
           s.round == 1 ? '準備開始' : '下一題',
@@ -974,9 +1099,11 @@ class _GameState extends State<_Game> {
         overflow: TextOverflow.ellipsis,
         style: ts(F.cap, w: w6, c: p.ink),
       ),
-      Text(
-        '${x.score}',
-        style: ts(30, w: w7, c: p.ink, h: 1.2),
+      TweenAnimationBuilder<double>(
+        tween: Tween(end: x.score.toDouble()),
+        duration: const Duration(milliseconds: 600),
+        curve: Curves.easeOutCubic,
+        builder: (_, v, _) => Text('${v.round()}', style: ts(30, w: w7, c: p.ink, h: 1.2)),
       ),
       Text(
         done ? '已作答' : '${levelLabel('${x.tier}')}・${x.rating}',
@@ -997,7 +1124,10 @@ class _GameState extends State<_Game> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Padding(
+              _StaggerIn(
+                key: ValueKey('prompt${q.n}'),
+                index: 0,
+                child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 child: FittedBox(
                   fit: BoxFit.scaleDown,
@@ -1008,8 +1138,12 @@ class _GameState extends State<_Game> {
                   ),
                 ),
               ),
+              ),
               for (final (i, o) in q.options.indexed)
-                Padding(
+                _StaggerIn(
+                  key: ValueKey('option${q.n}-$i'),
+                  index: i + 1,
+                  child: Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: AnswerOption(
                     letter: String.fromCharCode(65 + i),
@@ -1019,6 +1153,7 @@ class _GameState extends State<_Game> {
                         : (mine == null || i == mine ? AnswerState.idle : AnswerState.used),
                     onTap: canTap ? () => _m.answer(i) : null,
                   ),
+                ),
                 ),
             ],
           ),
@@ -1073,9 +1208,11 @@ class _ResultState extends State<_Result> {
                   decoration: BoxDecoration(color: p.card, borderRadius: BorderRadius.circular(Radii.lg)),
                   child: Column(
                     children: [
-                      Text(
-                        title,
-                        style: ts(36, w: w7, c: p.ink),
+                      _PopIn(
+                        child: Column(children: [
+                          if (r.outcome == 'win' && r.reason != 'abandoned') Icon(Icons.emoji_events_rounded, size: 44, color: p.accent),
+                          Text(title, style: ts(36, w: w7, c: p.ink)),
+                        ]),
                       ),
                       if (r.reason == 'left') Text(r.outcome == 'win' ? '對手離開了' : '你離開了這場對戰', style: ts(F.sub, c: p.sec)),
                       const SizedBox(height: 6),
@@ -1171,6 +1308,152 @@ class _ResultState extends State<_Result> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// MARK: 動畫
+
+/// 第一題前，兩邊玩家從左右滑進來，中間是 VS
+class _Intro extends StatefulWidget {
+  const _Intro({required this.you, required this.opponent});
+  final BattleSide you;
+  final BattleSide? opponent;
+  @override
+  State<_Intro> createState() => _IntroState();
+}
+
+class _IntroState extends State<_Intro> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 700))..forward();
+
+  @override
+  void initState() {
+    super.initState();
+    if (AppSettings.shared.haptics) unawaited(HapticFeedback.heavyImpact());
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Palette.of(context);
+    final still = MediaQuery.disableAnimationsOf(context);
+    final a = CurvedAnimation(parent: _c, curve: Curves.easeOutBack);
+    Widget card(BattleSide x, bool mine) => Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+        decoration: BoxDecoration(color: p.card, borderRadius: BorderRadius.circular(Radii.lg)),
+        child: Column(children: [
+          Container(
+            width: 56,
+            height: 56,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(color: mine ? p.accent : p.sec.withValues(alpha: .35), shape: BoxShape.circle),
+            child: Text(x.name.isEmpty ? '?' : x.name.characters.first, style: ts(24, w: w7, c: mine ? p.onAccent : p.ink)),
+          ),
+          const SizedBox(height: 6),
+          Text(x.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: ts(F.sub, w: w6, c: p.ink)),
+          Text('${levelLabel('${x.tier}')}・${x.rating}', maxLines: 1, style: ts(F.cap, c: p.sec)),
+        ]),
+      ),
+    );
+    final o = widget.opponent;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: AnimatedBuilder(
+        animation: a,
+        builder: (_, _) {
+          final v = still ? 1.0 : a.value;
+          return Row(children: [
+            Expanded(child: Transform.translate(offset: Offset(-260 * (1 - v), 0), child: Row(children: [card(widget.you, true)]))),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Opacity(
+                opacity: still ? 1 : _c.value,
+                child: Transform.scale(scale: .2 + .8 * v, child: Text('VS', style: ts(28, w: FontWeight.w900, c: p.accent))),
+              ),
+            ),
+            if (o != null) Expanded(child: Transform.translate(offset: Offset(260 * (1 - v), 0), child: Row(children: [card(o, false)]))),
+          ]);
+        },
+      ),
+    );
+  }
+}
+
+/// 新題目出現時，題目和選項一個接一個往上滑進來
+class _StaggerIn extends StatefulWidget {
+  const _StaggerIn({super.key, required this.index, required this.child});
+  final int index;
+  final Widget child;
+  @override
+  State<_StaggerIn> createState() => _StaggerInState();
+}
+
+class _StaggerInState extends State<_StaggerIn> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 400));
+
+  @override
+  void initState() {
+    super.initState();
+    Future<void>.delayed(Duration(milliseconds: 50 * widget.index), () {
+      if (mounted) unawaited(_c.forward());
+    });
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final still = MediaQuery.disableAnimationsOf(context);
+    final a = CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
+    return AnimatedBuilder(
+      animation: a,
+      builder: (_, child) => Opacity(
+        opacity: a.value,
+        child: Transform.translate(offset: Offset(0, still ? 0 : 18 * (1 - a.value)), child: child),
+      ),
+      child: widget.child,
+    );
+  }
+}
+
+/// 彈一下出現
+class _PopIn extends StatefulWidget {
+  const _PopIn({super.key, required this.child});
+  final Widget child;
+  @override
+  State<_PopIn> createState() => _PopInState();
+}
+
+class _PopInState extends State<_PopIn> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 450))..forward();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final still = MediaQuery.disableAnimationsOf(context);
+    final a = CurvedAnimation(parent: _c, curve: Curves.elasticOut);
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, child) => Opacity(
+        opacity: _c.value.clamp(0, 1),
+        child: Transform.scale(scale: still ? 1 : .4 + .6 * a.value, child: child),
+      ),
+      child: widget.child,
     );
   }
 }

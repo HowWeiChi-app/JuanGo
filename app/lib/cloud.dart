@@ -357,9 +357,9 @@ class Cloud extends ChangeNotifier {
   // MARK: 對戰
 
   /// 呼叫 supabase/battle.sql 裡的 battle_* 函式
-  Future<Object?> rpc(String name, [Map<String, dynamic> args = const {}]) async {
+  Future<Object?> rpc(String name, [Map<String, dynamic> args = const {}, Duration timeout = const Duration(seconds: 30)]) async {
     try {
-      final body = await _send(_rest('rpc/$name'), 'POST', json: args);
+      final body = await _send(_rest('rpc/$name'), 'POST', json: args, timeout: timeout);
       return body.isEmpty ? null : jsonDecode(body);
     } on _HttpFailure catch (e) {
       if (e.message.contains('Could not find the function')) throw const CloudFailure('對戰伺服器還沒開通');
@@ -429,7 +429,14 @@ class Cloud extends ChangeNotifier {
 
   // MARK: 連線
 
-  Future<String> _send(Uri url, String method, {Map<String, dynamic>? json, String? prefer, bool auth = true}) async {
+  Future<String> _send(
+    Uri url,
+    String method, {
+    Map<String, dynamic>? json,
+    String? prefer,
+    bool auth = true,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
     final bearer = auth ? await _accessToken() : CloudConfig.key;
     final req = http.Request(method, url)
       ..headers.addAll({
@@ -441,7 +448,7 @@ class Cloud extends ChangeNotifier {
     if (json != null) req.body = jsonEncode(json);
     final http.Response res;
     try {
-      res = await http.Response.fromStream(await _client.send(req).timeout(const Duration(seconds: 30)));
+      res = await http.Response.fromStream(await _client.send(req).timeout(timeout));
     } catch (_) {
       throw const CloudFailure('連不上伺服器，請檢查網路');
     }

@@ -264,9 +264,9 @@ final class Cloud {
     // MARK: Battles
 
     /// Calls one of the battle_* functions in supabase/battle.sql.
-    func rpc(_ name: String, _ args: [String: Any] = [:]) async throws -> Data {
+    func rpc(_ name: String, _ args: [String: Any] = [:], timeout: TimeInterval = 30) async throws -> Data {
         do {
-            return try await send(rest("rpc/" + name), method: "POST", json: args)
+            return try await send(rest("rpc/" + name), method: "POST", json: args, timeout: timeout)
         } catch let f as Failure where f.message.contains("Could not find the function") {
             throw Failure(message: "對戰伺服器還沒開通")
         }
@@ -276,9 +276,10 @@ final class Cloud {
 
     private func rest(_ path: String) -> URL { CloudConfig.url.appendingPathComponent("rest/v1/" + path) }
 
-    private func send(_ url: URL, method: String, json: [String: Any]? = nil, prefer: String? = nil, auth: Bool = true) async throws -> Data {
+    private func send(_ url: URL, method: String, json: [String: Any]? = nil, prefer: String? = nil, auth: Bool = true,
+                      timeout: TimeInterval = 30) async throws -> Data {
         guard CloudConfig.configured else { throw Failure(message: "雲端還沒設定好") }
-        var req = URLRequest(url: url, timeoutInterval: 30)
+        var req = URLRequest(url: url, timeoutInterval: timeout)
         req.httpMethod = method
         req.setValue(CloudConfig.key, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(auth ? try await accessToken() : CloudConfig.key)", forHTTPHeaderField: "Authorization")

@@ -123,6 +123,20 @@ language sql volatile set search_path = public as $$
       || lpad(floor(random() * 100)::int::text, 2, '0')
 $$;
 
+-- A computer opponent's name: the kind of nickname people pick for themselves, never a generated one with a number,
+-- and never one a real player already uses.
+create or replace function public.battle_bot_name() returns text
+language sql volatile set search_path = public as $$
+  select n from unnest(array[
+    'Kevin','Amy','Jason','Ethan','Chloe','Ian','Vivian','Leo','Grace','Ryan','Annie','Max','Yuki','Eric','Joyce',
+    'Wendy','Alan','Iris','Daniel','Sandy','小安','阿哲','柚子','布丁','小熊','阿凱','芋圓','小魚','豆花','阿翔',
+    '小米','阿誠','奶茶','湯圓','小葵','阿宏','小晴','麻糬','阿瑋','小宇','睡不飽','想放假','背單字中','學測加油',
+    '英文好難','今天也要讀書','高三生存中','單字狂','早八戰士','考前衝刺','三分鐘熱度','珍奶續命','不想早起','讀書好累'
+  ]) as n
+  where not exists (select 1 from battle_players p where lower(p.name) = lower(n))
+  order by random() limit 1
+$$;
+
 -- Creates the caller's player on first use. p_level is the 18-question level test's result, or null when the
 -- app hasn't had the test done yet. The first time a level comes in it is recorded, and the rating is raised to
 -- that level's start if it was lower (players from before the test was required started from 第 3 級).
@@ -217,12 +231,12 @@ begin
     perform battle_make_round(p_match, i, case when i <= 3 then tier else least(6, tier + 1) end);
   end loop;
   if m.bot_rating is not null then
-    -- the computer is right 9 times in 10, and each answer time is drawn from a normal
-    -- distribution centred on 2.5 seconds (sd 0.8 s), kept inside the first 5 seconds
+    -- the computer is right about 2 times in 3, and each answer time is drawn from a normal
+    -- distribution centred on 4 seconds (sd 1.2 s), kept between 1.5 and 8 seconds
     update battle_rounds b set
-      bot_pick = case when random() < 0.9 then b.answer
+      bot_pick = case when random() < 0.65 then b.answer
                       else (b.answer + 1 + floor(random() * 3)::int) % 4 end,
-      bot_ms = least(5000, greatest(400, round(2500 + 800 * sqrt(-2 * ln(greatest(random(), 1e-9))) * cos(2 * pi() * random()))))::int
+      bot_ms = least(8000, greatest(1500, round(4000 + 1200 * sqrt(-2 * ln(greatest(random(), 1e-9))) * cos(2 * pi() * random()))))::int
     from (
       select r.n, m.bot_rating / 200.0 + 1 - w.lv as edge, battle_tier(m.bot_rating) as skill
       from battle_rounds r join battle_words w on w.term = r.term where r.match_id = p_match
@@ -290,7 +304,7 @@ begin
       return jsonb_build_object('match', null, 'waited', waited);
     end if;
     insert into battle_matches (rated, p1, bot_name, bot_rating)
-    values (true, me.user_id, battle_new_name(), greatest(100, me.rating + floor(random() * 121)::int - 60))
+    values (true, me.user_id, coalesce(battle_bot_name(), battle_new_name()), greatest(100, me.rating + floor(random() * 121)::int - 60))
     returning id into mid;
     perform battle_start(mid);
     delete from battle_queue where user_id = me.user_id;

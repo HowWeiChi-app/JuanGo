@@ -43,6 +43,8 @@ final class BattleModel {
     private(set) var meFailed = false
     private(set) var state: BattleState?
     private(set) var waited = 0
+    /// when this search began, for the clock on the search screen (the server's count only arrives once a second)
+    private(set) var searchStarted = Date.now
     private(set) var current: BattleState.Question?
     private(set) var previous: BattleState.Question?
     private(set) var picks: [Int: Int] = [:]
@@ -65,8 +67,9 @@ final class BattleModel {
 
     var serverNow: Double { Date.now.timeIntervalSince1970 * 1000 + clockOffset }
 
+    /// A short timeout: one stuck request used to hold up the whole match (the countdown sat still until it gave up).
     private func call<T: Decodable>(_ name: String, _ args: [String: Any] = [:]) async throws -> T {
-        try Self.decoder.decode(T.self, from: await Cloud.shared.rpc(name, args))
+        try Self.decoder.decode(T.self, from: await Cloud.shared.rpc(name, args, timeout: 5))
     }
 
     /// Returns what went wrong, or nil once the new name is saved.
@@ -156,8 +159,18 @@ final class BattleModel {
                 failures += 1
                 if failures >= 16 { fail(error); return }
             }
-            try? await Task.sleep(for: .milliseconds(500))
+            try? await Task.sleep(for: .milliseconds(nextPoll()))
         }
+    }
+
+    /// Half a second, or sooner when the next question becomes available (a second before it starts) or the
+    /// round's time runs out, so the countdown never sits on 1 waiting for the next fetch.
+    private func nextPoll() -> Int {
+        guard let s = state, s.status == "playing" else { return 500 }
+        let now = serverNow
+        let marks = [s.starts.map { $0 - 900 }, s.ends.map { $0 + 60 }].compactMap { $0 }.filter { $0 > now }
+        guard let next = marks.min() else { return 500 }
+        return Int(min(500, max(80, next - now)))
     }
 
     private func apply(_ s: BattleState, sent: Double) {
@@ -219,7 +232,7 @@ final class BattleModel {
 
     private func reset(_ p: Phase) {
         loop?.cancel()
-        phase = p; state = nil; current = nil; previous = nil; picks = [:]; waited = 0; error = nil
+        phase = p; state = nil; current = nil; previous = nil; picks = [:]; waited = 0; error = nil; searchStarted = .now
         bestTrip = .infinity
     }
 
@@ -235,13 +248,13 @@ final class BattleModel {
     /// JUANGO_BATTLE=home | search | room | count | question | reveal | result draws a screen without the server.
     func demo(_ step: String) {
         isDemo = true
-        let opp = BattleState.Side(name: "好奇的石虎42", rating: 668, tier: 4, score: step == "result" ? 332 : 170)
+        let opp = BattleState.Side(name: "柚子", rating: 668, tier: 4, score: step == "result" ? 332 : 170)
         let you = BattleState.Side(name: "勇敢的水獺08", rating: 640, tier: 4, score: step == "result" ? 405 : 188)
         let q = BattleState.Question(n: 3, toZh: true, prompt: "persuade", options: ["說服", "猶豫", "承認", "避免"])
         let now = Date.now.timeIntervalSince1970 * 1000
         me = BattlePlayer(name: you.name, rating: you.rating, tier: you.tier, games: 12, wins: 7, losses: 4, draws: 1)
         guard step != "home" else { return }
-        if step == "search" { phase = .searching; waited = 6; return }
+        if step == "search" { phase = .searching; waited = 6; searchStarted = .now.addingTimeInterval(-6); return }
         if step == "room" { phase = .room("K7Q3P9"); return }
         current = q
         var s = BattleState(id: "demo", status: "playing", rated: true, code: nil, round: 3, now: now, you: you, opponent: opp,
@@ -461,19 +474,79 @@ private struct BattleRename: View {
     }
 }
 
+/// Radar rings around the player, the clock and the rating range the search covers right now.
+/// The clock runs on the phone, so it ticks every second whatever the network does.
 private struct BattleSearching: View {
     let model: BattleModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            ProgressView().controlSize(.large)
-            Text("正在尋找對手").font(.app(.title3, .semibold))
-            Text("已等待 \(model.waited) 秒")
-                .font(.app(.subheadline)).foregroundStyle(.secondary).monospacedDigit()
-            Spacer()
-            Button("取消") { model.leave() }.buttonStyle(PillButtonStyle())
+        TimelineView(.animation(paused: reduceMotion)) { ctx in
+            let t = ctx.date.timeIntervalSince(model.searchStarted)
+            VStack(spacing: 18) {
+                Spacer()
+                radar(t)
+                VStack(spacing: 6) {
+                    Text("正在尋找對手").font(.app(.title2, .bold))
+                    Text(clock(t)).font(.app(.title3, .semibold)).monospacedDigit().foregroundStyle(Color.themeAccent)
+                        .contentTransition(.numericText())
+                }
+                rangeChip(t)
+                Spacer()
+                Button("取消") { model.leave() }.buttonStyle(PillButtonStyle())
+            }
         }
         .padding(24)
+    }
+
+    private func clock(_ t: Double) -> String {
+        let s = max(0, Int(t))
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    private func radar(_ t: Double) -> some View {
+        ZStack {
+            ForEach(0..<3, id: \.self) { i in
+                // each ring grows out and fades over 2.4 s, a third of a cycle behind the one before
+                let f = reduceMotion ? 0.35 + Double(i) * 0.25 : (t / 2.4 + Double(i) / 3).truncatingRemainder(dividingBy: 1)
+                Circle().stroke(Color.themeAccent.opacity(0.5 * (1 - f)), lineWidth: 2)
+                    .frame(width: 96 + 150 * f, height: 96 + 150 * f)
+            }
+            Circle().fill(Color.themeAccent.opacity(0.12)).frame(width: 120, height: 120)
+            // a sweeping beam
+            if !reduceMotion {
+                Circle().trim(from: 0, to: 0.18)
+                    .stroke(AngularGradient(colors: [Color.themeAccent.opacity(0), Color.themeAccent.opacity(0.55)], center: .center),
+                            style: StrokeStyle(lineWidth: 60))
+                    .frame(width: 60, height: 60)
+                    .rotationEffect(.degrees(t * 150))
+                    .mask(Circle().frame(width: 120, height: 120))
+            }
+            Circle().fill(Color.themeAccent).frame(width: 76, height: 76)
+                .overlay { Text(initial).font(.app(size: 30, .bold)).foregroundStyle(Color.onAccent) }
+                .scaleEffect(reduceMotion ? 1 : 1 + 0.04 * sin(t * 4))
+        }
+        .frame(width: 250, height: 250)
+        .accessibilityHidden(true)
+    }
+
+    private var initial: String { String(model.me?.name.first ?? "我") }
+
+    /// The server widens the window by 50 a second and takes anyone after 8 seconds.
+    @ViewBuilder private func rangeChip(_ t: Double) -> some View {
+        let s = Int(t)
+        Group {
+            if let r = model.me?.rating, s < 8 {
+                let w = 100 + 50 * s
+                Text("積分 \(max(0, r - w))–\(r + w)").monospacedDigit()
+            } else {
+                Text("擴大到所有玩家")
+            }
+        }
+        .font(.app(.subheadline, .semibold)).foregroundStyle(.secondary)
+        .padding(.horizontal, 14).padding(.vertical, 7)
+        .background(Capsule().fill(Color.cardFill))
+        .animation(.snappy, value: s)
     }
 }
 
@@ -499,6 +572,7 @@ private struct BattleRoom: View {
 private struct BattleGame: View {
     let model: BattleModel
     @Environment(AppSettings.self) private var settings
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var confirmLeave = false
 
     var body: some View {
@@ -531,7 +605,13 @@ private struct BattleGame: View {
             } else {
                 Spacer()
                 let left = max(1, Int(ceil(((s.starts ?? now) - now) / 1000)))
-                Text("\(left)").font(.app(size: 72, .bold)).monospacedDigit().contentTransition(.numericText())
+                if s.round == 1, s.last == nil { BattleIntro(you: s.you, opponent: s.opponent) }
+                ZStack {
+                    Text("\(left)").font(.app(size: 72, .bold)).monospacedDigit()
+                        .id(left)
+                        .transition(reduceMotion ? .opacity : .scale(scale: 1.8).combined(with: .opacity))
+                }
+                .animation(.spring(duration: 0.35, bounce: 0.4), value: left)
                 Text(s.round == 1 ? "準備開始" : "下一題").font(.app(.headline)).foregroundStyle(.secondary)
                 Spacer()
             }
@@ -572,6 +652,7 @@ private struct BattleGame: View {
         VStack(alignment: trailing ? .trailing : .leading, spacing: 2) {
             Text(p.name).font(.app(.caption, .semibold)).lineLimit(1).minimumScaleFactor(0.8)
             Text("\(p.score)").font(.app(size: 30, .bold)).monospacedDigit().contentTransition(.numericText())
+                .animation(.spring(duration: 0.6), value: p.score)
             Text(verbatim: done ? "已作答" : "\(levelLabel(String(p.tier)))・\(p.rating)")
                 .font(.app(.caption)).foregroundStyle(done ? Color.themeAccent : .secondary).lineLimit(1)
         }
@@ -604,8 +685,10 @@ private struct BattleGame: View {
                     model.answer(i)
                 }
                 .allowsHitTesting(last == nil && model.picks[q.n] == nil && q.n == s.round)
+                .modifier(StaggerIn(index: i, key: q.n))
             }
         }
+        .modifier(StaggerIn(index: -1, key: q.n))
     }
 
     private func optionState(_ i: Int, q: BattleState.Question, last: BattleState.Last?) -> AnswerOption.State {
@@ -617,8 +700,10 @@ private struct BattleGame: View {
 
     private func pointsLine(_ l: BattleState.Last) -> some View {
         VStack(spacing: 2) {
-            Text(l.points > 0 ? "+\(l.points)" : l.pick == nil ? "時間到" : "答錯了")
-                .font(.app(.title2, .bold)).foregroundStyle(l.points > 0 ? Color.hsnuSky : Color.hsnuMagenta)
+            PopIn(key: l.n) {
+                Text(l.points > 0 ? "+\(l.points)" : l.pick == nil ? "時間到" : "答錯了")
+                    .font(.app(.title2, .bold)).foregroundStyle(l.points > 0 ? Color.hsnuSky : Color.hsnuMagenta)
+            }
             Text("對手 +\(l.opponentPoints)").font(.app(.subheadline)).foregroundStyle(.secondary)
         }
         .frame(maxHeight: .infinity)
@@ -641,7 +726,14 @@ private struct BattleResult: View {
             List { Group {
                 Section {
                     VStack(spacing: 8) {
-                        Text(title(r)).font(.app(size: 36, .bold))
+                        PopIn(key: 0) {
+                            VStack(spacing: 6) {
+                                if r.outcome == "win" && r.reason != "abandoned" {
+                                    LIcon("trophy.fill").font(.app(size: 40)).foregroundStyle(Color.themeAccent)
+                                }
+                                Text(title(r)).font(.app(size: 36, .bold))
+                            }
+                        }
                         if r.reason == "left" { Text(r.outcome == "win" ? "對手離開了" : "你離開了這場對戰").font(.app(.subheadline)).foregroundStyle(.secondary) }
                         HStack(spacing: 18) {
                             Text("\(s.you.score)").font(.app(size: 40, .bold)).foregroundStyle(Color.themeAccent)
@@ -697,5 +789,73 @@ private struct BattleResult: View {
     private func ratingLine(_ s: BattleState, _ r: BattleState.Outcome) -> String {
         guard s.rated else { return "這場不計分" }
         return "積分 \(s.you.rating)（\(r.delta >= 0 ? "+" : "")\(r.delta)）・\(levelLabel(String(s.you.tier)))"
+    }
+}
+
+// MARK: - Motion
+
+/// Both players slide in from their sides with a VS between them, before the first question.
+private struct BattleIntro: View {
+    let you: BattleState.Side
+    let opponent: BattleState.Side?
+    @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 10) {
+            card(you, leading: true).offset(x: shown || reduceMotion ? 0 : -260)
+            Text("VS").font(.app(size: 28, .heavy)).foregroundStyle(Color.themeAccent)
+                .scaleEffect(shown || reduceMotion ? 1 : 0.2).opacity(shown ? 1 : 0)
+            if let opponent { card(opponent, leading: false).offset(x: shown || reduceMotion ? 0 : 260) }
+        }
+        .padding(.bottom, 24)
+        .onAppear { withAnimation(.spring(duration: 0.6, bounce: 0.35)) { shown = true } }
+        .sensoryFeedback(.impact(weight: .heavy), trigger: shown)
+    }
+
+    private func card(_ p: BattleState.Side, leading: Bool) -> some View {
+        VStack(spacing: 6) {
+            Circle().fill(leading ? Color.themeAccent : Color.secondary.opacity(0.35)).frame(width: 56, height: 56)
+                .overlay { Text(String(p.name.first ?? "?")).font(.app(size: 24, .bold)).foregroundStyle(leading ? Color.onAccent : .primary) }
+            Text(p.name).font(.app(.subheadline, .semibold)).lineLimit(1).minimumScaleFactor(0.7)
+            Text(verbatim: "\(levelLabel(String(p.tier)))・\(p.rating)").font(.app(.caption)).foregroundStyle(.secondary).monospacedDigit()
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, 14)
+        .background(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous).fill(Color.cardFill))
+    }
+}
+
+/// Slides a question's parts up into place one after another when a new question (key) comes in.
+private struct StaggerIn: ViewModifier {
+    let index: Int
+    let key: Int
+    @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown ? 1 : 0)
+            .offset(y: shown || reduceMotion ? 0 : 18)
+            .onAppear { appear() }
+            .onChange(of: key) { shown = false; appear() }
+    }
+
+    private func appear() {
+        withAnimation(.spring(duration: 0.4).delay(Double(index + 1) * 0.05)) { shown = true }
+    }
+}
+
+/// Pops its content in with a bounce.
+private struct PopIn<C: View>: View {
+    let key: Int
+    @ViewBuilder let content: C
+    @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        content
+            .scaleEffect(shown || reduceMotion ? 1 : 0.4).opacity(shown ? 1 : 0)
+            .onAppear { withAnimation(.spring(duration: 0.45, bounce: 0.5)) { shown = true } }
+            .onChange(of: key) { shown = false; withAnimation(.spring(duration: 0.45, bounce: 0.5)) { shown = true } }
     }
 }
