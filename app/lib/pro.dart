@@ -8,8 +8,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
-/// 開發版（本機 battle 分支）直接當成 GOs PRO，所有付費功能都打開。main 一定是 false
-const devGosPro = false;
+/// 開發版（本機 battle 分支）直接當成 GOs PRO，所有付費功能都打開。main 一定是 false，這裡是 true
+const devGosPro = true;
 
 /// 捲字 Pro 只解鎖捲字；GOs PRO 解鎖 HowWeiChi 所有 App，包括之後推出的
 enum ProPlan {

@@ -5,7 +5,7 @@ import StoreKit
 
 enum DevFlags {
     /// The dev build (the local battle branch) has every paid feature unlocked as GOs PRO. Always false on main.
-    static let gosPro = false
+    static let gosPro = true
 }
 
 // MARK: - Plans
