@@ -47,7 +47,7 @@ insert into public.battle_rules (id, rules) values (1, $rules${
   "free_daily": 10,
   "leave": { "winner_factor": 0.5 },
   "season": { "close": "23:30", "settle": "23:45" },
-  "leaderboard": { "top": 20, "min_games": 60 }
+  "leaderboard": { "top": 20, "min_games": 60, "live_min_games": 10 }
 }$rules$::jsonb)
 on conflict (id) do update set rules = excluded.rules;
 alter table public.battle_rules enable row level security;
@@ -1070,60 +1070,53 @@ language sql stable security definer set search_path = public as $$
   from battle_players p where p.user_id = p_user
 $$;
 
--- Last season's top 20 (60 games or more) with the caller's own place, and this season's estimate from
--- last season's spread on the same day of the season.
-create or replace function public.battle_board() returns jsonb
-language plpgsql security definer set search_path = public as $$
+-- One season's top 20 among players with at least p_min ranked games, and the viewer's own row
+-- (rank null when they haven't played enough).
+create or replace function public.battle_board_season(p_season text, p_min int, p_viewer uuid) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
 declare
-  rules jsonb := battle_rules();
-  lb    jsonb := rules->'leaderboard';
-  me    uuid := auth.uid();
-  s     text := battle_season();
-  prev  text := battle_season_prev(s);
-  d_n   int := battle_local()::date - battle_season_first(s) + 1;
-  top   jsonb;
-  mine  jsonb;
-  hist  jsonb;
-  cur   public.battle_ratings;
-  above int;
-  total int;
-  est   jsonb;
+  top  jsonb;
+  mine jsonb;
 begin
-  if me is null then raise exception '請先登入'; end if;
   with ranked as (
     select r.*, row_number() over (order by r.rating desc, r.peak_rating desc, r.user_id) as place
-    from battle_ratings r where r.season = prev and r.games >= (lb->>'min_games')::int
+    from battle_ratings r where r.season = p_season and r.games >= p_min
   )
   select coalesce(jsonb_agg(jsonb_build_object(
-           'rank', place, 'name', battle_board_name(user_id, me),
-           'pid', case when battle_board_name(user_id, me) = '匿名玩家' then null else (select pid from battle_players where user_id = ranked.user_id) end,
+           'rank', place, 'name', battle_board_name(user_id, p_viewer),
+           'pid', case when battle_board_name(user_id, p_viewer) = '匿名玩家' then null
+                       else (select pid from battle_players where user_id = ranked.user_id) end,
            'rating', rating, 'tier_name', battle_tier_info(rating)->>'name',
-           'win_rate', round(wins::numeric / greatest(games, 1), 3), 'me', user_id = me) order by place)
-           filter (where place <= (lb->>'top')::int), '[]'::jsonb),
+           'win_rate', round(wins::numeric / greatest(games, 1), 3), 'me', user_id = p_viewer) order by place)
+           filter (where place <= (battle_rules()->'leaderboard'->>'top')::int), '[]'::jsonb),
          (select jsonb_build_object('rank', place, 'rating', rating, 'tier_name', battle_tier_info(rating)->>'name',
-                                    'win_rate', round(wins::numeric / greatest(games, 1), 3))
-            from ranked where user_id = me)
+                                    'win_rate', round(wins::numeric / greatest(games, 1), 3), 'games', games)
+            from ranked where user_id = p_viewer)
     into top, mine
   from ranked;
-
   if mine is null then
     select jsonb_build_object('rank', null, 'rating', rating, 'tier_name', battle_tier_info(rating)->>'name',
                               'win_rate', round(wins::numeric / greatest(games, 1), 3), 'games', games)
-      into mine from battle_ratings where user_id = me and season = prev;
+      into mine from battle_ratings where user_id = p_viewer and season = p_season and games > 0;
   end if;
+  return jsonb_build_object('top', top, 'me', mine);
+end $$;
 
-  select histogram into hist from battle_snapshots where season = prev and day <= d_n order by day desc limit 1;
-  select * into cur from battle_ratings where user_id = me and season = s;
-  if hist is not null and cur.user_id is not null then
-    select coalesce(sum(v::int) filter (where k::int > cur.rating), 0), coalesce(sum(v::int), 0) into above, total
-    from jsonb_each_text(hist) as h(k, v);
-    est := jsonb_build_object('rank', above + 1, 'total', total,
-                              'percent', case when total > 0 then ceil(100.0 * (above + 1) / total) end);
-  end if;
-
+-- This season live (10 games to be listed) and last season's final board (60 games).
+create or replace function public.battle_board() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  lb   jsonb := battle_rules()->'leaderboard';
+  me   uuid := auth.uid();
+  s    text := battle_season();
+  prev text := battle_season_prev(s);
+begin
+  if me is null then raise exception '請先登入'; end if;
   return jsonb_build_object('season', battle_season_label(s), 'previous', battle_season_label(prev),
-    'has_previous', exists (select 1 from battle_ratings where season = prev),
-    'min_games', (lb->>'min_games')::int, 'top', top, 'me', mine, 'estimate', est, 'rating', cur.rating, 'day', d_n);
+    'has_previous', exists (select 1 from battle_ratings where season = prev and games > 0),
+    'min_games', (lb->>'min_games')::int, 'live_min_games', (lb->>'live_min_games')::int,
+    'current', battle_board_season(s, (lb->>'live_min_games')::int, me),
+    'last', battle_board_season(prev, (lb->>'min_games')::int, me));
 end $$;
 
 -- 00:05 every day: how this season's ratings are spread, for next season's estimates
@@ -1234,9 +1227,8 @@ do $$
 begin
   perform cron.unschedule(jobid) from cron.job where jobname in ('battle-season-reset', 'battle-snapshot');
 end $$;
--- 23:59 and 00:05 Taiwan time (UTC+8)
+-- 23:59 Taiwan time (UTC+8)
 select cron.schedule('battle-season-reset', '59 15 * * *', 'select public.battle_season_cron()');
-select cron.schedule('battle-snapshot', '5 16 * * *', 'select public.battle_snapshot()');
 
 -- ------------------------------------------------------------------ access
 

@@ -181,7 +181,7 @@ void main() {
         }
         if (step == 'result') expect(find.text('合計'), findsOneWidget);
         if (step == 'question') expect(find.text('第 3 / 10 題'), findsOneWidget);
-        if (step == 'board') expect(find.text('大約第 37 名'), findsOneWidget);
+        if (step == 'board') expect(find.text('2026 S6 即時排名'), findsOneWidget);
         if (_shots.isNotEmpty && size.width > 400) {
           await t.runAsync(() async {
             final image = await (root.currentContext!.findRenderObject()! as RenderRepaintBoundary).toImage(pixelRatio: 1);

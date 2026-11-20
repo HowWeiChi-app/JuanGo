@@ -239,7 +239,12 @@ final class BattleModel {
             clockOffset = s.now - (sent + received) / 2
         }
         state = s
-        if let q = s.question, q.n != current?.n { previous = current; current = q }
+        if let q = s.question, q.n != current?.n {
+            previous = current; current = q
+            #if DEBUG
+            autoplay(q, starts: s.starts)
+            #endif
+        }
         if s.status == "playing" {
             phase = .playing
         } else if s.status == "finished", s.result != nil, phase != .finished {
@@ -265,6 +270,33 @@ final class BattleModel {
             }
         }
     }
+
+    #if DEBUG
+    /// `JUANGO_BATTLE_AUTOPLAY=0.7` (tools/battle_autoplay.sh): picks the right answer that many seconds
+    /// after each question opens, to test matches without playing them by hand.
+    private func autoplay(_ q: BattleState.Question, starts: Double?) {
+        guard let v = ProcessInfo.processInfo.environment["JUANGO_BATTLE_AUTOPLAY"], let delay = Double(v),
+              let pick = Self.rightOption(q) else { return }
+        Task {
+            let wait = (starts ?? serverNow) + delay * 1000 - serverNow
+            if wait > 0 { try? await Task.sleep(for: .milliseconds(Int(wait))) }
+            answer(pick)
+        }
+    }
+
+    /// The right option worked out from the dictionary, since the server only says which it was afterwards.
+    static func rightOption(_ q: BattleState.Question) -> Int? {
+        func meanings(_ term: String) -> [String] { Dictionary_.lookup(term)?.zh ?? [] }
+        func matches(_ zh: String, _ list: [String]) -> Bool {
+            list.contains { $0 == zh || $0.contains(zh) || zh.contains($0) }
+        }
+        if q.toZh {
+            let zh = meanings(q.prompt)
+            return q.options.firstIndex { matches($0, zh) }
+        }
+        return q.options.firstIndex { matches(q.prompt, meanings($0)) }
+    }
+    #endif
 
     /// Stops whatever is running. During a match this loses it.
     func leave() {
@@ -784,6 +816,7 @@ private struct BattleGame: View {
             PopIn(key: l.n) {
                 Text(l.points > 0 ? "+\(l.points)" : l.pick == nil ? "時間到" : "答錯了")
                     .font(.app(.title2, .bold)).foregroundStyle(l.points > 0 ? Color.hsnuSky : Color.hsnuMagenta)
+                    .monospacedDigit().lineLimit(1).fixedSize()   // "+83" was cut to "+…"
             }
             Text("對手 +\(l.opponentPoints)").font(.app(.subheadline)).foregroundStyle(.secondary)
         }
@@ -1038,7 +1071,7 @@ private struct PlayerMenu: ViewModifier {
     }
 }
 
-/// What battle_board returns: last season's top 20 and this season's estimate.
+/// What battle_board returns: this season live (10 games to be listed) and last season's final board (60 games).
 struct BattleBoard: Decodable {
     struct Row: Decodable, Identifiable {
         var rank: Int?
@@ -1051,24 +1084,30 @@ struct BattleBoard: Decodable {
         var games: Int?
         var id: String { "\(rank ?? -1)-\(pid ?? name ?? "me")" }
     }
-    struct Estimate: Decodable { var rank: Int; var total: Int; var percent: Int? }
+    struct Season: Decodable {
+        var top: [Row]
+        var me: Row?
+    }
     var season: String
     var previous: String
     var hasPrevious: Bool
     var minGames: Int
-    var top: [Row]
-    var me: Row?
-    var estimate: Estimate?
-    var rating: Int?
+    var liveMinGames: Int
+    var current: Season
+    var last: Season
 
     #if DEBUG
-    static let demo = BattleBoard(season: "2026 S6", previous: "2026 S5", hasPrevious: true, minGames: 60, top: [
-        Row(rank: 1, name: "單字狂人", pid: "d1", rating: 2214, tierName: "傳奇卷神", winRate: 0.71),
-        Row(rank: 2, name: "柚子", pid: "d2", rating: 1987, tierName: "傳奇卷神", winRate: 0.66),
-        Row(rank: 3, name: "匿名玩家", rating: 1840, tierName: "傳奇卷神", winRate: 0.63),
-        Row(rank: 4, name: "勇敢的水獺08", pid: "demo-me", rating: 1702, tierName: "璀璨卷王", winRate: 0.58, me: true),
-    ], me: Row(rank: 4, rating: 1702, tierName: "璀璨卷王", winRate: 0.58),
-       estimate: Estimate(rank: 37, total: 412, percent: 9), rating: 1218)
+    static let demo = BattleBoard(season: "2026 S6", previous: "2026 S5", hasPrevious: true, minGames: 60, liveMinGames: 10,
+        current: Season(top: [
+            Row(rank: 1, name: "單字狂人", pid: "d1", rating: 1684, tierName: "璀璨卷王", winRate: 0.71),
+            Row(rank: 2, name: "柚子", pid: "d2", rating: 1522, tierName: "無雙卷哥", winRate: 0.66),
+            Row(rank: 3, name: "匿名玩家", rating: 1407, tierName: "無雙卷哥", winRate: 0.63),
+            Row(rank: 4, name: "勇敢的水獺08", pid: "demo-me", rating: 1218, tierName: "至尊星耀", winRate: 0.58, me: true),
+        ], me: Row(rank: 4, rating: 1218, tierName: "至尊星耀", winRate: 0.58, games: 12)),
+        last: Season(top: [
+            Row(rank: 1, name: "單字狂人", pid: "d1", rating: 2214, tierName: "傳奇卷神", winRate: 0.71),
+            Row(rank: 2, name: "柚子", pid: "d2", rating: 1987, tierName: "傳奇卷神", winRate: 0.66),
+        ], me: nil))
     #endif
 }
 
@@ -1081,31 +1120,18 @@ struct BattleBoardView: View {
         List { Group {
             if let b = board {
                 Section {
-                    if let r = b.rating, let e = b.estimate {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("大約第 \(e.rank) 名").font(.app(.title2, .bold)).monospacedDigit()
-                            Text("目前 \(r) 分\(e.percent.map { "，前 \($0)%" } ?? "")").font(.app(.subheadline)).foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 4)
-                    } else if b.rating == nil {
-                        Text("打一場排名賽後就會顯示預估排名").foregroundStyle(.secondary)
-                    } else {
-                        Text("還沒有上賽季同期的資料").foregroundStyle(.secondary)
-                    }
-                } header: { Text("\(b.season) 預估排名") } footer: {
-                    Text("依上賽季同期資料估算，不是即時排名。")
+                    rows(b.current, min: b.liveMinGames, empty: "還沒有人打滿 \(b.liveMinGames) 場排名賽")
+                } header: { Text("\(b.season) 即時排名") } footer: {
+                    Text("本賽季打滿 \(b.liveMinGames) 場排名賽就會上榜，名次隨時更新。勝率含電腦局。長按暱稱可以檢舉或封鎖。")
                 }
                 Section {
                     if !b.hasPrevious {
                         Text("第一季，還沒有排名").foregroundStyle(.secondary)
-                    } else if b.top.isEmpty {
-                        Text("上賽季沒有人打滿 \(b.minGames) 場").foregroundStyle(.secondary)
                     } else {
-                        ForEach(b.top) { row($0) }
-                        if let me = b.me, !b.top.contains(where: { $0.me == true }) { row(me, mine: true) }
+                        rows(b.last, min: b.minGames, empty: "上賽季沒有人打滿 \(b.minGames) 場")
                     }
-                } header: { Text("\(b.previous) 前 20 名") } footer: {
-                    Text("上賽季打滿 \(b.minGames) 場排名賽才會列入。勝率含電腦局。長按暱稱可以檢舉或封鎖。")
+                } header: { Text("\(b.previous) 最終排名") } footer: {
+                    Text("上賽季打滿 \(b.minGames) 場排名賽才會列入。")
                 }
             } else if let failed {
                 Button("讀不到排行，再試一次") { Task { await load() } }
@@ -1125,7 +1151,15 @@ struct BattleBoardView: View {
         do { board = try await model.board(); failed = nil } catch { failed = BattleModel.clean(error) }
     }
 
-    @ViewBuilder private func row(_ r: BattleBoard.Row, mine: Bool = false) -> some View {
+    @ViewBuilder private func rows(_ s: BattleBoard.Season, min: Int, empty: String) -> some View {
+        if s.top.isEmpty {
+            Text(empty).foregroundStyle(.secondary)
+        }
+        ForEach(s.top) { row($0, min: min) }
+        if let me = s.me, !s.top.contains(where: { $0.me == true }) { row(me, mine: true, min: min) }
+    }
+
+    @ViewBuilder private func row(_ r: BattleBoard.Row, mine: Bool = false, min: Int) -> some View {
         let name = mine ? (model.me?.name ?? "你") : (r.name ?? "匿名玩家")
         HStack(spacing: 12) {
             Text(r.rank.map(String.init) ?? "–").font(.app(.headline)).monospacedDigit()
@@ -1139,7 +1173,9 @@ struct BattleBoardView: View {
                 }
             VStack(alignment: .leading, spacing: 2) {
                 Text(name).font(.app(.subheadline, .semibold)).lineLimit(1)
-                Text(mine && r.rank == nil ? "場數不足" : "\(r.tierName)・勝率 \(Int((r.winRate * 100).rounded()))%")
+                Text(mine && r.rank == nil
+                     ? "場數不足（\(r.games ?? 0) / \(min) 場）"
+                     : "\(r.tierName)・勝率 \(Int((r.winRate * 100).rounded()))%")
                     .font(.app(.caption)).foregroundStyle(.secondary)
             }
             Spacer()

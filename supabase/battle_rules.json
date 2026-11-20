@@ -37,5 +37,5 @@
   "free_daily": 10,
   "leave": { "winner_factor": 0.5 },
   "season": { "close": "23:30", "settle": "23:45" },
-  "leaderboard": { "top": 20, "min_games": 60 }
+  "leaderboard": { "top": 20, "min_games": 60, "live_min_games": 10 }
 }

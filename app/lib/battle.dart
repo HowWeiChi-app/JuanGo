@@ -508,15 +508,23 @@ class BattleModel extends ChangeNotifier {
     'previous': '2026 S5',
     'has_previous': true,
     'min_games': 60,
-    'top': [
-      {'rank': 1, 'name': '單字狂人', 'pid': 'd1', 'rating': 2214, 'tier_name': '傳奇卷神', 'win_rate': 0.71},
-      {'rank': 2, 'name': '柚子', 'pid': 'd2', 'rating': 1987, 'tier_name': '傳奇卷神', 'win_rate': 0.66},
-      {'rank': 3, 'name': '匿名玩家', 'pid': null, 'rating': 1840, 'tier_name': '傳奇卷神', 'win_rate': 0.63},
-      {'rank': 4, 'name': '勇敢的水獺08', 'pid': 'demo-me', 'rating': 1702, 'tier_name': '璀璨卷王', 'win_rate': 0.58, 'me': true},
-    ],
-    'me': {'rank': 4, 'rating': 1702, 'tier_name': '璀璨卷王', 'win_rate': 0.58},
-    'estimate': {'rank': 37, 'total': 412, 'percent': 9},
-    'rating': 1218,
+    'live_min_games': 10,
+    'current': {
+      'top': [
+        {'rank': 1, 'name': '單字狂人', 'pid': 'd1', 'rating': 1684, 'tier_name': '璀璨卷王', 'win_rate': 0.71},
+        {'rank': 2, 'name': '柚子', 'pid': 'd2', 'rating': 1522, 'tier_name': '無雙卷哥', 'win_rate': 0.66},
+        {'rank': 3, 'name': '匿名玩家', 'pid': null, 'rating': 1407, 'tier_name': '無雙卷哥', 'win_rate': 0.63},
+        {'rank': 4, 'name': '勇敢的水獺08', 'pid': 'demo-me', 'rating': 1218, 'tier_name': '至尊星耀', 'win_rate': 0.58, 'me': true},
+      ],
+      'me': {'rank': 4, 'rating': 1218, 'tier_name': '至尊星耀', 'win_rate': 0.58, 'games': 12},
+    },
+    'last': {
+      'top': [
+        {'rank': 1, 'name': '單字狂人', 'pid': 'd1', 'rating': 2214, 'tier_name': '傳奇卷神', 'win_rate': 0.71},
+        {'rank': 2, 'name': '柚子', 'pid': 'd2', 'rating': 1987, 'tier_name': '傳奇卷神', 'win_rate': 0.66},
+      ],
+      'me': null,
+    },
   };
 }
 
@@ -1801,47 +1809,35 @@ class _BattleBoardPageState extends State<BattleBoardPage> {
         ]),
       ]);
     }
-    final est = b['estimate'] as Map<String, dynamic>?;
-    final rating = b['rating'] as int?;
     final minGames = b['min_games'] as int? ?? 60;
-    final top = [for (final r in b['top'] as List) r as Map<String, dynamic>];
-    final me = b['me'] as Map<String, dynamic>?;
+    final liveMin = b['live_min_games'] as int? ?? 10;
     return NavPage(title: '賽季排行', slivers: [
       Sec(
-        header: '${b['season']} 預估排名',
-        footer: '依上賽季同期資料估算，不是即時排名。',
-        children: [
-          if (rating != null && est != null)
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('大約第 ${est['rank']} 名', style: ts(F.title2, w: w7, c: p.ink)),
-                const SizedBox(height: 4),
-                Text('目前 $rating 分${est['percent'] != null ? '，前 ${est['percent']}%' : ''}', style: ts(F.sub, c: p.sec)),
-              ]),
-            )
-          else
-            RowTile(title: rating == null ? '打一場排名賽後就會顯示預估排名' : '還沒有上賽季同期的資料', titleColor: p.sec),
-        ],
+        header: '${b['season']} 即時排名',
+        footer: '本賽季打滿 $liveMin 場排名賽就會上榜，名次隨時更新。勝率含電腦局。長按暱稱可以檢舉或封鎖。',
+        children: _rows(p, b['current'] as Map<String, dynamic>?, liveMin, '還沒有人打滿 $liveMin 場排名賽'),
       ),
       Sec(
-        header: '${b['previous']} 前 20 名',
-        footer: '上賽季打滿 $minGames 場排名賽才會列入。勝率含電腦局。長按暱稱可以檢舉或封鎖。',
-        children: [
-          if (b['has_previous'] != true)
-            RowTile(title: '第一季，還沒有排名', titleColor: p.sec)
-          else if (top.isEmpty)
-            RowTile(title: '上賽季沒有人打滿 $minGames 場', titleColor: p.sec)
-          else ...[
-            for (final r in top) _row(p, r),
-            if (me != null && !top.any((r) => r['me'] == true)) _row(p, me, mine: true),
-          ],
-        ],
+        header: '${b['previous']} 最終排名',
+        footer: '上賽季打滿 $minGames 場排名賽才會列入。',
+        children: b['has_previous'] != true
+            ? [RowTile(title: '第一季，還沒有排名', titleColor: p.sec)]
+            : _rows(p, b['last'] as Map<String, dynamic>?, minGames, '上賽季沒有人打滿 $minGames 場'),
       ),
     ]);
   }
 
-  Widget _row(Palette p, Map<String, dynamic> r, {bool mine = false}) {
+  List<Widget> _rows(Palette p, Map<String, dynamic>? season, int min, String empty) {
+    final top = [for (final r in (season?['top'] as List? ?? const [])) r as Map<String, dynamic>];
+    final me = season?['me'] as Map<String, dynamic>?;
+    return [
+      if (top.isEmpty) RowTile(title: empty, titleColor: p.sec),
+      for (final r in top) _row(p, r, min: min),
+      if (me != null && !top.any((r) => r['me'] == true)) _row(p, me, mine: true, min: min),
+    ];
+  }
+
+  Widget _row(Palette p, Map<String, dynamic> r, {bool mine = false, required int min}) {
     final rank = r['rank'] as int?;
     final pid = mine ? null : r['pid'] as String?;
     final name = mine ? (widget.model.me?.name ?? '你') : (r['name'] as String? ?? '匿名玩家');
@@ -1872,7 +1868,7 @@ class _BattleBoardPageState extends State<BattleBoardPage> {
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: ts(F.sub, w: w6, c: p.ink)),
-              Text(mine && rank == null ? '場數不足' : '${r['tier_name']}・勝率 $rate%', style: ts(F.cap, c: p.sec)),
+              Text(mine && rank == null ? '場數不足（${r['games'] ?? 0} / $min 場）' : '${r['tier_name']}・勝率 $rate%', style: ts(F.cap, c: p.sec)),
             ]),
           ),
           Text('${r['rating']}', style: ts(F.headline, w: w7, c: p.ink)),
