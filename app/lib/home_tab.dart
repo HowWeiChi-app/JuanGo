@@ -40,12 +40,23 @@ class HomeTab extends StatelessWidget {
       builder: (context, _) {
         final p = Palette.of(context);
         final stats = _store.stats;
-        final newLeft = max(0, _settings.dailyGoal - stats.newToday);
+        final plan = ExamPlan.of(_settings, _store.words, stats.newToday);
+        // 結算畫面讀設定裡的今日目標（只存值，不通知）
+        _settings.examGoal = plan?.perDay;
+        final newLeft = max(0, (plan?.perDay ?? _settings.dailyGoal) - stats.newToday);
         final studyable = _store.studyable.toList();
         final due = studyable.where((w) => w.isDue).toList();
         final fresh = studyable.where((w) => w.isNew).toList()..sort((a, b) => a.addedAt.compareTo(b.addedAt));
         final newWords = fresh.take(newLeft).toList();
         final today = [...due, ...newWords];
+        // 倒數開著時，新字不夠就從目標級數補進「我的單字」，所以只要還有目標字就能開始
+        final canTopUp = plan != null && plan.remaining > 0 && newWords.length < newLeft;
+        List<Word> todayWords() {
+          if (!canTopUp) return today;
+          final have = _store.words.map((w) => w.term.toLowerCase()).toSet();
+          final more = [for (final e in plan.pool(have).take(newLeft - newWords.length)) _store.add(e)];
+          return [...today, ...more];
+        }
         final missed = _recentlyMissed();
 
         return LargePage(title: '主頁', slivers: [
@@ -53,9 +64,10 @@ class HomeTab extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
               child: Column(children: [
-                _todayRing(context, p, stats, due.length),
+                if (plan != null) ...[_countdown(p, plan), const SizedBox(height: 16)],
+                _todayRing(context, p, stats, due.length, plan),
                 const SizedBox(height: 16),
-                _startButton(context, p, today, studyable, newLeft),
+                _startButton(context, p, today, studyable, newLeft, canTopUp ? todayWords : null),
               ]),
             ),
           ]),
@@ -101,9 +113,39 @@ class HomeTab extends StatelessWidget {
     );
   }
 
-  Widget _todayRing(BuildContext context, Palette p, Stats stats, int dueCount) {
-    final goal = _settings.dailyGoal;
-    final progress = min(1.0, stats.newToday / max(1, goal));
+  /// 距學測 N 天，和倒數要今天做的事
+  Widget _countdown(Palette p, ExamPlan e) {
+    final sub = e.daysLeft == 0
+        ? '放輕鬆，你準備好了。'
+        : e.reviewOnly
+            ? '最後兩週只複習，不再加新字'
+            : e.remaining == 0
+                ? '第 1–${e.top} 級都學過了，專心複習'
+                : '每天 ${e.perDay} 個${e.capped ? '（上限）' : '新字'}・還剩 ${e.remaining} 字';
+    return MergeSemantics(
+      child: Row(children: [
+        SizedBox(
+          width: 64,
+          child: Column(children: [
+            Text('${e.daysLeft}', style: ts(34, w: w7, c: p.accent, h: 1.1)),
+            Text('天', style: ts(F.cap, w: w7, c: p.sec)),
+          ]),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(e.daysLeft == 0 ? '今天就是${e.name}' : '距${e.name}還有 ${e.daysLeft} 天', style: ts(F.headline, w: w6)),
+            const SizedBox(height: 3),
+            Text(sub, style: ts(F.cap, c: p.sec)),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  Widget _todayRing(BuildContext context, Palette p, Stats stats, int dueCount, ExamPlan? plan) {
+    final goal = plan?.perDay ?? _settings.dailyGoal;
+    final progress = goal == 0 ? 1.0 : min(1.0, stats.newToday / goal);
     return Row(children: [
       Semantics(
         label: '今天新字 ${stats.newToday} 個，目標 $goal 個',
@@ -134,14 +176,18 @@ class HomeTab extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _statLine(p, Icons.autorenew_rounded, '待複習', '$dueCount 個'),
           const SizedBox(height: 12),
-          MenuBtn(
-            label: '每日目標',
-            entries: () => [
-              for (final n in const [5, 10, 15, 20, 30, 50])
-                MenuEntry('$n 個', checked: n == goal, onTap: () => _settings.update((s) => s.dailyGoal = n)),
-            ],
-            child: _statLine(p, Icons.track_changes_rounded, '每日目標', '$goal 個 ▾'),
-          ),
+          // 倒數開著時目標由考試日期決定，不能在這裡改
+          if (plan != null)
+            _statLine(p, Icons.track_changes_rounded, '每日目標', '$goal 個')
+          else
+            MenuBtn(
+              label: '每日目標',
+              entries: () => [
+                for (final n in const [5, 10, 15, 20, 30, 50])
+                  MenuEntry('$n 個', checked: n == goal, onTap: () => _settings.update((s) => s.dailyGoal = n)),
+              ],
+              child: _statLine(p, Icons.track_changes_rounded, '每日目標', '$goal 個 ▾'),
+            ),
           const SizedBox(height: 12),
           _statLine(p, Icons.local_fire_department_rounded, '連續', '${stats.streak} 天'),
         ]),
@@ -157,10 +203,11 @@ class HomeTab extends StatelessWidget {
         Flexible(child: Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: ts(F.sub, w: w6, c: p.ink))),
       ]);
 
-  Widget _startButton(BuildContext context, Palette p, List<Word> today, List<Word> studyable, int newLeft) {
-    final empty = today.isEmpty;
+  Widget _startButton(BuildContext context, Palette p, List<Word> today, List<Word> studyable, int newLeft,
+      List<Word> Function()? topUp) {
+    final empty = today.isEmpty && topUp == null;
     String? hint;
-    if (studyable.isEmpty) {
+    if (studyable.isEmpty && empty) {
       hint = '先到「新增」或「探索」加入幾個單字吧。';
     } else if (empty) {
       final end = addDays(startOfDay(DateTime.now()), 2);
@@ -171,7 +218,7 @@ class HomeTab extends StatelessWidget {
       PrimaryButton(
         label: empty ? (newLeft > 0 ? '去探索找新字' : '今天都完成了') : '開始今日學習',
         icon: empty ? (newLeft > 0 ? Icons.auto_awesome_rounded : Icons.check_rounded) : Icons.play_arrow_rounded,
-        onTap: empty ? (newLeft > 0 ? onFindWords : null) : () => startStudy(context, '今日學習', today),
+        onTap: empty ? (newLeft > 0 ? onFindWords : null) : () => startStudy(context, '今日學習', topUp?.call() ?? today),
       ),
       if (hint != null) ...[const SizedBox(height: 8), Text(hint, style: ts(F.cap, c: p.sec))],
     ]);

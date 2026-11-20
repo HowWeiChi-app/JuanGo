@@ -256,7 +256,7 @@ class SummaryView extends StatelessWidget {
       listenable: AppSettings.shared,
       builder: (context, _) {
         final s = AppSettings.shared;
-        final left = s.dailyGoal - stats.newToday;
+        final left = s.goal - stats.newToday;
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Expanded(
             child: ListView(

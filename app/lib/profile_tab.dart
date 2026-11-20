@@ -9,6 +9,7 @@ import 'cloud.dart';
 import 'dictionary.dart';
 import 'models.dart';
 import 'onboarding.dart';
+import 'pro.dart';
 import 'services.dart';
 import 'settings.dart';
 import 'sheets.dart';
@@ -269,15 +270,58 @@ class _SettingsRoot extends StatelessWidget {
 
   Widget _goalPage() => _SubPage('每日計畫', (p) {
         final s = _settings;
+        final manual = !s.examOn;
         return [
+          Sec(
+            header: '考前倒數',
+            footer: '依考試日期和還沒學過的字，自動算出每天要學幾個新字；字不夠時會從大考詞彙補進「我的單字」。考前兩週只複習。',
+            children: [
+              SwitchRow(title: '考前倒數', value: s.examOn, onChanged: (v) => s.update((x) => x.examOn = v)),
+              if (s.examOn) ...[
+                Builder(
+                  builder: (c) => RowTile(
+                    title: '考試',
+                    value: s.examName,
+                    chevron: true,
+                    onTap: () => showAppMenu(c, [
+                      for (final n in ExamPlan.names)
+                        MenuEntry(n, checked: n == s.examName, onTap: () => s.update((x) => x.examName = n)),
+                    ]),
+                  ),
+                ),
+                Builder(
+                  builder: (c) => RowTile(
+                    title: '考試日期',
+                    value: '${s.examDate.year}年${monthDay(s.examDate)}',
+                    chevron: true,
+                    onTap: () => showDateWheel(c, '考試日期', s.examDate, (d) => s.update((x) => x.examDate = d)),
+                  ),
+                ),
+                Builder(
+                  builder: (c) => RowTile(
+                    title: '要學完',
+                    value: '大考第 1–${s.examTop} 級',
+                    chevron: true,
+                    onTap: () => showAppMenu(c, [
+                      for (final t in const [2, 4, 6])
+                        MenuEntry('大考第 1–$t 級', checked: t == s.examTop, onTap: () => s.update((x) => x.examTop = t)),
+                    ]),
+                  ),
+                ),
+              ],
+            ],
+          ),
           Sec(header: '每日新字', children: [
-            RowTile(
-              title: '${s.dailyGoal} 個 / 天',
-              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                CircleBtn(icon: Icons.remove_rounded, label: '減少', size: 34, onTap: s.dailyGoal > 1 ? () => s.update((x) => x.dailyGoal -= 1) : null),
-                const SizedBox(width: 8),
-                CircleBtn(icon: Icons.add_rounded, label: '增加', size: 34, onTap: s.dailyGoal < 100 ? () => s.update((x) => x.dailyGoal += 1) : null),
-              ]),
+            Opacity(
+              opacity: manual ? 1 : .45,
+              child: RowTile(
+                title: '${s.dailyGoal} 個 / 天',
+                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                  CircleBtn(icon: Icons.remove_rounded, label: '減少', size: 34, onTap: manual && s.dailyGoal > 1 ? () => s.update((x) => x.dailyGoal -= 1) : null),
+                  const SizedBox(width: 8),
+                  CircleBtn(icon: Icons.add_rounded, label: '增加', size: 34, onTap: manual && s.dailyGoal < 100 ? () => s.update((x) => x.dailyGoal += 1) : null),
+                ]),
+              ),
             ),
           ]),
           Sec(header: '單字程度', children: [
@@ -388,6 +432,16 @@ class _SettingsRoot extends StatelessWidget {
           leading: const SizedBox.shrink(),
           actions: [BarText('完成', onTap: () => _closeSettings(context))],
           slivers: [
+            Sec(children: [
+              _row(
+                context,
+                p,
+                Icons.auto_awesome_rounded,
+                '捲字 Pro',
+                ProStore.shared.plan == null ? '免費版' : '${ProStore.shared.plan!.label}${ProStore.shared.devUnlocked ? '・開發版' : ''}',
+                () => const ProSettingsPage(),
+              ),
+            ]),
             Sec(header: '學習', children: [
               _row(context, p, Icons.track_changes_rounded, '每日計畫', '每日新字與單字程度', _goalPage),
               _row(context, p, Icons.school_rounded, '答題與發音', '例句翻譯、發音與震動', _practicePage),

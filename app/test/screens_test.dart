@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:juango/exam.dart';
 import 'package:juango/main.dart';
 import 'package:juango/models.dart' show QType;
+import 'package:juango/pro.dart';
 import 'package:juango/settings.dart';
 import 'package:juango/sheets.dart';
 import 'package:juango/store.dart';
@@ -171,6 +172,42 @@ void main() {
       await t.tapText('每日提醒');
       await t.back();
       await t.tapText('完成');
+      await _close(t);
+    });
+
+    testWidgets('考前倒數（$label螢幕）', (t) async {
+      await _open(t, size);
+      final now = DateTime.now();
+      AppSettings.shared.update((x) => x
+        ..examOn = true
+        ..examDate = DateTime(now.year, now.month, now.day + 60));
+      await t.settle();
+      expect(find.text('距學測還有 60 天'), findsOneWidget);
+      await t.shot('${tag}_countdown_home');
+      await t.tapTab(Icons.account_circle_rounded);
+      await t.tapIcon(Icons.tune_rounded);
+      await t.tapText('每日計畫');
+      await t.shot('${tag}_countdown_settings');
+      await t.tapText('考試日期');
+      await t.shot('${tag}_countdown_date');
+      await t.tapText('完成');
+      await t.back();
+      await t.tapText('完成');
+      AppSettings.shared.update((x) => x.examOn = false);
+      await _close(t);
+    });
+
+    testWidgets('捲字 Pro（$label螢幕）', (t) async {
+      await _open(t, size);
+      await t.tapTab(Icons.account_circle_rounded);
+      await t.tapIcon(Icons.tune_rounded);
+      await t.tapText('捲字 Pro');
+      await t.shot('${tag}_pro_settings');
+      await t.tapText('查看 Pro 方案');
+      await t.shot('${tag}_pro_paywall');
+      await t.tapText('免費試用 7 天');
+      expect(find.text(ProStore.notOpen), findsOneWidget);
+      await t.shot('${tag}_pro_not_open');
       await _close(t);
     });
 
