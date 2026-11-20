@@ -310,12 +310,18 @@ extension AppSettings {
          "themeID": .string(themeID), "muted": .bool(muted), "showTranslation": .bool(showTranslation),
          "haptics": .bool(haptics), "speechRate": .double(speechRate), "listShowMeaning": .bool(listShowMeaning),
          "detailAutoSpeak": .bool(detailAutoSpeak), "exploreShowIPA": .bool(exploreShowIPA),
-         "aiTranslate": .bool(aiTranslate), "apiBaseURL": .string(apiBaseURL), "apiModel": .string(apiModel)]
+         "aiTranslate": .bool(aiTranslate), "apiBaseURL": .string(apiBaseURL), "apiModel": .string(apiModel),
+         "examOn": .bool(examOn), "examName": .string(examName), "examDate": .double(examDate.timeIntervalSince1970),
+         "examTop": .int(examTop)]
     }
 
     func apply(backup s: [String: BackupFile.SettingValue]) {
         if let v = s["level"]?.string { level = v }
         if let v = s["dailyGoal"]?.int { dailyGoal = v }
+        if let v = s["examOn"]?.bool { examOn = v }
+        if let v = s["examName"]?.string { examName = v }
+        if let v = s["examDate"]?.double, v > 0 { examDate = Date(timeIntervalSince1970: v) }
+        if let v = s["examTop"]?.int { examTop = v }
         if let v = s["reminderMinutes"]?.int { reminderMinutes = v }
         if let v = s["reminderOn"]?.bool { reminderOn = v }
         if let v = s["appearance"]?.int { appearance = v }

@@ -120,7 +120,7 @@ struct SummaryView: View {
     @State fileprivate var detail: Word?
 
     var body: some View {
-        let left = max(0, settings.dailyGoal - stats.newToday)
+        let left = max(0, settings.goal - stats.newToday)
         let count = { (g: Grade) in results.filter { $0.grade == g }.count }
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {

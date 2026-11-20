@@ -164,11 +164,36 @@ struct SettingsView: View {
         @Bindable var settings = settings
         NavigationStack {
             Form { Group {
+                Section {
+                    NavigationLink { ProSettingsView() } label: {
+                        row("sparkles", "捲字 Pro", ProStore.shared.plan.map { $0.name + (ProStore.shared.devUnlocked ? "・開發版" : "") } ?? "免費版")
+                    }
+                }
                 Section("學習") {
                     NavigationLink {
                         Form { Group {
+                            Section {
+                                Toggle("考前倒數", isOn: $settings.examOn)
+                                if settings.examOn {
+                                    Picker("考試", selection: $settings.examName) {
+                                        ForEach(ExamPlan.names, id: \.self) { Text($0).tag($0) }
+                                    }
+                                    DatePicker("考試日期", selection: $settings.examDate,
+                                               in: Calendar.current.startOfDay(for: .now)..., displayedComponents: .date)
+                                    Picker("要學完", selection: $settings.examTop) {
+                                        Text("大考第 1–2 級").tag(2)
+                                        Text("大考第 1–4 級").tag(4)
+                                        Text("大考第 1–6 級").tag(6)
+                                    }
+                                }
+                            } header: {
+                                Text("考前倒數")
+                            } footer: {
+                                Text("依考試日期和還沒學過的字，自動算出每天要學幾個新字；字不夠時會從大考詞彙補進「我的單字」。考前兩週只複習。")
+                            }
                             Section("每日新字") {
                                 Stepper("\(settings.dailyGoal) 個 / 天", value: $settings.dailyGoal, in: 1...100)
+                                    .disabled(settings.examOn)
                             }
                             Section("單字程度") {
                                 Picker("程度", selection: $settings.level) {

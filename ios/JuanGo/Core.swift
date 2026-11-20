@@ -350,12 +350,23 @@ enum SRS {
     /// any OpenAI-compatible chat API; the key lives in the Keychain (APIKey)
     var apiBaseURL: String { didSet { d.set(apiBaseURL, forKey: "apiBaseURL") } }
     var apiModel: String { didSet { d.set(apiModel, forKey: "apiModel") } }
+    /// 考前倒數: while on, the day's new-word goal comes from the exam date (ExamPlan) instead of `dailyGoal`
+    var examOn: Bool { didSet { d.set(examOn, forKey: "examOn") } }
+    var examName: String { didSet { d.set(examName, forKey: "examName") } }
+    var examDate: Date { didSet { d.set(examDate.timeIntervalSince1970, forKey: "examDate") } }
+    /// the highest 大考 level to finish before the exam (2, 4 or 6)
+    var examTop: Int { didSet { d.set(examTop, forKey: "examTop") } }
+    /// today's goal from the countdown, set by the home screen; nil when the countdown is off
+    var examGoal: Int?
+    /// the new words to learn today
+    var goal: Int { examGoal ?? dailyGoal }
 
     init() {
         d.register(defaults: ["language": "zh-Hant", "level": "3", "dailyGoal": 10, "reminderMinutes": 20 * 60,
                               "themeID": "phoenix", "fontStyle": 0, "aiTranslate": true, "showTranslation": true, "haptics": true,
                               "speechRate": 0.45, "listShowMeaning": true, "exploreShowIPA": true,
-                              "apiBaseURL": "https://apihub.agnes-ai.com/v1", "apiModel": "agnes-3.0-flash"])
+                              "apiBaseURL": "https://apihub.agnes-ai.com/v1", "apiModel": "agnes-3.0-flash",
+                              "examName": "學測", "examTop": 6])
         onboarded = d.bool(forKey: "onboarded")
         language = d.string(forKey: "language")!
         let storedLevel = d.string(forKey: "level")!
@@ -380,6 +391,11 @@ enum SRS {
         aiTranslate = d.bool(forKey: "aiTranslate")
         apiBaseURL = d.string(forKey: "apiBaseURL")!
         apiModel = d.string(forKey: "apiModel")!
+        examOn = d.bool(forKey: "examOn")
+        examName = d.string(forKey: "examName")!
+        let stamp = d.double(forKey: "examDate")
+        examDate = stamp > 0 ? Date(timeIntervalSince1970: stamp) : ExamPlan.defaultDate()
+        examTop = d.integer(forKey: "examTop")
     }
 
     var theme: AppTheme {
@@ -396,6 +412,66 @@ enum SRS {
         set { let c = Calendar.current.dateComponents([.hour, .minute], from: newValue); reminderMinutes = c.hour! * 60 + c.minute! }
     }
     var reminderText: String { String(format: "%d:%02d", reminderMinutes / 60, reminderMinutes % 60) }
+}
+
+// MARK: - Exam countdown
+
+/// 考前倒數: spreads the 大考 words not learned yet over the days left, keeping the last two weeks for review.
+struct ExamPlan {
+    static let reviewDays = 14
+    static let names = ["學測", "分科測驗", "會考", "英檢", "多益"]
+    let name: String
+    let top: Int
+    let daysLeft: Int
+    /// target words not learned yet (new or not saved)
+    let remaining: Int
+    /// new words a day: 0 in the review weeks or once every target word is learned
+    let perDay: Int
+    /// more than 100 a day would be needed to finish, so the day is held at 100
+    let capped: Bool
+    var reviewOnly: Bool { daysLeft <= Self.reviewDays }
+
+    /// nil when the countdown is off or the exam day has passed
+    @MainActor init?(settings: AppSettings, words: [Word], newToday: Int) {
+        guard settings.examOn else { return nil }
+        let cal = Calendar.current
+        let days = cal.dateComponents([.day], from: cal.startOfDay(for: .now), to: cal.startOfDay(for: settings.examDate)).day ?? -1
+        guard days >= 0 else { return nil }
+        let targets = Self.targets(top: settings.examTop)
+        let learned = words.count { !$0.isNew && targets.contains($0.term) }
+        name = settings.examName
+        top = settings.examTop
+        daysLeft = days
+        remaining = max(0, targets.count - learned)
+        // today's new words are added back, so the number doesn't drop as the day's words are learned
+        let studyDays = days - Self.reviewDays
+        let needed = studyDays > 0 ? Int((Double(remaining + newToday) / Double(studyDays)).rounded(.up)) : 0
+        perDay = min(100, needed)
+        capped = needed > 100
+    }
+
+    @MainActor private static var cache: (top: Int, terms: Set<String>)?
+    @MainActor static func targets(top: Int) -> Set<String> {
+        if let c = cache, c.top == top { return c.terms }
+        let terms = Set((1...max(1, top)).flatMap { Dictionary_.entries(level: String($0)) }.map { $0.w.lowercased() })
+        cache = (top, terms)
+        return terms
+    }
+
+    /// Target words not saved yet, the easier levels first, shuffled within a level.
+    func pool(excluding have: Set<String>) -> [DictEntry] {
+        (1...max(1, top)).flatMap { Dictionary_.entries(level: String($0)).filter { !have.contains($0.w.lowercased()) }.shuffled() }
+    }
+
+    /// 20 January next, roughly when 學測 is held, until a date is picked
+    static func defaultDate() -> Date {
+        let cal = Calendar.current
+        let now = Date.now
+        var c = DateComponents(year: cal.component(.year, from: now), month: 1, day: 20)
+        if let d = cal.date(from: c), d > now { return d }
+        c.year! += 1
+        return cal.date(from: c) ?? now
+    }
 }
 
 enum Reminders {

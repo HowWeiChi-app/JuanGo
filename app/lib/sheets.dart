@@ -2,6 +2,7 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:material_ui/material_ui.dart';
@@ -524,6 +525,65 @@ Future<(String name, String text)?> pickTextFile({List<String> extensions = cons
   final path = files.single.path;
   if (path == null) return null;
   return (files.single.name, await File(path).readAsString());
+}
+
+/// 選日期：年、月、日三個滾輪，從今年到三年後
+Future<void> showDateWheel(BuildContext c, String title, DateTime initial, ValueChanged<DateTime> onDone) {
+  final now = DateTime.now();
+  final first = now.year;
+  final year = FixedExtentScrollController(initialItem: (initial.year - first).clamp(0, 3));
+  final month = FixedExtentScrollController(initialItem: initial.month - 1);
+  final day = FixedExtentScrollController(initialItem: initial.day - 1);
+  return presentSheet(c, height: 340, (ctx) {
+    final p = Palette.of(ctx);
+    Widget wheel(FixedExtentScrollController ctrl, List<String> items, String label) => Expanded(
+          child: Semantics(
+            label: label,
+            child: ListWheelScrollView(
+              controller: ctrl,
+              itemExtent: 44,
+              physics: const FixedExtentScrollPhysics(),
+              perspective: .004,
+              children: [for (final t in items) Center(child: Text(t, style: ts(F.title2, w: w6)))],
+            ),
+          ),
+        );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 22, 24, 20),
+      child: Column(children: [
+        Text(title, style: ts(F.title3, w: w7)),
+        const SizedBox(height: 12),
+        Expanded(
+          child: Stack(alignment: Alignment.center, children: [
+            Container(height: 44, decoration: BoxDecoration(color: p.fill, borderRadius: BorderRadius.circular(Radii.md))),
+            Row(children: [
+              wheel(year, [for (var y = first; y <= first + 3; y++) '$y年'], '年'),
+              wheel(month, [for (var m = 1; m <= 12; m++) '$m月'], '月'),
+              wheel(day, [for (var d = 1; d <= 31; d++) '$d日'], '日'),
+            ]),
+          ]),
+        ),
+        const SizedBox(height: 12),
+        PrimaryButton(
+          label: '完成',
+          width: double.infinity,
+          onTap: () {
+            final y = first + year.selectedItem, m = month.selectedItem + 1;
+            // 2 月 30 日這類不存在的日子改成那個月的最後一天；早於今天就用今天
+            final last = DateTime(y, m + 1, 0).day;
+            var d = DateTime(y, m, min(day.selectedItem + 1, last));
+            if (d.isBefore(startOfDay(now))) d = startOfDay(now);
+            onDone(d);
+            Navigator.of(ctx).pop();
+          },
+        ),
+      ]),
+    );
+  }).whenComplete(() {
+    year.dispose();
+    month.dispose();
+    day.dispose();
+  });
 }
 
 /// 選時間：Material 內建的時鐘是英文介面，這裡用兩個滾輪，文字和字體都跟著 App

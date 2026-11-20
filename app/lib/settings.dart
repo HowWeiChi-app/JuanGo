@@ -1,11 +1,71 @@
 // App 設定：預設值和 iOS 版相同，改了就寫進 SharedPreferences。
 
+import 'dart:math';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'demo.dart';
+import 'dictionary.dart';
+import 'models.dart';
 import 'services.dart';
 import 'theme.dart';
+
+/// 考前倒數：把還沒學的大考單字平均分到剩下的日子，最後兩週只複習。
+class ExamPlan {
+  static const reviewDays = 14;
+  static const names = ['學測', '分科測驗', '會考', '英檢', '多益'];
+
+  ExamPlan._(this.name, this.top, this.daysLeft, this.remaining, this.perDay, this.capped);
+  final String name;
+  final int top, daysLeft;
+
+  /// 還沒學過（新字或還沒加入）的目標字
+  final int remaining;
+
+  /// 每天的新字：最後兩週或目標字都學過時是 0
+  final int perDay;
+
+  /// 每天要超過 100 個才學得完，已經用上限
+  final bool capped;
+  bool get reviewOnly => daysLeft <= reviewDays;
+
+  /// 沒開倒數或考試日已過時回傳 null
+  static ExamPlan? of(AppSettings s, Iterable<Word> words, int newToday) {
+    if (!s.examOn) return null;
+    final days = startOfDay(s.examDate).difference(startOfDay(DateTime.now())).inHours ~/ 24;
+    if (days < 0) return null;
+    final t = targets(s.examTop);
+    final learned = words.where((w) => !w.isNew && t.contains(w.term.toLowerCase())).length;
+    final remaining = max(0, t.length - learned);
+    // 今天學的新字加回去，數字才不會越學越少
+    final studyDays = days - reviewDays;
+    final needed = studyDays > 0 ? ((remaining + newToday) / studyDays).ceil() : 0;
+    return ExamPlan._(s.examName, s.examTop, days, remaining, min(100, needed), needed > 100);
+  }
+
+  static (int, Set<String>)? _cache;
+  static Set<String> targets(int top) {
+    final c = _cache;
+    if (c != null && c.$1 == top) return c.$2;
+    final t = {for (var lv = 1; lv <= max(1, top); lv++) for (final e in Dict.entriesOfLevel('$lv')) e.w.toLowerCase()};
+    _cache = (top, t);
+    return t;
+  }
+
+  /// 還沒加入的目標字：先簡單的級數，同一級裡打亂
+  List<DictEntry> pool(Set<String> have) => [
+        for (var lv = 1; lv <= max(1, top); lv++)
+          ...(Dict.entriesOfLevel('$lv').where((e) => !have.contains(e.w.toLowerCase())).toList()..shuffle()),
+      ];
+
+  /// 還沒選日期前先用明年 1 月 20 日，大約是學測的時間
+  static DateTime defaultDate() {
+    final now = DateTime.now();
+    final d = DateTime(now.year, 1, 20);
+    return d.isAfter(now) ? d : DateTime(now.year + 1, 1, 20);
+  }
+}
 
 class AppSettings extends ChangeNotifier {
   AppSettings._();
@@ -21,6 +81,18 @@ class AppSettings extends ChangeNotifier {
   String language = 'zh-Hant', level = '3', themeID = 'phoenix';
   int dailyGoal = 10, reminderMinutes = 20 * 60, appearance = 0, fontStyle = 0, practiceLimit = 20;
   double speechRate = 0.45;
+
+  // 考前倒數：開著的時候，每天的新字數由考試日期算出來（ExamPlan），不看 dailyGoal
+  bool examOn = false;
+  String examName = '學測';
+  DateTime examDate = ExamPlan.defaultDate();
+  int examTop = 6; // 要學完的大考最高級數（2、4 或 6）
+
+  /// 倒數算出的今日目標，由主頁設定；沒開倒數時是 null
+  int? examGoal;
+
+  /// 今天要學的新字數
+  int get goal => examGoal ?? dailyGoal;
 
   Future<void> load() async {
     final p = _p = await SharedPreferences.getInstance();
@@ -45,6 +117,11 @@ class AppSettings extends ChangeNotifier {
     fontStyle = p.getInt('fontStyle') ?? 0;
     practiceLimit = p.getInt('practiceLimit') ?? 20;
     speechRate = p.getDouble('speechRate') ?? 0.45;
+    examOn = p.getBool('examOn') ?? false;
+    examName = p.getString('examName') ?? '學測';
+    final stamp = p.getDouble('examDate') ?? 0;
+    examDate = stamp > 0 ? DateTime.fromMillisecondsSinceEpoch((stamp * 1000).round()) : ExamPlan.defaultDate();
+    examTop = p.getInt('examTop') ?? 6;
     if (demoOn) {
       onboarded = true;
       exploreTipsDone = true;
@@ -86,6 +163,10 @@ class AppSettings extends ChangeNotifier {
     p.setInt('fontStyle', fontStyle);
     p.setInt('practiceLimit', practiceLimit);
     p.setDouble('speechRate', speechRate);
+    p.setBool('examOn', examOn);
+    p.setString('examName', examName);
+    p.setDouble('examDate', examDate.millisecondsSinceEpoch / 1000);
+    p.setInt('examTop', examTop);
   }
 
   /// 「自動唸單字」：設定頁和探索頁的喇叭是同一個開關
@@ -116,6 +197,10 @@ class AppSettings extends ChangeNotifier {
         'listShowMeaning': listShowMeaning,
         'detailAutoSpeak': detailAutoSpeak,
         'exploreShowIPA': exploreShowIPA,
+        'examOn': examOn,
+        'examName': examName,
+        'examDate': examDate.millisecondsSinceEpoch / 1000,
+        'examTop': examTop,
       };
 
   void applyBackup(Map<String, dynamic> m) => update((s) {
@@ -134,5 +219,10 @@ class AppSettings extends ChangeNotifier {
         s.listShowMeaning = v<bool>('listShowMeaning') ?? s.listShowMeaning;
         s.detailAutoSpeak = v<bool>('detailAutoSpeak') ?? s.detailAutoSpeak;
         s.exploreShowIPA = v<bool>('exploreShowIPA') ?? s.exploreShowIPA;
+        s.examOn = v<bool>('examOn') ?? s.examOn;
+        s.examName = v<String>('examName') ?? s.examName;
+        final stamp = v<num>('examDate');
+        if (stamp != null && stamp > 0) s.examDate = DateTime.fromMillisecondsSinceEpoch((stamp * 1000).round());
+        s.examTop = v<int>('examTop') ?? s.examTop;
       });
 }

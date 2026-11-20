@@ -33,12 +33,14 @@ struct StudyTab: View {
     }
 
     var body: some View {
-        let h = Home(words: words, newLeft: newLeft)
+        let plan = ExamPlan(settings: settings, words: words, newToday: stats.newToday)
+        let h = Home(words: words, newLeft: newLeft(plan))
         NavigationStack {
             List { Group {
                 Section {
-                    todayRing(h)
-                    startButton(h).listRowSeparator(.hidden)
+                    if let plan { countdownRow(plan) }
+                    todayRing(h, plan: plan)
+                    startButton(h, plan: plan).listRowSeparator(.hidden)
                 } header: {
                     Text(Date.now.formatted(.dateTime.month().day().weekday(.wide).locale(.zh)))
                 }
@@ -110,13 +112,52 @@ struct StudyTab: View {
                 guard go else { return }
                 // cleared a moment later, so the tab bar sees it too and switches here
                 Task { @MainActor in AppRouter.shared.startToday = false }
-                let h = Home(words: words, newLeft: newLeft)
-                if flow == nil, !h.nothingQueued { flow = StudyRequest(title: "今日學習", words: h.due + h.newWords) }
+                let plan = ExamPlan(settings: settings, words: words, newToday: stats.newToday)
+                let h = Home(words: words, newLeft: newLeft(plan))
+                let today = todayWords(h, plan: plan)
+                if flow == nil, !today.isEmpty { flow = StudyRequest(title: "今日學習", words: today) }
+            }
+            // the summary screen and the reminders read the day's goal from the settings
+            .onChange(of: ExamPlan(settings: settings, words: words, newToday: stats.newToday)?.perDay, initial: true) { _, g in
+                settings.examGoal = g
             }
         }
     }
 
-    private var newLeft: Int { max(0, settings.dailyGoal - stats.newToday) }
+    private func newLeft(_ plan: ExamPlan?) -> Int { max(0, (plan?.perDay ?? settings.dailyGoal) - stats.newToday) }
+
+    /// Today's words. With the countdown on and too few new words saved, target words are added to 我的單字.
+    private func todayWords(_ h: Home, plan: ExamPlan?) -> [Word] {
+        var fresh = h.newWords
+        let want = newLeft(plan)
+        if let plan, fresh.count < want {
+            let have = Set(words.map(\.term))
+            fresh += plan.pool(excluding: have).prefix(want - fresh.count).map { Library.add($0, in: ctx) }
+        }
+        return h.due + fresh
+    }
+
+    /// 距學測 N 天 and what the countdown asks of today.
+    private func countdownRow(_ p: ExamPlan) -> some View {
+        HStack(spacing: 16) {
+            VStack(spacing: 0) {
+                Text("\(p.daysLeft)").font(.app(size: 34, .bold)).monospacedDigit().foregroundStyle(Color.themeAccent)
+                Text("天").font(.app(.caption, .bold)).foregroundStyle(.secondary)
+            }
+            .frame(minWidth: 64)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(p.daysLeft == 0 ? "今天就是\(p.name)" : "距\(p.name)還有 \(p.daysLeft) 天").font(.app(.headline))
+                Text(p.daysLeft == 0 ? "放輕鬆，你準備好了。"
+                     : p.reviewOnly ? "最後兩週只複習，不再加新字"
+                     : p.remaining == 0 ? "第 1–\(p.top) 級都學過了，專心複習"
+                     : "每天 \(p.perDay) 個\(p.capped ? "（上限）" : "新字")・還剩 \(p.remaining) 字")
+                    .font(.app(.caption)).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+    }
 
     /// Words whose latest answer in the past two weeks was 不會 (the logs come newest first).
     private func recentlyMissed() -> [Word] {
@@ -133,9 +174,10 @@ struct StudyTab: View {
     @Environment(\.dynamicTypeSize) private var typeSize
 
     /// Today's new words as a ring beside the day's numbers.
-    private func todayRing(_ h: Home) -> some View {
+    private func todayRing(_ h: Home, plan: ExamPlan?) -> some View {
         @Bindable var settings = settings
-        let progress = Double(stats.newToday) / Double(max(1, settings.dailyGoal))
+        let goal = plan?.perDay ?? settings.dailyGoal
+        let progress = goal == 0 ? 1 : Double(stats.newToday) / Double(goal)
         // at accessibility text sizes the numbers go under the ring instead of wrapping beside it
         let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16)) : AnyLayout(HStackLayout(spacing: 22))
         return layout {
@@ -147,22 +189,27 @@ struct StudyTab: View {
                     .animation(.spring(duration: 0.8), value: progress)
                 VStack(spacing: 0) {
                     Text("\(stats.newToday)").font(.app(size: 34, .bold)).contentTransition(.numericText())
-                    Text("/ \(settings.dailyGoal) 新字").font(.app(.caption, .semibold)).foregroundStyle(.secondary)
+                    Text("/ \(goal) 新字").font(.app(.caption, .semibold)).foregroundStyle(.secondary)
                 }
             }
             .frame(width: 112, height: 112)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("今天新字 \(stats.newToday) 個，目標 \(settings.dailyGoal) 個")
+            .accessibilityLabel("今天新字 \(stats.newToday) 個，目標 \(goal) 個")
             VStack(alignment: .leading, spacing: 12) {
                 statLine("arrow.triangle.2.circlepath", "待複習", "\(h.due.count) 個")
-                Menu {
-                    Picker("每日新字", selection: $settings.dailyGoal) {
-                        ForEach([5, 10, 15, 20, 30, 50], id: \.self) { Text("\($0) 個").tag($0) }
+                if plan != nil {
+                    // the countdown sets the goal; it's changed by moving the exam date
+                    statLine("target", "每日目標", "\(goal) 個")
+                } else {
+                    Menu {
+                        Picker("每日新字", selection: $settings.dailyGoal) {
+                            ForEach([5, 10, 15, 20, 30, 50], id: \.self) { Text("\($0) 個").tag($0) }
+                        }
+                    } label: {
+                        statLine("target", "每日目標", "\(settings.dailyGoal) 個 ▾")
                     }
-                } label: {
-                    statLine("target", "每日目標", "\(settings.dailyGoal) 個 ▾")
+                    .buttonStyle(.borderless)
                 }
-                .buttonStyle(.borderless)
                 statLine("flame.fill", "連續", "\(stats.streak) 天")
             }
             Spacer(minLength: 0)
@@ -170,19 +217,22 @@ struct StudyTab: View {
         .padding(.vertical, 8)
     }
 
-    private func startButton(_ h: Home) -> some View {
-        VStack(spacing: 8) {
+    private func startButton(_ h: Home, plan: ExamPlan?) -> some View {
+        let newLeft = newLeft(plan)
+        // the countdown fills up the day with target words, so there's something to start while any are left
+        let empty = h.nothingQueued && !(plan.map { $0.remaining > 0 && newLeft > 0 } ?? false)
+        return VStack(spacing: 8) {
             Button {
-                if h.nothingQueued { onFindWords() } else { flow = StudyRequest(title: "今日學習", words: h.due + h.newWords) }
+                if empty { onFindWords() } else { flow = StudyRequest(title: "今日學習", words: todayWords(h, plan: plan)) }
             } label: {
-                Label(h.nothingQueued ? (newLeft > 0 ? "去探索找新字" : "今天都完成了") : "開始今日學習",
-                      pulso: h.nothingQueued ? (newLeft > 0 ? "sparkles" : "checkmark") : "play.fill")
+                Label(empty ? (newLeft > 0 ? "去探索找新字" : "今天都完成了") : "開始今日學習",
+                      pulso: empty ? (newLeft > 0 ? "sparkles" : "checkmark") : "play.fill")
             }
             .buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
-            .disabled(h.nothingQueued && newLeft == 0)
-            if h.studyable.isEmpty {
+            .disabled(empty && newLeft == 0)
+            if h.studyable.isEmpty && empty {
                 Text("先到「新增」或「探索」加入幾個單字吧。").font(.app(.caption)).foregroundStyle(.secondary)
-            } else if h.nothingQueued {
+            } else if empty {
                 // with today done, say what tomorrow holds
                 let cal = Calendar.current
                 let end = cal.date(byAdding: .day, value: 2, to: cal.startOfDay(for: .now)) ?? .distantFuture

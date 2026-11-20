@@ -132,6 +132,8 @@ capture_android() {
   mkdir -p "$OUT/android"
   "$ADB" exec-out screencap -p > "$OUT/android/explore-$ANDROID_WORD.png"
   check_size "$OUT/android/explore-$ANDROID_WORD.png" 1440 3120
+  # 截完就刪掉展示版，手機上只留平常用的 App
+  "$ADB" uninstall "$BUNDLE" >/dev/null || true
 }
 
 case "$TARGET" in
