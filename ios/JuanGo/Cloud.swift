@@ -106,6 +106,14 @@ final class Cloud {
         UserDefaults.standard.removeObject(forKey: "cloud.lastSync")
     }
 
+    /// Deletes the account and everything stored for it in the cloud; this device's words stay.
+    func deleteAccount() async throws {
+        _ = try await send(rest("rpc/delete_my_account"), method: "POST", json: [:])
+        store(nil)
+        lastSync = nil
+        UserDefaults.standard.removeObject(forKey: "cloud.lastSync")
+    }
+
     private func store(_ s: Session?) {
         session = s
         if let s, let d = try? JSONEncoder().encode(s) { Keychain.write("session", d) } else { Keychain.delete("session") }

@@ -115,6 +115,26 @@ void main() {
     m.dispose();
   });
 
+  test('檢舉和封鎖送出對方的 pid，不計分的場次帶著說明', () async {
+    final calls = <String, Map<String, dynamic>>{};
+    await _signIn(MockClient((req) async {
+      calls[req.url.pathSegments.last] = jsonDecode(req.body) as Map<String, dynamic>;
+      return http.Response('null', 200, headers: {'content-type': 'application/json'});
+    }));
+    final m = BattleModel(level: '3');
+    expect(await m.report('abc123', 'vulgar'), isNull);
+    expect(await m.block('abc123'), isNull);
+    expect(calls['battle_report'], {'p_pid': 'abc123', 'p_reason': 'vulgar'});
+    expect(calls['battle_block'], {'p_pid': 'abc123'});
+    final s = BattleState({
+      'id': 'm', 'status': 'playing', 'rated': false, 'round': 1, 'now': 0,
+      'you': _side('甲', 0), 'rounds': 10, 'note': '你們今天已經對戰 3 場，這場不計分',
+    });
+    expect(s.rounds, 10);
+    expect(s.note, contains('不計分'));
+    m.dispose();
+  });
+
   test('伺服器還沒裝對戰功能時說清楚', () async {
     await _signIn(MockClient((_) async => http.Response('{"message":"Could not find the function public.battle_me"}', 404)));
     final m = BattleModel(level: '3');
@@ -124,7 +144,7 @@ void main() {
   });
 
   for (final size in const [Size(320, 568), Size(430, 932)]) {
-    for (final step in const ['home', 'search', 'room', 'question', 'reveal', 'result']) {
+    for (final step in const ['home', 'search', 'room', 'question', 'reveal', 'result', 'board']) {
       testWidgets('$step ${size.width.toInt()}', (t) async {
         final root = GlobalKey();
         Cloud.resetForTest(MockClient((_) async => http.Response('{}', 200)), _Vault(null));
@@ -143,13 +163,25 @@ void main() {
             }
           });
         }
-        final m = BattleModel(level: '4')..demo(step);
+        final m = BattleModel(level: '4')..demo(step == 'board' ? 'home' : step);
         await t.pumpWidget(RepaintBoundary(
           key: root,
-          child: MaterialApp(theme: ThemeData(fontFamily: 'Roboto'), home: Builder(builder: (c) => Material(color: Palette.of(c).bg, child: BattlePage(model: m)))),
+          child: MaterialApp(
+            theme: ThemeData(fontFamily: 'Roboto'),
+            home: Builder(
+              builder: (c) => Material(color: Palette.of(c).bg, child: step == 'board' ? BattleBoardPage(model: m) : BattlePage(model: m)),
+            ),
+          ),
         ));
         await t.pump(const Duration(milliseconds: 300));
         expect(t.takeException(), isNull);
+        if (step == 'home') {
+          expect(find.text('至尊星耀'), findsOneWidget);
+          expect(find.text('離無雙卷哥還差 182 分'), findsOneWidget);
+        }
+        if (step == 'result') expect(find.text('合計'), findsOneWidget);
+        if (step == 'question') expect(find.text('第 3 / 10 題'), findsOneWidget);
+        if (step == 'board') expect(find.text('大約第 37 名'), findsOneWidget);
         if (_shots.isNotEmpty && size.width > 400) {
           await t.runAsync(() async {
             final image = await (root.currentContext!.findRenderObject()! as RenderRepaintBoundary).toImage(pixelRatio: 1);

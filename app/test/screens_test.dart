@@ -213,6 +213,20 @@ void main() {
       await _close(t);
     });
 
+    testWidgets('關於與授權（$label螢幕）', (t) async {
+      await _open(t, size);
+      await t.tapTab(Icons.account_circle_rounded);
+      await t.tapIcon(Icons.tune_rounded);
+      await t.scrollUntilVisible(find.text('關於與授權'), 400, scrollable: find.byType(Scrollable).last);
+      await t.tapText('關於與授權');
+      expect(find.text('多益'), findsOneWidget);
+      await t.shot('${tag}_about');
+      await t.scrollUntilVisible(find.text('開放原始碼套件授權'), 400, scrollable: find.byType(Scrollable).last);
+      await t.tapText('開放原始碼套件授權');
+      await t.shot('${tag}_about_licenses');
+      await _close(t);
+    });
+
     testWidgets('考古題（$label螢幕）', (t) async {
       await _open(t, size);
       presentFull(t.element(find.byType(MainTabs)), ExamView(exam: ExamStore.all.first));

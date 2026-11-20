@@ -4,7 +4,9 @@ import 'dart:math';
 
 import 'package:material_ui/material_ui.dart';
 
+import 'about_page.dart';
 import 'account_page.dart';
+import 'battle.dart';
 import 'cloud.dart';
 import 'dictionary.dart';
 import 'models.dart';
@@ -482,6 +484,10 @@ class _SettingsRoot extends StatelessWidget {
               _row(context, p, Icons.account_circle_rounded, '帳號登入',
                   account == null ? '登入後可雲端備份和單字對戰' : '已登入 ${account.email}', () => const AccountPage()),
             ]),
+            if (account != null)
+              Sec(header: '單字對戰', children: [
+                _row(context, p, Icons.back_hand_rounded, '排行榜與封鎖', '不顯示在排行榜、已封鎖的玩家', () => const BattleSettingsPage()),
+              ]),
             Sec(header: '備份', footer: '匯出的檔案包含單字、進度、清單和設定。', children: [
               RowTile(title: '匯出備份', titleColor: p.accent, onTap: () => _export(context)),
               RowTile(title: '從備份還原', titleColor: p.accent, onTap: () => _restore(context)),
@@ -507,12 +513,11 @@ class _SettingsRoot extends StatelessWidget {
               ),
             ]),
             Sec(
-              footer: '大考詞彙與分級：大學入學考試中心《高中英文參考詞彙表》（111 學年度起適用），僅供非營利學習使用。'
-                  '國中小 1200：教育部十二年國教英語文課綱附錄五。多益：TOEIC Service List 1.2（CC BY-SA 4.0）。'
-                  '雅思、托福字表與中文解釋、音標整理自 ECDICT（MIT 授權），內容可能有誤，可在單字頁自行編輯。學習資料預設只存在這台裝置，登入後會備份到雲端。',
+              footer: '大考詞彙和學測考古題永遠免費。資料來源、授權和隱私說明請見「關於與授權」。',
               children: [
                 RowTile(title: '字典', value: '${Dict.all.length} 個內建單字'),
                 const RowTile(title: '版本', value: '0.1.1'),
+                RowTile(title: '關於與授權', chevron: true, onTap: () => pushPage(context, const AboutPage())),
               ],
             ),
           ],

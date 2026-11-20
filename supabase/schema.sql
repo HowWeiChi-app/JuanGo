@@ -78,3 +78,12 @@ revoke all on function public.delete_expired_shared_lists() from public, anon, a
 
 create extension if not exists pg_cron;
 select cron.schedule('delete-expired-shared-lists', '17 * * * *', 'select public.delete_expired_shared_lists()');
+
+-- 5. Deleting an account (Settings › Cloud backup › Delete account). Removing the auth user
+-- cascades to every table that references auth.users (backups, shared lists, battle records).
+create or replace function public.delete_my_account() returns void
+language sql security definer set search_path = public as $$
+  delete from auth.users where id = auth.uid()
+$$;
+revoke all on function public.delete_my_account() from public, anon;
+grant execute on function public.delete_my_account() to authenticated;

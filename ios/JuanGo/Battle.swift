@@ -6,14 +6,24 @@ import SwiftData
 /// What supabase/battle.sql returns. The server keeps the answers, the clock and the scores;
 /// the app only draws this and sends taps.
 struct BattleState: Decodable {
-    struct Side: Decodable { var name: String; var rating: Int; var tier: Int; var score: Int }
+    struct Side: Decodable {
+        var name: String; var rating: Int; var tier: Int; var score: Int
+        var pid: String? = nil
+        var tierName: String? = nil
+    }
     struct Question: Decodable, Equatable { var n: Int; var toZh: Bool; var prompt: String; var options: [String] }
     struct Last: Decodable {
         var n: Int, answer: Int, term: String, zh: String
         var pick: Int?, points: Int, opponentPick: Int?, opponentPoints: Int
     }
     struct Word: Decodable, Identifiable { var term: String, zh: String, right: Bool; var id: String { term } }
-    struct Outcome: Decodable { var outcome: String, reason: String, delta: Int, words: [Word] }
+    /// one line of how the rating changed: 基本 +20, 對手較強 +2…
+    struct Part: Decodable, Hashable { var label: String; var value: Int }
+    struct Outcome: Decodable {
+        var outcome: String, reason: String, delta: Int, words: [Word]
+        var breakdown: [Part]? = nil
+        var tierFrom: Int? = nil, tierNext: Int? = nil, nextName: String? = nil
+    }
 
     var id: String, status: String, rated: Bool, code: String?, round: Int
     var now: Double
@@ -24,11 +34,28 @@ struct BattleState: Decodable {
     var question: Question?
     var last: Last?
     var result: Outcome?
+    var rounds: Int? = nil, roundMs: Int? = nil
+    /// shown on the countdown, e.g. 你們今天已經對戰 3 場，這場不計分
+    var note: String? = nil
 }
 
 struct BattlePlayer: Decodable {
+    struct Badge: Decodable, Hashable { var season: String; var name: String }
     var name: String, rating: Int, tier: Int, games: Int, wins: Int, losses: Int, draws: Int
+    var pid: String? = nil
+    var tierName: String? = nil
+    var tierFrom: Int? = nil, tierNext: Int? = nil, nextName: String? = nil
+    /// "2026 S6", and on a season's last day the notice about tonight's settling
+    var season: String? = nil, seasonNotice: String? = nil
+    var open: Bool? = nil
+    /// ranked matches left today on the free plan; nil with Pro
+    var freeLeft: Int? = nil
+    var hidden: Bool? = nil
+    var badges: [Badge]? = nil
 }
+
+/// 第 2 級 used to be shown for the tier; the server now names it (尊貴鉑金…傳奇卷神).
+func tierText(_ name: String?, _ tier: Int) -> String { name ?? levelLabel(String(tier)) }
 
 private struct BattleTicket: Decodable { var match: String?; var code: String?; var waited: Int? }
 
@@ -81,8 +108,38 @@ final class BattleModel {
             me = try await call("battle_set_name", ["p_name": name, "p_level": levelArg])
             return nil
         } catch {
-            return error.localizedDescription.replacingOccurrences(of: "（\\d+）$", with: "", options: .regularExpression)
+            return Self.clean(error)
         }
+    }
+
+    static let reportReasons = [("vulgar", "不雅"), ("offensive", "冒犯"), ("impersonation", "冒充他人"), ("other", "其他")]
+
+    /// Returns what went wrong, or nil once the report is in.
+    func report(_ pid: String, _ reason: String) async -> String? {
+        #if DEBUG
+        if isDemo { return nil }
+        #endif
+        do { _ = try await Cloud.shared.rpc("battle_report", ["p_pid": pid, "p_reason": reason], timeout: 10); return nil }
+        catch { return Self.clean(error) }
+    }
+
+    func block(_ pid: String) async -> String? {
+        #if DEBUG
+        if isDemo { return nil }
+        #endif
+        do { _ = try await Cloud.shared.rpc("battle_block", ["p_pid": pid], timeout: 10); return nil }
+        catch { return Self.clean(error) }
+    }
+
+    func board() async throws -> BattleBoard {
+        #if DEBUG
+        if isDemo { return .demo }
+        #endif
+        return try await call("battle_board")
+    }
+
+    static func clean(_ e: Error) -> String {
+        e.localizedDescription.replacingOccurrences(of: "（\\d+）$", with: "", options: .regularExpression)
     }
 
     func load() async {
@@ -248,17 +305,20 @@ final class BattleModel {
     /// JUANGO_BATTLE=home | search | room | count | question | reveal | result draws a screen without the server.
     func demo(_ step: String) {
         isDemo = true
-        let opp = BattleState.Side(name: "柚子", rating: 668, tier: 4, score: step == "result" ? 332 : 170)
-        let you = BattleState.Side(name: "勇敢的水獺08", rating: 640, tier: 4, score: step == "result" ? 405 : 188)
+        let opp = BattleState.Side(name: "柚子", rating: 1236, tier: 3, score: step == "result" ? 612 : 170, pid: "demo-opp", tierName: "至尊星耀")
+        let you = BattleState.Side(name: "勇敢的水獺08", rating: 1218, tier: 3, score: step == "result" ? 705 : 188, pid: "demo-me", tierName: "至尊星耀")
         let q = BattleState.Question(n: 3, toZh: true, prompt: "persuade", options: ["說服", "猶豫", "承認", "避免"])
         let now = Date.now.timeIntervalSince1970 * 1000
-        me = BattlePlayer(name: you.name, rating: you.rating, tier: you.tier, games: 12, wins: 7, losses: 4, draws: 1)
+        me = BattlePlayer(name: you.name, rating: you.rating, tier: you.tier, games: 12, wins: 7, losses: 4, draws: 1,
+                          pid: "demo-me", tierName: "至尊星耀", tierFrom: 1200, tierNext: 1400, nextName: "無雙卷哥",
+                          season: "2026 S6", open: true, freeLeft: 7, hidden: false)
         guard step != "home" else { return }
         if step == "search" { phase = .searching; waited = 6; searchStarted = .now.addingTimeInterval(-6); return }
-        if step == "room" { phase = .room("K7Q3P9"); return }
+        if step == "room" { phase = .room("K7Q3"); return }
         current = q
         var s = BattleState(id: "demo", status: "playing", rated: true, code: nil, round: 3, now: now, you: you, opponent: opp,
-                            starts: now - 3200, ends: now + 6800, answered: false, opponentAnswered: true, question: q)
+                            starts: now - 3200, ends: now + 6800, answered: false, opponentAnswered: true, question: q,
+                            rounds: 10, roundMs: 10_000)
         phase = .playing
         if step == "count" { s.round = 1; s.starts = now + 60_000; s.question = nil; current = nil }
         if step == "reveal" {
@@ -268,10 +328,13 @@ final class BattleModel {
         }
         if step == "result" {
             s.status = "finished"
-            s.result = .init(outcome: "win", reason: "score", delta: 18, words: [
+            s.result = .init(outcome: "win", reason: "score", delta: 27, words: [
                 .init(term: "persuade", zh: "說服", right: true), .init(term: "reluctant", zh: "不情願的", right: false),
                 .init(term: "abandon", zh: "放棄", right: true), .init(term: "vivid", zh: "生動的", right: true),
-                .init(term: "scarce", zh: "稀少的", right: false)])
+                .init(term: "scarce", zh: "稀少的", right: false)],
+                breakdown: [.init(label: "基本", value: 20), .init(label: "對手較強", value: 2), .init(label: "表現", value: 3),
+                            .init(label: "3 連勝", value: 2)],
+                tierFrom: 1200, tierNext: 1400, nextName: "無雙卷哥")
             phase = .finished
         }
         state = s
@@ -357,23 +420,37 @@ private struct BattleHome: View {
         NavigationStack {
             List { Group {
                 if cloud.signedIn || model.me != nil {
-                    Section { playerCard }
+                    if let n = model.me?.seasonNotice {
+                        Section { Label(n, pulso: "moon.stars.fill").font(.app(.subheadline, .semibold)) }
+                    }
+                    Section {
+                        playerCard
+                        NavigationLink { BattleBoardView(model: model) } label: { Label("賽季排行", pulso: "list.number") }
+                    } header: {
+                        if let season = model.me?.season { Text(season) }
+                    }
                     Section {
                         Button { model.find() } label: { Label("開始配對", pulso: "bolt.fill") }
                             .buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
+                            .disabled(model.me?.open == false || model.me?.freeLeft == 0)
                             .listRowBackground(Color.clear)
                             .listRowInsets(EdgeInsets())
                     } footer: {
-                        Text("配對積分相近的對手。5 回合，每題 10 秒，答對越快分數越高，最後一題 1.5 倍。")
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("配對積分相近的對手，一共 10 題，每題 10 秒。答對 25 分，越快最多再加 75 分。")
+                            if let left = model.me?.freeLeft {
+                                Text(left > 0 ? "免費版今天還能打 \(left) 場排名賽。" : "今天的 10 場免費排名賽打完了，升級 Pro 就不限場次。")
+                            }
+                        }
                     }
                     Section("和朋友對戰") {
                         Button { model.createRoom() } label: { Label("建立房間", pulso: "person.2.fill") }
                         HStack {
-                            TextField("輸入 6 碼房間代碼", text: $code)
+                            TextField("輸入 4 碼房間代碼", text: $code)
                                 .textInputAutocapitalization(.characters).autocorrectionDisabled()
                                 .focused($typing).submitLabel(.join)
-                                .onSubmit { if cleanCode.count == 6 { model.join(cleanCode) } }
-                            Button("加入") { model.join(cleanCode) }.disabled(cleanCode.count != 6)
+                                .onSubmit { if cleanCode.count == 4 { model.join(cleanCode) } }
+                            Button("加入") { model.join(cleanCode) }.disabled(cleanCode.count != 4)
                         }
                     }
                 } else {
@@ -408,9 +485,10 @@ private struct BattleHome: View {
                     .buttonStyle(.borderless)
                     .accessibilityLabel("修改對戰名稱")
                     Spacer()
-                    Text(levelLabel(String(p.tier))).font(.app(.subheadline, .semibold)).foregroundStyle(Color.themeAccent)
+                    Text(tierText(p.tierName, p.tier)).font(.app(.subheadline, .semibold)).foregroundStyle(Color.themeAccent)
                 }
                 Text(verbatim: String(p.rating)).font(.app(size: 44, .bold)).monospacedDigit()
+                TierProgress(rating: p.rating, from: p.tierFrom, next: p.tierNext, nextName: p.nextName)
                 Text("\(p.wins) 勝　\(p.losses) 敗　\(p.draws) 和").font(.app(.subheadline)).foregroundStyle(.secondary)
             }
             .padding(.vertical, 4)
@@ -532,15 +610,15 @@ private struct BattleSearching: View {
 
     private var initial: String { String(model.me?.name.first ?? "我") }
 
-    /// The server widens the window by 50 a second and takes anyone after 8 seconds.
+    /// The server starts at ±10 and widens the window by 10 a second, up to ±100.
     @ViewBuilder private func rangeChip(_ t: Double) -> some View {
         let s = Int(t)
         Group {
-            if let r = model.me?.rating, s < 8 {
-                let w = 100 + 50 * s
+            if let r = model.me?.rating {
+                let w = min(100, 10 + 10 * s)
                 Text("積分 \(max(0, r - w))–\(r + w)").monospacedDigit()
             } else {
-                Text("擴大到所有玩家")
+                Text("尋找積分相近的對手")
             }
         }
         .font(.app(.subheadline, .semibold)).foregroundStyle(.secondary)
@@ -595,11 +673,11 @@ private struct BattleGame: View {
             header(s, reveal: reveal)
             scoreboard(s)
             if let r = reveal {
-                timeBar(nil)
+                timeBar(nil, length: Double(s.roundMs ?? 10_000))
                 question(r.q, s: s, last: r.last)
                 pointsLine(r.last)
             } else if let q = model.current, q.n == s.round, let starts = s.starts, now >= starts, let ends = s.ends {
-                timeBar(ends)
+                timeBar(ends, length: Double(s.roundMs ?? 10_000))
                 question(q, s: s, last: nil)
                 waitingLine(s, timeUp: now >= ends, picked: model.picks[q.n] != nil)
             } else {
@@ -613,6 +691,10 @@ private struct BattleGame: View {
                 }
                 .animation(.spring(duration: 0.35, bounce: 0.4), value: left)
                 Text(s.round == 1 ? "準備開始" : "下一題").font(.app(.headline)).foregroundStyle(.secondary)
+                if s.round == 1, s.last == nil, let note = s.note {
+                    Text(note).font(.app(.subheadline, .semibold)).foregroundStyle(Color.themeAccent)
+                        .multilineTextAlignment(.center).padding(.top, 8)
+                }
                 Spacer()
             }
         }
@@ -631,8 +713,7 @@ private struct BattleGame: View {
             Button { confirmLeave = true } label: { LIcon("xmark").frame(width: 44, height: 44).contentShape(.circle) }
                 .buttonStyle(.plain).glassEffect(.regular.interactive(), in: .circle).accessibilityLabel("離開對戰")
             Spacer()
-            Text(n == 5 ? "最後一題 ×1.5" : "第 \(n) / 5 題")
-                .font(.app(.headline)).foregroundStyle(n == 5 ? Color.themeAccent : .primary)
+            Text("第 \(n) / \(s.rounds ?? 10) 題").font(.app(.headline)).monospacedDigit()
             Spacer()
             Color.clear.frame(width: 44, height: 44)
         }
@@ -653,7 +734,7 @@ private struct BattleGame: View {
             Text(p.name).font(.app(.caption, .semibold)).lineLimit(1).minimumScaleFactor(0.8)
             Text("\(p.score)").font(.app(size: 30, .bold)).monospacedDigit().contentTransition(.numericText())
                 .animation(.spring(duration: 0.6), value: p.score)
-            Text(verbatim: done ? "已作答" : "\(levelLabel(String(p.tier)))・\(p.rating)")
+            Text(verbatim: done ? "已作答" : "\(tierText(p.tierName, p.tier))・\(p.rating)")
                 .font(.app(.caption)).foregroundStyle(done ? Color.themeAccent : .secondary).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: trailing ? .trailing : .leading)
@@ -661,9 +742,9 @@ private struct BattleGame: View {
     }
 
     /// Redraws on every screen refresh (120 Hz on ProMotion) so the bar slides smoothly.
-    private func timeBar(_ ends: Double?) -> some View {
+    private func timeBar(_ ends: Double?, length: Double) -> some View {
         TimelineView(.animation(paused: ends == nil)) { _ in
-            let left = ends.map { max(0, min(1, ($0 - model.serverNow) / 10_000)) } ?? 0
+            let left = ends.map { max(0, min(1, ($0 - model.serverNow) / length)) } ?? 0
             GeometryReader { g in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.themeAccent.opacity(0.14))
@@ -671,7 +752,7 @@ private struct BattleGame: View {
                 }
             }
             .frame(height: 8)
-            .accessibilityLabel("剩餘 \(Int(ceil(left * 10))) 秒")
+            .accessibilityLabel("剩餘 \(Int(ceil(left * length / 1000))) 秒")
         }
     }
 
@@ -720,6 +801,7 @@ private struct BattleResult: View {
     let model: BattleModel
     @Environment(\.modelContext) private var ctx
     @State private var saved = false
+    @State private var practice: StudyRequest?
 
     var body: some View {
         if let s = model.state, let r = s.result {
@@ -740,10 +822,29 @@ private struct BattleResult: View {
                             Text(":").font(.app(.title2)).foregroundStyle(.tertiary)
                             Text("\(s.opponent?.score ?? 0)").font(.app(size: 40, .bold))
                         }.monospacedDigit()
-                        Text(s.opponent?.name ?? "").font(.app(.caption)).foregroundStyle(.secondary)
+                        if let o = s.opponent {
+                            HStack(spacing: 4) {
+                                Text(o.name)
+                                if o.pid != nil { LIcon("ellipsis.circle") }
+                            }
+                            .font(.app(.caption)).foregroundStyle(.secondary)
+                            .modifier(PlayerMenu(pid: o.pid, name: o.name, model: model))
+                        }
                         Text(ratingLine(s, r)).font(.app(.subheadline, .semibold)).monospacedDigit()
                     }
                     .frame(maxWidth: .infinity).padding(.vertical, 12)
+                }
+                if s.rated, let parts = r.breakdown, !parts.isEmpty {
+                    Section("這局的積分") {
+                        ForEach(parts, id: \.self) { p in
+                            LabeledContent(p.label, value: signed(p.value)).monospacedDigit()
+                        }
+                        LabeledContent { Text(signed(r.delta)).font(.app(.body, .bold)).monospacedDigit() } label: {
+                            Text("合計").font(.app(.body, .bold))
+                        }
+                        TierProgress(rating: s.you.rating, from: r.tierFrom, next: r.tierNext, nextName: r.nextName)
+                            .padding(.vertical, 4)
+                    }
                 }
                 if !r.words.isEmpty {
                     Section("這場的單字") {
@@ -762,6 +863,7 @@ private struct BattleResult: View {
             }.listRowBackground(Color.cardFill) }
             .font(.app(.body))
             .safeAreaInset(edge: .bottom) { actions(r).padding(.horizontal, 20).padding(.bottom, 8) }
+            .fullScreenCover(item: $practice) { StudyFlow(request: $0) }
             .sensoryFeedback(r.outcome == "win" ? .success : .warning, trigger: true)
         }
     }
@@ -770,12 +872,22 @@ private struct BattleResult: View {
         let missed = r.words.filter { !$0.right }
         return VStack(spacing: 10) {
             if !missed.isEmpty {
-                Button(saved ? "已加入我的單字" : "把答錯的字加入我的單字") {
-                    for w in missed { if let e = Dictionary_.lookup(w.term) { Library.add(e, in: ctx) } }
-                    try? ctx.save()
-                    saved = true
+                HStack(spacing: 10) {
+                    Button("只練答錯的字") {
+                        // the words go into 我的單字 so the practice keeps their progress
+                        let words = missed.compactMap { w in Dictionary_.lookup(w.term).map { Library.add($0, in: ctx) } }
+                        try? ctx.save()
+                        saved = true
+                        if !words.isEmpty { practice = StudyRequest(title: "答錯的字", words: words) }
+                    }
+                    .buttonStyle(PillButtonStyle())
+                    Button(saved ? "已加入單字" : "加入我的單字") {
+                        for w in missed { if let e = Dictionary_.lookup(w.term) { Library.add(e, in: ctx) } }
+                        try? ctx.save()
+                        saved = true
+                    }
+                    .buttonStyle(PillButtonStyle()).disabled(saved)
                 }
-                .buttonStyle(PillButtonStyle()).disabled(saved)
             }
             Button("完成") { model.leave() }
                 .buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
@@ -787,9 +899,11 @@ private struct BattleResult: View {
     }
 
     private func ratingLine(_ s: BattleState, _ r: BattleState.Outcome) -> String {
-        guard s.rated else { return "這場不計分" }
-        return "積分 \(s.you.rating)（\(r.delta >= 0 ? "+" : "")\(r.delta)）・\(levelLabel(String(s.you.tier)))"
+        guard s.rated else { return s.note ?? "這場不計分" }
+        return "積分 \(s.you.rating)（\(signed(r.delta))）・\(tierText(s.you.tierName, s.you.tier))"
     }
+
+    private func signed(_ v: Int) -> String { v > 0 ? "+\(v)" : v < 0 ? "−\(-v)" : "0" }
 }
 
 // MARK: - Motion
@@ -818,7 +932,7 @@ private struct BattleIntro: View {
             Circle().fill(leading ? Color.themeAccent : Color.secondary.opacity(0.35)).frame(width: 56, height: 56)
                 .overlay { Text(String(p.name.first ?? "?")).font(.app(size: 24, .bold)).foregroundStyle(leading ? Color.onAccent : .primary) }
             Text(p.name).font(.app(.subheadline, .semibold)).lineLimit(1).minimumScaleFactor(0.7)
-            Text(verbatim: "\(levelLabel(String(p.tier)))・\(p.rating)").font(.app(.caption)).foregroundStyle(.secondary).monospacedDigit()
+            Text(verbatim: "\(tierText(p.tierName, p.tier))・\(p.rating)").font(.app(.caption)).foregroundStyle(.secondary).monospacedDigit()
         }
         .frame(maxWidth: .infinity).padding(.vertical, 14)
         .background(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous).fill(Color.cardFill))
@@ -857,5 +971,255 @@ private struct PopIn<C: View>: View {
             .scaleEffect(shown || reduceMotion ? 1 : 0.4).opacity(shown ? 1 : 0)
             .onAppear { withAnimation(.spring(duration: 0.45, bounce: 0.5)) { shown = true } }
             .onChange(of: key) { shown = false; withAnimation(.spring(duration: 0.45, bounce: 0.5)) { shown = true } }
+    }
+}
+
+// MARK: - Tiers, reports and the season board
+
+/// How far the rating is through its tier, and how many points to the next one.
+private struct TierProgress: View {
+    let rating: Int
+    let from: Int?
+    let next: Int?
+    let nextName: String?
+
+    var body: some View {
+        if let from, let next, next > from {
+            VStack(alignment: .leading, spacing: 6) {
+                ProgressView(value: min(1, max(0, Double(rating - from) / Double(next - from)))).tint(Color.themeAccent)
+                Text("離\(nextName ?? "下一段")還差 \(max(0, next - rating)) 分")
+                    .font(.app(.caption)).foregroundStyle(.secondary).monospacedDigit()
+            }
+        } else if from != nil {
+            Text("已經是最高段位").font(.app(.caption)).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Long press on a player's name: 檢舉暱稱 (four reasons, then an offer to block too) or 封鎖這位玩家.
+private struct PlayerMenu: ViewModifier {
+    let pid: String?
+    let name: String
+    let model: BattleModel
+    @State private var reporting = false
+    @State private var askBlock = false
+    @State private var message: String?
+
+    func body(content: Content) -> some View {
+        if let pid, pid != model.me?.pid {
+            content
+                .contextMenu {
+                    Button("檢舉暱稱", pulso: "exclamationmark.bubble") { reporting = true }
+                    Button("封鎖這位玩家", pulso: "hand.raised", role: .destructive) { block(pid) }
+                }
+                .confirmationDialog("檢舉「\(name)」這個暱稱", isPresented: $reporting, titleVisibility: .visible) {
+                    ForEach(BattleModel.reportReasons, id: \.0) { r in
+                        Button(r.1) {
+                            Task {
+                                if let e = await model.report(pid, r.0) { message = e } else { askBlock = true }
+                            }
+                        }
+                    }
+                }
+                .alert("謝謝，我們會處理", isPresented: $askBlock) {
+                    Button("一併封鎖", role: .destructive) { block(pid) }
+                    Button("不用", role: .cancel) {}
+                } message: { Text("要不要一併封鎖這位玩家？") }
+                .alert(message ?? "", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
+                    Button("好", role: .cancel) {}
+                }
+        } else {
+            content
+        }
+    }
+
+    private func block(_ pid: String) {
+        Task { message = await model.block(pid) ?? "已封鎖。之後不會再配到對方，排行榜上也會顯示成匿名玩家。" }
+    }
+}
+
+/// What battle_board returns: last season's top 20 and this season's estimate.
+struct BattleBoard: Decodable {
+    struct Row: Decodable, Identifiable {
+        var rank: Int?
+        var name: String?
+        var pid: String?
+        var rating: Int
+        var tierName: String
+        var winRate: Double
+        var me: Bool?
+        var games: Int?
+        var id: String { "\(rank ?? -1)-\(pid ?? name ?? "me")" }
+    }
+    struct Estimate: Decodable { var rank: Int; var total: Int; var percent: Int? }
+    var season: String
+    var previous: String
+    var hasPrevious: Bool
+    var minGames: Int
+    var top: [Row]
+    var me: Row?
+    var estimate: Estimate?
+    var rating: Int?
+
+    #if DEBUG
+    static let demo = BattleBoard(season: "2026 S6", previous: "2026 S5", hasPrevious: true, minGames: 60, top: [
+        Row(rank: 1, name: "單字狂人", pid: "d1", rating: 2214, tierName: "傳奇卷神", winRate: 0.71),
+        Row(rank: 2, name: "柚子", pid: "d2", rating: 1987, tierName: "傳奇卷神", winRate: 0.66),
+        Row(rank: 3, name: "匿名玩家", rating: 1840, tierName: "傳奇卷神", winRate: 0.63),
+        Row(rank: 4, name: "勇敢的水獺08", pid: "demo-me", rating: 1702, tierName: "璀璨卷王", winRate: 0.58, me: true),
+    ], me: Row(rank: 4, rating: 1702, tierName: "璀璨卷王", winRate: 0.58),
+       estimate: Estimate(rank: 37, total: 412, percent: 9), rating: 1218)
+    #endif
+}
+
+struct BattleBoardView: View {
+    let model: BattleModel
+    @State private var board: BattleBoard?
+    @State private var failed: String?
+
+    var body: some View {
+        List { Group {
+            if let b = board {
+                Section {
+                    if let r = b.rating, let e = b.estimate {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("大約第 \(e.rank) 名").font(.app(.title2, .bold)).monospacedDigit()
+                            Text("目前 \(r) 分\(e.percent.map { "，前 \($0)%" } ?? "")").font(.app(.subheadline)).foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    } else if b.rating == nil {
+                        Text("打一場排名賽後就會顯示預估排名").foregroundStyle(.secondary)
+                    } else {
+                        Text("還沒有上賽季同期的資料").foregroundStyle(.secondary)
+                    }
+                } header: { Text("\(b.season) 預估排名") } footer: {
+                    Text("依上賽季同期資料估算，不是即時排名。")
+                }
+                Section {
+                    if !b.hasPrevious {
+                        Text("第一季，還沒有排名").foregroundStyle(.secondary)
+                    } else if b.top.isEmpty {
+                        Text("上賽季沒有人打滿 \(b.minGames) 場").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(b.top) { row($0) }
+                        if let me = b.me, !b.top.contains(where: { $0.me == true }) { row(me, mine: true) }
+                    }
+                } header: { Text("\(b.previous) 前 20 名") } footer: {
+                    Text("上賽季打滿 \(b.minGames) 場排名賽才會列入。勝率含電腦局。長按暱稱可以檢舉或封鎖。")
+                }
+            } else if let failed {
+                Button("讀不到排行，再試一次") { Task { await load() } }
+                Text(failed).font(.app(.footnote)).foregroundStyle(.secondary)
+            } else {
+                HStack { Spacer(); ProgressView(); Spacer() }.padding(.vertical, 24)
+            }
+        }.listRowBackground(Color.cardFill) }
+        .font(.app(.body))
+        .themedBackground()
+        .navigationTitle("賽季排行")
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        do { board = try await model.board(); failed = nil } catch { failed = BattleModel.clean(error) }
+    }
+
+    @ViewBuilder private func row(_ r: BattleBoard.Row, mine: Bool = false) -> some View {
+        let name = mine ? (model.me?.name ?? "你") : (r.name ?? "匿名玩家")
+        HStack(spacing: 12) {
+            Text(r.rank.map(String.init) ?? "–").font(.app(.headline)).monospacedDigit()
+                .frame(minWidth: 28, alignment: .leading)
+                .foregroundStyle(r.rank.map { $0 <= 3 } == true ? Color.themeAccent : .primary)
+            Circle().fill(mine || r.me == true ? Color.themeAccent : Color.secondary.opacity(0.3)).frame(width: 34, height: 34)
+                .overlay {
+                    Text(String(r.pid == nil && !mine && r.me != true ? "?" : name.first.map(String.init) ?? "?"))
+                        .font(.app(.subheadline, .bold))
+                        .foregroundStyle(mine || r.me == true ? Color.onAccent : .primary)
+                }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name).font(.app(.subheadline, .semibold)).lineLimit(1)
+                Text(mine && r.rank == nil ? "場數不足" : "\(r.tierName)・勝率 \(Int((r.winRate * 100).rounded()))%")
+                    .font(.app(.caption)).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(verbatim: String(r.rating)).font(.app(.headline)).monospacedDigit()
+        }
+        .modifier(PlayerMenu(pid: mine ? nil : r.pid, name: name, model: model))
+    }
+}
+
+/// 設定 › 單字對戰: hide from the leaderboard, and the blocked players.
+struct BattleSettingsView: View {
+    @Environment(AppSettings.self) private var settings
+    @State private var hidden = false
+    @State private var loaded = false
+    @State private var blocked: [Blocked]?
+    @State private var error: String?
+
+    struct Blocked: Decodable, Identifiable { var id: Int; var name: String? }
+    private struct Me: Decodable { var hidden: Bool? }
+    private static let decoder: JSONDecoder = {
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        return d
+    }()
+
+    private var levelArg: Any { settings.levelTested ? (Int(settings.level) ?? 3) as Any : NSNull() }
+
+    var body: some View {
+        Form { Group {
+            Section {
+                Toggle("不顯示在排行榜", isOn: $hidden).disabled(!loaded)
+            } footer: {
+                Text("開啟後，其他人在排行榜上看到的是「匿名玩家」，名次照算。")
+            }
+            Section {
+                if let blocked {
+                    if blocked.isEmpty {
+                        Text("沒有封鎖任何玩家").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(blocked) { b in Text(b.name ?? "玩家") }
+                            .onDelete { idx in unblock(idx.map { blocked[$0] }) }
+                    }
+                } else {
+                    HStack { Spacer(); ProgressView(); Spacer() }
+                }
+            } header: { Text("已封鎖的玩家") } footer: {
+                Text("封鎖後不會再配到對方，排行榜上對方會顯示成匿名玩家。向左滑可以解除封鎖。最多封鎖 200 人。")
+            }
+            if let error { Text(error).font(.app(.footnote)).foregroundStyle(.secondary) }
+        }.listRowBackground(Color.cardFill) }
+        .font(.app(.body))
+        .themedBackground()
+        .navigationTitle("單字對戰")
+        .task { await load() }
+        .onChange(of: hidden) { _, v in
+            guard loaded else { return }
+            Task {
+                do { _ = try await Cloud.shared.rpc("battle_set_hidden", ["p_hidden": v], timeout: 10) }
+                catch { self.error = BattleModel.clean(error) }
+            }
+        }
+    }
+
+    private func load() async {
+        do {
+            let me = try Self.decoder.decode(Me.self, from: await Cloud.shared.rpc("battle_me", ["p_level": levelArg], timeout: 10))
+            hidden = me.hidden ?? false
+            loaded = true
+            blocked = try Self.decoder.decode([Blocked].self, from: await Cloud.shared.rpc("battle_blocked", timeout: 10))
+            error = nil
+        } catch {
+            self.error = BattleModel.clean(error)
+            if blocked == nil { blocked = [] }
+        }
+    }
+
+    private func unblock(_ rows: [Blocked]) {
+        blocked?.removeAll { r in rows.contains { $0.id == r.id } }
+        Task {
+            for r in rows { _ = try? await Cloud.shared.rpc("battle_unblock", ["p_id": r.id], timeout: 10) }
+        }
     }
 }

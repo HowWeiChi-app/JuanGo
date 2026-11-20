@@ -1,0 +1,41 @@
+{
+  "rounds": 10,
+  "round_ms": 10000,
+  "reveal_ms": 3000,
+  "points": { "correct": 25, "speed": 75, "min_ms": 400 },
+  "start_rating": [900, 1000, 1100, 1200, 1300, 1400],
+  "min_rating": 600,
+  "tiers": [
+    { "name": "尊貴鉑金", "from": 0, "bot": 0.70, "win": 28, "loss": 14 },
+    { "name": "永恆鑽石", "from": 1100, "bot": 0.75, "win": 25, "loss": 17 },
+    { "name": "至尊星耀", "from": 1200, "bot": 0.80, "win": 20, "loss": 20 },
+    { "name": "無雙卷哥", "from": 1400, "bot": 0.83, "win": 18, "loss": 22 },
+    { "name": "璀璨卷王", "from": 1600, "bot": 0.87, "win": 16, "loss": 24 },
+    { "name": "傳奇卷神", "from": 1800, "bot": 0.90, "win": 15, "loss": 25 }
+  ],
+  "above_top": { "every": 100, "bot_step": 0.01, "win_step": -1, "bot_max": 0.97, "win_min": 5 },
+  "opponent": { "per": 50, "max": 8 },
+  "performance": { "max": 5, "per_correct": 1.0, "per_second": 1.0, "brave_loss_correct": 8, "weak_win_correct": 5 },
+  "streak": { "from": 3, "first": 2, "step": 1, "max": 5 },
+  "floor": { "win": 5, "loss": 5 },
+  "rookie": { "games": 10, "factor": 1.5, "cap": 300, "until": 1200, "bot_bonus": 0.05, "bot_max": 0.90 },
+  "match": { "start": 10, "grow": 10, "max": 100, "bot_extra_s": 3 },
+  "bot": {
+    "base_penalty": 3,
+    "rating_spread": 30,
+    "streak": 3,
+    "adjust": 0.10,
+    "min": 0.60,
+    "max": 0.97,
+    "min_samples": 30,
+    "level_step": 0.05,
+    "ms_min": 2000,
+    "ms_max": 7000,
+    "ms_tier_step": 300
+  },
+  "pair_daily_ranked": 3,
+  "free_daily": 10,
+  "leave": { "winner_factor": 0.5 },
+  "season": { "close": "23:30", "settle": "23:45" },
+  "leaderboard": { "top": 20, "min_games": 60 }
+}

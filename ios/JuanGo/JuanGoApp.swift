@@ -15,7 +15,10 @@ struct JuanGoApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            ZStack {
+                RootView()
+                FontLoadingMask()
+            }
                 .environment(settings)
                 .tint(settings.theme.accent)
                 .fontDesign(settings.fontDesign)
@@ -200,16 +203,59 @@ extension View { func themedBackground() -> some View { modifier(ThemedBackgroun
 
 
 /// A short dissolve between tabs: a picture of the tab being left, laid under the tab bar, fades out over the new one.
+/// Covers the first screen while the Chinese face picked in 字體 (圓體 or 宋體) loads, so the text doesn't
+/// draw in 蘋方 and then jump. Gives up after a few seconds (no network on the first download) and fades out.
+struct FontLoadingMask: View {
+    @Environment(AppSettings.self) private var settings
+    @State private var gone = false
+    private var font: AppFont { .shared }
+
+    var body: some View {
+        ZStack {
+            if !gone && !font.ready {
+                ZStack {
+                    settings.theme.background
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("正在載入字型").font(.system(.footnote)).foregroundStyle(.secondary)
+                    }
+                }
+                .ignoresSafeArea()
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: font.ready)
+        .animation(.easeOut(duration: 0.25), value: gone)
+        .allowsHitTesting(!gone && !font.ready)
+        .task {
+            try? await Task.sleep(for: .seconds(4))
+            gone = true
+        }
+    }
+}
+
 @MainActor enum TabCrossfade {
     static func run() {
         guard let window = UIApplication.shared.connectedScenes.compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first,
               let tabs = find(window.rootViewController),
               let page = tabs.selectedViewController?.view,
+              let container = page.superview,
               let picture = page.snapshotView(afterScreenUpdates: false) else { return }
         picture.isUserInteractionEnabled = false
-        picture.frame = page.convert(page.bounds, to: tabs.view)
-        if tabs.tabBar.superview === tabs.view { tabs.view.insertSubview(picture, belowSubview: tabs.tabBar) } else { tabs.view.addSubview(picture) }
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseInOut, .allowUserInteraction]) { picture.alpha = 0 } completion: { _ in picture.removeFromSuperview() }
+        picture.frame = page.frame
+        container.addSubview(picture)
+        // The new page is added to the same container after this call; lift the picture over it on the next
+        // pass, but keep it under the tab bar (and whatever holds it) so the bar itself never fades.
+        DispatchQueue.main.async {
+            if let bar = container.subviews.first(where: { tabs.tabBar.isDescendant(of: $0) }) {
+                container.insertSubview(picture, belowSubview: bar)
+            } else {
+                container.bringSubviewToFront(picture)
+            }
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseInOut, .allowUserInteraction]) {
+                picture.alpha = 0
+            } completion: { _ in picture.removeFromSuperview() }
+        }
     }
 
     private static func find(_ vc: UIViewController?) -> UITabBarController? {

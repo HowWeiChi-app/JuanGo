@@ -1,4 +1,4 @@
-// 單字對戰：五回合即時對戰。答案、時間和分數都由 supabase/battle.sql 決定，App 只顯示狀態和送出點選。
+// 單字對戰：十題即時對戰，有段位和賽季。答案、時間和分數都由 supabase/battle.sql 決定，App 只顯示狀態和送出點選。
 // 排版照 iOS 版 Battle.swift。
 
 import 'dart:async';
@@ -17,22 +17,48 @@ import 'models.dart';
 import 'onboarding.dart';
 import 'settings.dart';
 import 'store.dart';
+import 'study_flow.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
 class BattleSide {
   BattleSide(Map<String, dynamic> j)
     : name = j['name'] as String,
+      pid = j['pid'] as String?,
       rating = j['rating'] as int,
       tier = j['tier'] as int,
+      tierName = j['tier_name'] as String?,
       score = j['score'] as int? ?? 0;
   final String name;
+  final String? pid, tierName;
   final int rating, tier, score;
+
+  /// 段位名稱（尊貴鉑金…傳奇卷神），舊資料沒有就顯示等級
+  String get tierText => tierName ?? levelLabel('$tier');
 }
 
 class BattlePlayer extends BattleSide {
-  BattlePlayer(super.j) : wins = j['wins'] as int, losses = j['losses'] as int, draws = j['draws'] as int;
+  BattlePlayer(super.j)
+    : wins = j['wins'] as int,
+      losses = j['losses'] as int,
+      draws = j['draws'] as int,
+      tierFrom = j['tier_from'] as int?,
+      tierNext = j['tier_next'] as int?,
+      nextName = j['next_name'] as String?,
+      season = j['season'] as String?,
+      seasonNotice = j['season_notice'] as String?,
+      open = j['open'] as bool? ?? true,
+      freeLeft = j['free_left'] as int?,
+      hidden = j['hidden'] as bool? ?? false,
+      raw = j;
   final int wins, losses, draws;
+  final int? tierFrom, tierNext;
+  final String? nextName, season, seasonNotice;
+  final bool open, hidden;
+
+  /// 免費版今天還能打幾場排名賽；Pro 是 null
+  final int? freeLeft;
+  final Map<String, dynamic> raw;
 }
 
 class BattleQuestion {
@@ -69,10 +95,22 @@ class BattleOutcome {
     : outcome = j['outcome'] as String,
       reason = j['reason'] as String,
       delta = j['delta'] as int,
-      words = [for (final w in j['words'] as List) BattleWord(w as Map<String, dynamic>)];
+      words = [for (final w in j['words'] as List) BattleWord(w as Map<String, dynamic>)],
+      breakdown = [
+        for (final b in (j['breakdown'] as List? ?? const []))
+          ((b as Map<String, dynamic>)['label'] as String, b['value'] as int),
+      ],
+      tierFrom = j['tier_from'] as int?,
+      tierNext = j['tier_next'] as int?,
+      nextName = j['next_name'] as String?;
   final String outcome, reason;
   final int delta;
   final List<BattleWord> words;
+
+  /// 這局加扣分的明細：基本 +20、對手較強 +2…
+  final List<(String, int)> breakdown;
+  final int? tierFrom, tierNext;
+  final String? nextName;
 }
 
 class BattleState {
@@ -89,7 +127,14 @@ class BattleState {
       opponentAnswered = j['opponent_answered'] as bool? ?? false,
       question = j['question'] == null ? null : BattleQuestion(j['question'] as Map<String, dynamic>),
       last = j['last'] == null ? null : BattleLast(j['last'] as Map<String, dynamic>),
-      result = j['result'] == null ? null : BattleOutcome(j['result'] as Map<String, dynamic>);
+      result = j['result'] == null ? null : BattleOutcome(j['result'] as Map<String, dynamic>),
+      rounds = j['rounds'] as int? ?? 10,
+      roundMs = j['round_ms'] as int? ?? 10000,
+      note = j['note'] as String?;
+  final int rounds, roundMs;
+
+  /// 倒數畫面的說明，例如「你們今天已經對戰 3 場，這場不計分」
+  final String? note;
   final String id, status;
   final bool rated, opponentAnswered;
   final int round;
@@ -161,11 +206,41 @@ class BattleModel extends ChangeNotifier {
 
   Future<void> _wait(Duration d) => Future<void>.delayed(d);
 
+  static String _clean(Object e) => '$e'.replaceFirst(RegExp(r'（\d+）$'), '');
+
+  static const reportReasons = [('vulgar', '不雅'), ('offensive', '冒犯'), ('impersonation', '冒充他人'), ('other', '其他')];
+
+  /// 檢舉暱稱。成功回傳 null，失敗回傳原因
+  Future<String?> report(String pid, String reason) async {
+    if (_demo) return null;
+    try {
+      await _cloud.rpc('battle_report', {'p_pid': pid, 'p_reason': reason}, const Duration(seconds: 10));
+      return null;
+    } catch (e) {
+      return _clean(e);
+    }
+  }
+
+  Future<String?> block(String pid) async {
+    if (_demo) return null;
+    try {
+      await _cloud.rpc('battle_block', {'p_pid': pid}, const Duration(seconds: 10));
+      return null;
+    } catch (e) {
+      return _clean(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> board() async {
+    if (_demo) return demoBoard;
+    return await _cloud.rpc('battle_board', const {}, const Duration(seconds: 10)) as Map<String, dynamic>;
+  }
+
   /// 改對戰名稱。成功回傳 null，失敗回傳要顯示的原因
   Future<String?> rename(String name) async {
     final old = me;
     if (_demo && old != null) {
-      _set(() => me = BattlePlayer({'name': name, 'rating': old.rating, 'tier': old.tier, 'wins': old.wins, 'losses': old.losses, 'draws': old.draws}));
+      _set(() => me = BattlePlayer({...old.raw, 'name': name}));
       return null;
     }
     try {
@@ -173,7 +248,7 @@ class BattleModel extends ChangeNotifier {
       _set(() => me = BattlePlayer(j));
       return null;
     } catch (e) {
-      return '$e'.replaceFirst(RegExp(r'（\d+）$'), '');
+      return _clean(e);
     }
   }
 
@@ -356,7 +431,22 @@ class BattleModel extends ChangeNotifier {
       'options': ['說服', '猶豫', '承認', '避免'],
     };
     final now = _local;
-    me = BattlePlayer({'name': '勇敢的水獺08', 'rating': 640, 'tier': 4, 'wins': 7, 'losses': 4, 'draws': 1});
+    me = BattlePlayer({
+      'name': '勇敢的水獺08',
+      'pid': 'demo-me',
+      'rating': 1218,
+      'tier': 3,
+      'tier_name': '至尊星耀',
+      'tier_from': 1200,
+      'tier_next': 1400,
+      'next_name': '無雙卷哥',
+      'season': '2026 S6',
+      'open': true,
+      'free_left': 7,
+      'wins': 7,
+      'losses': 4,
+      'draws': 1,
+    });
     if (step == 'home') return;
     if (step == 'search') {
       phase = BattlePhase.searching;
@@ -366,7 +456,7 @@ class BattleModel extends ChangeNotifier {
     }
     if (step == 'room') {
       phase = BattlePhase.room;
-      code = 'K7Q3P9';
+      code = 'K7Q3';
       return;
     }
     final reveal = step == 'reveal';
@@ -378,8 +468,10 @@ class BattleModel extends ChangeNotifier {
       'rated': true,
       'round': reveal ? 4 : 3,
       'now': now,
-      'you': {'name': '勇敢的水獺08', 'rating': 640, 'tier': 4, 'score': result ? 405 : 188},
-      'opponent': {'name': '柚子', 'rating': 668, 'tier': 4, 'score': result ? 332 : 170},
+      'you': {'name': '勇敢的水獺08', 'pid': 'demo-me', 'rating': 1218, 'tier': 3, 'tier_name': '至尊星耀', 'score': result ? 705 : 188},
+      'opponent': {'name': '柚子', 'pid': 'demo-opp', 'rating': 1236, 'tier': 3, 'tier_name': '至尊星耀', 'score': result ? 612 : 170},
+      'rounds': 10,
+      'round_ms': 10000,
       'starts': reveal ? now + 60000 : now - 3200,
       'ends': reveal ? now + 70000 : now + 600000,
       'opponent_answered': true,
@@ -389,7 +481,16 @@ class BattleModel extends ChangeNotifier {
         'result': {
           'outcome': 'win',
           'reason': 'score',
-          'delta': 18,
+          'delta': 27,
+          'breakdown': [
+            {'label': '基本', 'value': 20},
+            {'label': '對手較強', 'value': 2},
+            {'label': '表現', 'value': 3},
+            {'label': '3 連勝', 'value': 2},
+          ],
+          'tier_from': 1200,
+          'tier_next': 1400,
+          'next_name': '無雙卷哥',
           'words': [
             {'term': 'persuade', 'zh': '說服', 'right': true},
             {'term': 'reluctant', 'zh': '不情願的', 'right': false},
@@ -401,6 +502,22 @@ class BattleModel extends ChangeNotifier {
     });
     phase = result ? BattlePhase.finished : BattlePhase.playing;
   }
+
+  static final demoBoard = <String, dynamic>{
+    'season': '2026 S6',
+    'previous': '2026 S5',
+    'has_previous': true,
+    'min_games': 60,
+    'top': [
+      {'rank': 1, 'name': '單字狂人', 'pid': 'd1', 'rating': 2214, 'tier_name': '傳奇卷神', 'win_rate': 0.71},
+      {'rank': 2, 'name': '柚子', 'pid': 'd2', 'rating': 1987, 'tier_name': '傳奇卷神', 'win_rate': 0.66},
+      {'rank': 3, 'name': '匿名玩家', 'pid': null, 'rating': 1840, 'tier_name': '傳奇卷神', 'win_rate': 0.63},
+      {'rank': 4, 'name': '勇敢的水獺08', 'pid': 'demo-me', 'rating': 1702, 'tier_name': '璀璨卷王', 'win_rate': 0.58, 'me': true},
+    ],
+    'me': {'rank': 4, 'rating': 1702, 'tier_name': '璀璨卷王', 'win_rate': 0.58},
+    'estimate': {'rank': 37, 'total': 412, 'percent': 9},
+    'rating': 1218,
+  };
 }
 
 // MARK: 畫面
@@ -539,13 +656,18 @@ class _HomeState extends State<_Home> {
     final p = Palette.of(context);
     final m = widget.model;
     final me = m.me;
-    final canJoin = _clean.length == 6;
+    final canJoin = _clean.length == 4;
     return NavPage(
       title: '單字對戰',
       close: true,
       slivers: Cloud.shared.signedIn || me != null
           ? [
+              if (me?.seasonNotice != null)
+                Sec(children: [
+                  RowTile(leading: Icon(Icons.nightlight_round, size: 21, color: p.accent), title: me!.seasonNotice),
+                ]),
               Sec(
+                header: me?.season,
                 children: [
                   if (me == null && m.meFailed)
                     RowTile(title: '讀不到積分，再試一次', titleColor: p.accent, onTap: () => unawaited(m.load()))
@@ -578,7 +700,7 @@ class _HomeState extends State<_Home> {
                                     ),
                                     const Spacer(),
                                     Text(
-                                      levelLabel('${me.tier}'),
+                                      me.tierText,
                                       style: ts(F.sub, w: w6, c: p.accent),
                                     ),
                                   ],
@@ -588,19 +710,35 @@ class _HomeState extends State<_Home> {
                                   '${me.rating}',
                                   style: ts(44, w: w7, c: p.ink, h: 1.15),
                                 ),
+                                const SizedBox(height: 8),
+                                _TierProgress(rating: me.rating, from: me.tierFrom, next: me.tierNext, nextName: me.nextName),
                                 const SizedBox(height: 6),
                                 Text('${me.wins} 勝　${me.losses} 敗　${me.draws} 和', style: ts(F.sub, c: p.sec)),
                               ],
                             ),
                     ),
+                  RowTile(
+                    leading: Icon(Icons.format_list_numbered_rounded, size: 21, color: p.accent),
+                    title: '賽季排行',
+                    chevron: true,
+                    onTap: () => pushPage(context, BattleBoardPage(model: m)),
+                  ),
                 ],
               ),
               Sec(
-                footer: '配對積分相近的對手。5 回合，每題 10 秒，答對越快分數越高，最後一題 1.5 倍。',
+                footer: [
+                  '配對積分相近的對手，一共 10 題，每題 10 秒。答對 25 分，越快最多再加 75 分。',
+                  if (me?.freeLeft case final left?)
+                    left > 0 ? '免費版今天還能打 $left 場排名賽。' : '今天的 10 場免費排名賽打完了，升級 Pro 就不限場次。',
+                ].join('\n'),
                 children: [
                   Padding(
                     padding: const EdgeInsets.all(12),
-                    child: PrimaryButton(label: '開始配對', icon: Icons.bolt_rounded, onTap: () => unawaited(m.find())),
+                    child: PrimaryButton(
+                      label: '開始配對',
+                      icon: Icons.bolt_rounded,
+                      onTap: me?.open == false || me?.freeLeft == 0 ? null : () => unawaited(m.find()),
+                    ),
                   ),
                 ],
               ),
@@ -626,11 +764,11 @@ class _HomeState extends State<_Home> {
                             textInputAction: TextInputAction.join,
                             onChanged: (_) => setState(() {}),
                             onSubmitted: (_) {
-                              if (_clean.length == 6) unawaited(m.join(_clean));
+                              if (_clean.length == 4) unawaited(m.join(_clean));
                             },
                             style: ts(F.body, c: p.ink),
                             decoration: InputDecoration(
-                              hintText: '輸入 6 碼房間代碼',
+                              hintText: '輸入 4 碼房間代碼',
                               hintStyle: ts(F.body, c: p.sec),
                               border: InputBorder.none,
                             ),
@@ -757,8 +895,9 @@ class _SearchingState extends State<_Searching> with SingleTickerProviderStateMi
     final t = DateTime.now().difference(m.searchStarted).inMilliseconds / 1000;
     final sec = t.floor().clamp(0, 5999);
     final r = m.me?.rating;
-    // 伺服器每秒把範圍放寬 50，8 秒後誰都可以
-    final range = r != null && sec < 8 ? '積分 ${(r - 100 - 50 * sec).clamp(0, 99999)}–${r + 100 + 50 * sec}' : '擴大到所有玩家';
+    // 伺服器從 ±10 開始，每秒放寬 10，最多 ±100
+    final w = math.min(100, 10 + 10 * sec);
+    final range = r != null ? '積分 ${(r - w).clamp(0, 99999)}–${r + w}' : '尋找積分相近的對手';
     final name = m.me?.name ?? '';
     return SafeArea(
       child: Padding(
@@ -904,9 +1043,10 @@ class _Game extends StatefulWidget {
 
 /// 倒數條跟著螢幕每一格重畫（高刷螢幕就是 90／120 Hz），整頁仍是每 0.1 秒更新
 class _TimeBar extends StatefulWidget {
-  const _TimeBar({required this.palette, required this.ends, required this.now});
+  const _TimeBar({required this.palette, required this.ends, required this.now, this.length = 10000});
   final Palette palette;
   final double? ends;
+  final double length;
   final double Function() now;
   @override
   State<_TimeBar> createState() => _TimeBarState();
@@ -937,9 +1077,9 @@ class _TimeBarState extends State<_TimeBar> with SingleTickerProviderStateMixin 
   @override
   Widget build(BuildContext context) {
     final p = widget.palette, ends = widget.ends;
-    final left = ends == null ? 0.0 : ((ends - widget.now()) / 10000).clamp(0.0, 1.0);
+    final left = ends == null ? 0.0 : ((ends - widget.now()) / widget.length).clamp(0.0, 1.0);
     return Semantics(
-      label: '剩餘 ${(left * 10).ceil()} 秒',
+      label: '剩餘 ${(left * widget.length / 1000).ceil()} 秒',
       child: ClipRRect(
         borderRadius: BorderRadius.circular(4),
         child: LinearProgressIndicator(
@@ -996,7 +1136,7 @@ class _GameState extends State<_Game> {
     if (shown != null) {
       final l = s.last!;
       body = [
-        _bar(p, null),
+        _bar(p, null, s),
         Expanded(child: _question(p, s, shown, l)),
         _PopIn(
           key: ValueKey('points${l.n}'),
@@ -1010,7 +1150,7 @@ class _GameState extends State<_Game> {
     } else if (live) {
       final timeUp = now >= ends;
       body = [
-        _bar(p, ends),
+        _bar(p, ends, s),
         Expanded(child: _question(p, s, q, null)),
         Text(timeUp ? '時間到' : (_m.picks.containsKey(q.n) ? '等對手作答' : ' '), style: ts(F.sub, c: p.sec)),
       ];
@@ -1034,6 +1174,11 @@ class _GameState extends State<_Game> {
           s.round == 1 ? '準備開始' : '下一題',
           style: ts(F.headline, w: w6, c: p.sec),
         ),
+        if (s.round == 1 && s.last == null && s.note != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(s.note!, textAlign: TextAlign.center, style: ts(F.sub, w: w6, c: p.accent)),
+          ),
         const Spacer(),
       ];
     }
@@ -1048,9 +1193,9 @@ class _GameState extends State<_Game> {
                 CircleBtn(icon: Icons.close_rounded, size: 44, label: '離開對戰', onTap: widget.onLeave),
                 Expanded(
                   child: Text(
-                    n == 5 ? '最後一題 ×1.5' : '第 $n / 5 題',
+                    '第 $n / ${s.rounds} 題',
                     textAlign: TextAlign.center,
-                    style: ts(F.headline, w: w6, c: n == 5 ? p.accent : p.ink),
+                    style: ts(F.headline, w: w6, c: p.ink),
                   ),
                 ),
                 const SizedBox(width: 44),
@@ -1066,7 +1211,8 @@ class _GameState extends State<_Game> {
     );
   }
 
-  Widget _bar(Palette p, double? ends) => _TimeBar(palette: p, ends: ends, now: () => _m.serverNow);
+  Widget _bar(Palette p, double? ends, BattleState s) =>
+      _TimeBar(palette: p, ends: ends, now: () => _m.serverNow, length: s.roundMs.toDouble());
 
   Widget _scoreboard(Palette p, BattleState s) {
     final o = s.opponent;
@@ -1106,7 +1252,7 @@ class _GameState extends State<_Game> {
         builder: (_, v, _) => Text('${v.round()}', style: ts(30, w: w7, c: p.ink, h: 1.2)),
       ),
       Text(
-        done ? '已作答' : '${levelLabel('${x.tier}')}・${x.rating}',
+        done ? '已作答' : '${x.tierText}・${x.rating}',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: ts(F.cap, c: done ? p.accent : p.sec),
@@ -1173,13 +1319,16 @@ class _Result extends StatefulWidget {
 class _ResultState extends State<_Result> {
   bool _saved = false;
 
-  void _saveMissed(List<BattleWord> missed) {
-    for (final w in missed) {
-      final e = Dict.lookup(w.term);
-      if (e != null) AppStore.shared.add(e);
-    }
+  List<Word> _saveMissed(List<BattleWord> missed) {
+    final words = [
+      for (final w in missed)
+        if (Dict.lookup(w.term) case final e?) AppStore.shared.add(e),
+    ];
     setState(() => _saved = true);
+    return words;
   }
+
+  static String _signed(int v) => v > 0 ? '+$v' : (v < 0 ? '−${-v}' : '0');
 
   @override
   Widget build(BuildContext context) {
@@ -1195,7 +1344,8 @@ class _ResultState extends State<_Result> {
             'loss' => '落敗',
             _ => '平手',
           };
-    final rating = s.rated ? '積分 ${s.you.rating}（${r.delta >= 0 ? '+' : ''}${r.delta}）・${levelLabel('${s.you.tier}')}' : '這場不計分';
+    final rating = s.rated ? '積分 ${s.you.rating}（${_signed(r.delta)}）・${s.you.tierText}' : (s.note ?? '這場不計分');
+    final o = s.opponent;
     return SafeArea(
       child: Column(
         children: [
@@ -1236,7 +1386,22 @@ class _ResultState extends State<_Result> {
                           ],
                         ),
                       ),
-                      Text(s.opponent?.name ?? '', style: ts(F.cap, c: p.sec)),
+                      if (o != null)
+                        _PlayerMenu(
+                          model: widget.model,
+                          pid: o.pid,
+                          name: o.name,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Row(mainAxisSize: MainAxisSize.min, children: [
+                              Text(o.name, style: ts(F.cap, c: p.sec)),
+                              if (o.pid != null) ...[
+                                const SizedBox(width: 4),
+                                Icon(Icons.more_horiz_rounded, size: 16, color: p.sec),
+                              ],
+                            ]),
+                          ),
+                        ),
                       const SizedBox(height: 6),
                       Text(
                         rating,
@@ -1245,6 +1410,28 @@ class _ResultState extends State<_Result> {
                     ],
                   ),
                 ),
+                if (s.rated && r.breakdown.isNotEmpty) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+                    child: Text('這局的積分', style: ts(F.sub, c: p.sec)),
+                  ),
+                  Container(
+                    decoration: BoxDecoration(color: p.card, borderRadius: BorderRadius.circular(Radii.lg)),
+                    child: Column(
+                      children: [
+                        for (final (label, v) in r.breakdown) RowTile(title: label, value: _signed(v)),
+                        RowTile(
+                          titleWidget: Text('合計', style: ts(F.body, w: w7, c: p.ink)),
+                          trailing: Text(_signed(r.delta), style: ts(F.body, w: w7, c: p.ink)),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
+                          child: _TierProgress(rating: s.you.rating, from: r.tierFrom, next: r.tierNext, nextName: r.nextName),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 if (r.words.isNotEmpty) ...[
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
@@ -1299,7 +1486,27 @@ class _ResultState extends State<_Result> {
             child: Column(
               children: [
                 if (missed.isNotEmpty) ...[
-                  PillButton(label: _saved ? '已加入我的單字' : '把答錯的字加入我的單字', width: double.infinity, onTap: _saved ? null : () => _saveMissed(missed)),
+                  Row(children: [
+                    Expanded(
+                      child: PillButton(
+                        label: '只練答錯的字',
+                        width: double.infinity,
+                        onTap: () {
+                          // 先加進我的單字，練習的進度才會留下來
+                          final words = _saveMissed(missed);
+                          if (words.isNotEmpty) unawaited(startStudy(context, '答錯的字', words));
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: PillButton(
+                        label: _saved ? '已加入單字' : '加入我的單字',
+                        width: double.infinity,
+                        onTap: _saved ? null : () => _saveMissed(missed),
+                      ),
+                    ),
+                  ]),
                   const SizedBox(height: 10),
                 ],
                 PrimaryButton(label: '完成', width: double.infinity, onTap: () => unawaited(widget.model.leave())),
@@ -1357,7 +1564,7 @@ class _IntroState extends State<_Intro> with SingleTickerProviderStateMixin {
           ),
           const SizedBox(height: 6),
           Text(x.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: ts(F.sub, w: w6, c: p.ink)),
-          Text('${levelLabel('${x.tier}')}・${x.rating}', maxLines: 1, style: ts(F.cap, c: p.sec)),
+          Text('${x.tierText}・${x.rating}', maxLines: 1, style: ts(F.cap, c: p.sec)),
         ]),
       ),
     );
@@ -1455,5 +1662,320 @@ class _PopInState extends State<_PopIn> with SingleTickerProviderStateMixin {
       ),
       child: widget.child,
     );
+  }
+}
+
+// MARK: 段位、檢舉和賽季排行
+
+/// 目前在這個段位走到哪裡，離下一段還差幾分
+class _TierProgress extends StatelessWidget {
+  const _TierProgress({required this.rating, this.from, this.next, this.nextName});
+  final int rating;
+  final int? from, next;
+  final String? nextName;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Palette.of(context);
+    final f = from, n = next;
+    if (f == null) return const SizedBox.shrink();
+    if (n == null || n <= f) return Text('已經是最高段位', style: ts(F.cap, c: p.sec));
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: LinearProgressIndicator(
+          value: ((rating - f) / (n - f)).clamp(0.0, 1.0),
+          minHeight: 6,
+          backgroundColor: p.accent.withValues(alpha: .14),
+          color: p.accent,
+        ),
+      ),
+      const SizedBox(height: 6),
+      Text('離${nextName ?? '下一段'}還差 ${math.max(0, n - rating)} 分', style: ts(F.cap, c: p.sec)),
+    ]);
+  }
+}
+
+/// 長按暱稱：檢舉暱稱（四種原因，送出後再問要不要封鎖）或封鎖這位玩家
+class _PlayerMenu extends StatelessWidget {
+  const _PlayerMenu({required this.model, required this.pid, required this.name, required this.child});
+  final BattleModel model;
+  final String? pid;
+  final String name;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final id = pid;
+    if (id == null || id == model.me?.pid) return child;
+    return Tap(onLongPress: () => _menu(context, id), onTap: () => _menu(context, id), dim: false, child: child);
+  }
+
+  void _menu(BuildContext context, String id) => showAlert(
+    context,
+    name,
+    actions: [
+      AlertAction('檢舉暱稱', onTap: () => _report(context, id)),
+      AlertAction('封鎖這位玩家', destructive: true, onTap: () => unawaited(_block(context, id))),
+      const AlertAction('取消'),
+    ],
+  );
+
+  void _report(BuildContext context, String id) => showAlert(
+    context,
+    '檢舉「$name」這個暱稱',
+    message: '選一個原因',
+    actions: [
+      for (final (code, label) in BattleModel.reportReasons)
+        AlertAction(label, onTap: () async {
+          final e = await model.report(id, code);
+          if (!context.mounted) return;
+          if (e != null) {
+            unawaited(showAlert(context, e));
+            return;
+          }
+          unawaited(showAlert(
+            context,
+            '謝謝，我們會處理',
+            message: '要不要一併封鎖這位玩家？',
+            actions: [
+              const AlertAction('不用'),
+              AlertAction('一併封鎖', destructive: true, onTap: () => unawaited(_block(context, id))),
+            ],
+          ));
+        }),
+      const AlertAction('取消'),
+    ],
+  );
+
+  Future<void> _block(BuildContext context, String id) async {
+    final e = await model.block(id);
+    if (!context.mounted) return;
+    unawaited(showAlert(context, e ?? '已封鎖', message: e == null ? '之後不會再配到對方，排行榜上也會顯示成匿名玩家。' : null));
+  }
+}
+
+/// 上賽季前 20 名和本賽季的預估排名
+class BattleBoardPage extends StatefulWidget {
+  const BattleBoardPage({super.key, required this.model});
+  final BattleModel model;
+  @override
+  State<BattleBoardPage> createState() => _BattleBoardPageState();
+}
+
+class _BattleBoardPageState extends State<BattleBoardPage> {
+  Map<String, dynamic>? _b;
+  String? _failed;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    try {
+      final b = await widget.model.board();
+      if (mounted) {
+        setState(() {
+          _b = b;
+          _failed = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _failed = BattleModel._clean(e));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Palette.of(context);
+    final b = _b;
+    if (b == null) {
+      return NavPage(title: '賽季排行', slivers: [
+        Sec(children: [
+          if (_failed != null)
+            RowTile(title: '讀不到排行，再試一次', subtitle: _failed, titleColor: p.accent, onTap: () => unawaited(_load()))
+          else
+            const SizedBox(height: 96, child: Center(child: CircularProgressIndicator())),
+        ]),
+      ]);
+    }
+    final est = b['estimate'] as Map<String, dynamic>?;
+    final rating = b['rating'] as int?;
+    final minGames = b['min_games'] as int? ?? 60;
+    final top = [for (final r in b['top'] as List) r as Map<String, dynamic>];
+    final me = b['me'] as Map<String, dynamic>?;
+    return NavPage(title: '賽季排行', slivers: [
+      Sec(
+        header: '${b['season']} 預估排名',
+        footer: '依上賽季同期資料估算，不是即時排名。',
+        children: [
+          if (rating != null && est != null)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('大約第 ${est['rank']} 名', style: ts(F.title2, w: w7, c: p.ink)),
+                const SizedBox(height: 4),
+                Text('目前 $rating 分${est['percent'] != null ? '，前 ${est['percent']}%' : ''}', style: ts(F.sub, c: p.sec)),
+              ]),
+            )
+          else
+            RowTile(title: rating == null ? '打一場排名賽後就會顯示預估排名' : '還沒有上賽季同期的資料', titleColor: p.sec),
+        ],
+      ),
+      Sec(
+        header: '${b['previous']} 前 20 名',
+        footer: '上賽季打滿 $minGames 場排名賽才會列入。勝率含電腦局。長按暱稱可以檢舉或封鎖。',
+        children: [
+          if (b['has_previous'] != true)
+            RowTile(title: '第一季，還沒有排名', titleColor: p.sec)
+          else if (top.isEmpty)
+            RowTile(title: '上賽季沒有人打滿 $minGames 場', titleColor: p.sec)
+          else ...[
+            for (final r in top) _row(p, r),
+            if (me != null && !top.any((r) => r['me'] == true)) _row(p, me, mine: true),
+          ],
+        ],
+      ),
+    ]);
+  }
+
+  Widget _row(Palette p, Map<String, dynamic> r, {bool mine = false}) {
+    final rank = r['rank'] as int?;
+    final pid = mine ? null : r['pid'] as String?;
+    final name = mine ? (widget.model.me?.name ?? '你') : (r['name'] as String? ?? '匿名玩家');
+    final self = mine || r['me'] == true;
+    final rate = ((r['win_rate'] as num) * 100).round();
+    return _PlayerMenu(
+      model: widget.model,
+      pid: pid,
+      name: name,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(children: [
+          SizedBox(
+            width: 30,
+            child: Text(rank?.toString() ?? '–', style: ts(F.headline, w: w7, c: rank != null && rank <= 3 ? p.accent : p.ink)),
+          ),
+          Container(
+            width: 34,
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(color: self ? p.accent : p.sec.withValues(alpha: .3), shape: BoxShape.circle),
+            child: Text(
+              pid == null && !self ? '?' : (name.isEmpty ? '?' : name.characters.first),
+              style: ts(F.sub, w: w7, c: self ? p.onAccent : p.ink),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: ts(F.sub, w: w6, c: p.ink)),
+              Text(mine && rank == null ? '場數不足' : '${r['tier_name']}・勝率 $rate%', style: ts(F.cap, c: p.sec)),
+            ]),
+          ),
+          Text('${r['rating']}', style: ts(F.headline, w: w7, c: p.ink)),
+        ]),
+      ),
+    );
+  }
+}
+
+/// 設定 › 單字對戰：不顯示在排行榜、已封鎖的玩家
+class BattleSettingsPage extends StatefulWidget {
+  const BattleSettingsPage({super.key});
+  @override
+  State<BattleSettingsPage> createState() => _BattleSettingsPageState();
+}
+
+class _BattleSettingsPageState extends State<BattleSettingsPage> {
+  bool _hidden = false, _loaded = false;
+  List<Map<String, dynamic>>? _blocked;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    final level = BattleModel().level;
+    try {
+      final me = await Cloud.shared.rpc('battle_me', {'p_level': level}, const Duration(seconds: 10)) as Map<String, dynamic>;
+      final b = await Cloud.shared.rpc('battle_blocked', const {}, const Duration(seconds: 10)) as List;
+      if (!mounted) return;
+      setState(() {
+        _hidden = me['hidden'] as bool? ?? false;
+        _loaded = true;
+        _blocked = [for (final x in b) x as Map<String, dynamic>];
+        _error = null;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = BattleModel._clean(e);
+          _blocked ??= [];
+        });
+      }
+    }
+  }
+
+  Future<void> _setHidden(bool v) async {
+    setState(() => _hidden = v);
+    try {
+      await Cloud.shared.rpc('battle_set_hidden', {'p_hidden': v}, const Duration(seconds: 10));
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _hidden = !v;
+          _error = BattleModel._clean(e);
+        });
+      }
+    }
+  }
+
+  Future<void> _unblock(Map<String, dynamic> b) async {
+    setState(() => _blocked?.remove(b));
+    try {
+      await Cloud.shared.rpc('battle_unblock', {'p_id': b['id']}, const Duration(seconds: 10));
+    } catch (e) {
+      if (mounted) setState(() => _error = BattleModel._clean(e));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Palette.of(context);
+    final blocked = _blocked;
+    return NavPage(title: '單字對戰', slivers: [
+      Sec(
+        footer: '開啟後，其他人在排行榜上看到的是「匿名玩家」，名次照算。',
+        children: [SwitchRow(title: '不顯示在排行榜', value: _hidden, onChanged: _loaded ? (v) => unawaited(_setHidden(v)) : (_) {})],
+      ),
+      Sec(
+        header: '已封鎖的玩家',
+        footer: '封鎖後不會再配到對方，排行榜上對方會顯示成匿名玩家。最多封鎖 200 人。${_error != null ? '\n$_error' : ''}',
+        children: [
+          if (blocked == null)
+            const SizedBox(height: 64, child: Center(child: CircularProgressIndicator()))
+          else if (blocked.isEmpty)
+            RowTile(title: '沒有封鎖任何玩家', titleColor: p.sec)
+          else
+            for (final b in blocked)
+              RowTile(
+                title: b['name'] as String? ?? '玩家',
+                trailing: Tap(
+                  onTap: () => unawaited(_unblock(b)),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                    child: Text('解除封鎖', style: ts(F.sub, w: w6, c: p.accent)),
+                  ),
+                ),
+              ),
+        ],
+      ),
+    ]);
   }
 }
