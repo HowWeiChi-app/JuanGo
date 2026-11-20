@@ -239,6 +239,9 @@ final class BattleModel {
             clockOffset = s.now - (sent + received) / 2
         }
         state = s
+        #if DEBUG
+        autoReport(s)
+        #endif
         if let q = s.question, q.n != current?.n {
             previous = current; current = q
             #if DEBUG
@@ -255,6 +258,9 @@ final class BattleModel {
                 if played { try? await Task.sleep(for: .seconds(3)) }
                 phase = .finished
                 await load()
+                #if DEBUG
+                autoNext()
+                #endif
             }
         }
     }
@@ -272,15 +278,71 @@ final class BattleModel {
     }
 
     #if DEBUG
-    /// `JUANGO_BATTLE_AUTOPLAY=0.7` (tools/battle_autoplay.sh): picks the right answer that many seconds
-    /// after each question opens, to test matches without playing them by hand.
+    // MARK: Auto-play for testing (tools/battle_autoplay.sh)
+    // `JUANGO_BATTLE_AUTOPLAY=0.7` opens 單字對戰, finds a ranked match, picks the right answer 0.7 s after each
+    // question opens, and starts the next match a few seconds after each one ends, until the app is stopped.
+    // Every step is written to stderr, which `devicectl … --console` shows in the terminal.
+
+    static let autoDelay: Double? = ProcessInfo.processInfo.environment["JUANGO_BATTLE_AUTOPLAY"].flatMap(Double.init)
+    @ObservationIgnored private var reported = 0
+    @ObservationIgnored private var games = 0
+    @ObservationIgnored private var wins = 0
+
+    static func log(_ line: String) {
+        let t = Date.now.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))
+        FileHandle.standardError.write(Data("[\(t)] \(line)\n".utf8))
+    }
+
+    func autoFind() {
+        guard Self.autoDelay != nil else { return }
+        guard Cloud.shared.signedIn else { Self.log("沒有登入，不能對戰：先在 App 裡登入"); return }
+        games += 1
+        Self.log("—— 第 \(games) 場：開始配對 ——")
+        reported = 0
+        find()
+    }
+
+    private func autoNext() {
+        guard Self.autoDelay != nil else { return }
+        Task {
+            try? await Task.sleep(for: .seconds(5))
+            if phase == .finished { autoFind() }
+        }
+    }
+
     private func autoplay(_ q: BattleState.Question, starts: Double?) {
-        guard let v = ProcessInfo.processInfo.environment["JUANGO_BATTLE_AUTOPLAY"], let delay = Double(v),
-              let pick = Self.rightOption(q) else { return }
+        guard let delay = Self.autoDelay else { return }
+        let options = q.options.enumerated().map { "\(Character(UnicodeScalar(65 + $0.offset)!)) \($0.element)" }.joined(separator: "  ")
+        guard let pick = Self.rightOption(q) else {
+            Self.log("第 \(q.n) 題：\(q.prompt)｜\(options)｜字典判斷不出答案，不作答")
+            return
+        }
         Task {
             let wait = (starts ?? serverNow) + delay * 1000 - serverNow
             if wait > 0 { try? await Task.sleep(for: .milliseconds(Int(wait))) }
             answer(pick)
+            Self.log("第 \(q.n) 題：\(q.prompt)｜\(options)｜選 \(Character(UnicodeScalar(65 + pick)!)) \(q.options[pick])")
+        }
+    }
+
+    /// Logs the opponent once the match starts, each round's result as it closes, and the outcome.
+    private func autoReport(_ s: BattleState) {
+        guard Self.autoDelay != nil else { return }
+        if reported == 0, let o = s.opponent {
+            reported = -1
+            Self.log("配對到 \(o.name)（\(tierText(o.tierName, o.tier))・\(o.rating)），\(s.rated ? "排位" : "不計分")")
+        }
+        if let l = s.last, l.n > max(reported, 0) {
+            reported = l.n
+            let mine = l.points > 0 ? "答對 +\(l.points)" : l.pick == nil ? "沒作答" : "答錯（正解 \(l.term) \(l.zh)）"
+            Self.log("　→ \(mine)｜對手 +\(l.opponentPoints)｜比分 \(s.you.score) : \(s.opponent?.score ?? 0)")
+        }
+        if s.status == "finished", let r = s.result, reported != Int.max {
+            reported = Int.max
+            if r.outcome == "win" { wins += 1 }
+            let word = ["win": "贏了", "loss": "輸了", "draw": "平手"][r.outcome] ?? r.outcome
+            let delta = r.delta > 0 ? "+\(r.delta)" : "\(r.delta)"
+            Self.log("結果：\(word)（\(r.reason)），積分 \(delta) → \(s.you.rating + r.delta)｜目前 \(wins) 勝 / \(games) 場，5 秒後下一場")
         }
     }
 
@@ -329,6 +391,12 @@ final class BattleModel {
         guard !Task.isCancelled else { return }
         reset(.home)
         error = e.localizedDescription
+        #if DEBUG
+        if Self.autoDelay != nil {
+            Self.log("出錯了：\(Self.clean(e))，10 秒後重新配對")
+            Task { try? await Task.sleep(for: .seconds(10)); if phase == .home { autoFind() } }
+        }
+        #endif
     }
 
     #if DEBUG
@@ -424,6 +492,11 @@ struct BattleView: View {
         model = m
         #if DEBUG
         if let step = ProcessInfo.processInfo.environment["JUANGO_BATTLE"] { m.demo(step); return }
+        if BattleModel.autoDelay != nil {
+            BattleModel.log("自動對戰開始，每題 \(BattleModel.autoDelay!) 秒後作答；按 Ctrl-C 停止")
+            Task { await m.load(); m.autoFind() }
+            return
+        }
         #endif
         Task { await m.load() }
     }

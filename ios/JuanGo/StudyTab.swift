@@ -99,7 +99,7 @@ struct StudyTab: View {
             .fullScreenCover(isPresented: $showBattle) { BattleView() }
             #if DEBUG
             .task {   // JUANGO_BATTLE=<step> opens the battle screen with sample data
-                if ProcessInfo.processInfo.environment["JUANGO_BATTLE"] != nil { showBattle = true }
+                if ProcessInfo.processInfo.environment["JUANGO_BATTLE"] != nil || BattleModel.autoDelay != nil { showBattle = true }
             }
             .task {   // simulator testing: SIMCTL_CHILD_JUANGO_STUDY=setup | q:英翻中 | summary | streak
                 if ProcessInfo.processInfo.environment["JUANGO_STUDY"] != nil, flow == nil {
