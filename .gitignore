@@ -22,3 +22,6 @@ tools/examples/log*.txt
 tools/examples/words-source.json
 tools/examples/out*.jsonl
 tools/exams/pdf/
+
+# Supabase CLI
+supabase/.temp/
