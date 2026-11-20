@@ -1,10 +1,11 @@
 // POST promo-send：開發者自己呼叫（不是給官網用的）。Header 要帶 x-admin-secret: <PROMO_ADMIN_SECRET>。
 //   { action: 'send', claim_ids?: string[], limit?: number, dry_run?: boolean }
-//     把 status = 'approved' 的申請產生一次性 token、寄啟用信、改成 'sent'。寄信失敗會退回 'approved'。
+//     把 status = 'approved' 的申請產生一次性 token、寄啟用信（Gmail，跟登入連結同一個寄信帳號）、改成 'sent'。寄信失敗會退回 'approved'。
 //     回傳 { sent: [id], failed: [{ id, error }], skipped: [id] }，不會回傳 token。
 //   { action: 'cleanup' }：活動結束 90 天後刪除申請資料和截圖檔案。
 import { body, type Env, newToken, sha256 } from "../_shared/http.ts";
 import type { Db } from "../_shared/db.ts";
+import type { Mail } from "../_shared/mail-type.ts";
 
 const SITE = "https://howweichi-app.github.io";
 const APP_NAME: Record<string, string> = { juango: "捲字 JuanGo", bango: "校板 BanGo" };
@@ -43,7 +44,7 @@ HowWeiChi`;
   return { subject: `你的${name} Pro 免費一年`, text, html };
 }
 
-export async function handle(req: Request, db: Db, env: Env, fetcher: typeof fetch = fetch): Promise<Response> {
+export async function handle(req: Request, db: Db, env: Env, mail: Mail | null): Promise<Response> {
   const secret = env("PROMO_ADMIN_SECRET");
   if (!secret || secret.length < 24 || !same(req.headers.get("x-admin-secret") ?? "", secret)) return out({ error: "forbidden" }, 403);
   if (req.method !== "POST") return out({ error: "method" }, 405);
@@ -65,8 +66,7 @@ export async function handle(req: Request, db: Db, env: Env, fetcher: typeof fet
   const claims = (list.data as { id: string; email: string; app: string }[] | null) ?? [];
   if (b.dry_run === true) return out({ would_send: claims.map((c) => ({ id: c.id, app: c.app })) });
 
-  const key = env("RESEND_API_KEY"), from = env("PROMO_FROM_EMAIL");
-  if (!key || !from) return out({ error: "缺少 RESEND_API_KEY 或 PROMO_FROM_EMAIL" }, 500);
+  if (!mail) return out({ error: "缺少 GMAIL_USER 或 GMAIL_APP_PASSWORD" }, 500);
   const sent: string[] = [], skipped: string[] = [], failed: { id: string; error: string }[] = [];
   for (const c of claims) {
     const token = newToken();
@@ -74,15 +74,7 @@ export async function handle(req: Request, db: Db, env: Env, fetcher: typeof fet
     if (mark.error || !mark.data) { skipped.push(c.id); continue; }   // 已經不是 approved（例如同時跑了兩次）
     const m = email(c.app, `${SITE}/redeem/?t=${token}`);
     let ok = false, why = "";
-    try {
-      const r = await fetcher("https://api.resend.com/emails", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ from, to: [c.email], subject: m.subject, text: m.text, html: m.html }),
-      });
-      ok = r.ok;
-      if (!ok) why = `Resend ${r.status}`;
-    } catch (e) { why = String(e); }
+    try { await mail({ to: c.email, ...m }); ok = true; } catch (e) { why = String(e instanceof Error ? e.message : e); }
     if (ok) sent.push(c.id);
     else { failed.push({ id: c.id, error: why }); await db.rpc("promo_unsend", { p_claim_id: c.id }); }
   }

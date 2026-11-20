@@ -31,10 +31,13 @@ node --test supabase/functions/test/
    | `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile 的 secret key（site key 填在官網 `pages.py` 的 `BACKEND`） |
    | `PROMO_IP_SALT` | 任意長字串，IP 只存加鹽後的雜湊 |
    | `PROMO_ADMIN_SECRET` | 至少 24 個字元，呼叫 `promo-send` 時放在 `x-admin-secret` header |
-   | `RESEND_API_KEY` | Resend 的 API key |
-   | `PROMO_FROM_EMAIL` | 寄件人，例如 `HowWeiChi <no-reply@你驗證過的網域>` |
+   | `GMAIL_USER` | 寄件的 Gmail，跟捲字登入連結用同一個 Google 帳號 |
+   | `GMAIL_APP_PASSWORD` | 那個帳號的「應用程式密碼」（16 碼，不是登入密碼） |
+   | `PROMO_FROM_NAME` | 選填，寄件人名稱，預設 `HowWeiChi` |
 
    `SUPABASE_URL` 和 `SUPABASE_SERVICE_ROLE_KEY` 是 Supabase 自動提供的，不用設。
+
+   應用程式密碼：Google 帳戶 › 安全性 › 開啟兩步驟驗證 › 搜尋「應用程式密碼」› 建立一組，名稱填 `promo-send`。寄信走 `smtp.gmail.com:465`（Supabase 擋 25 和 587 埠）。一般 Gmail 一天大約 500 封，一次寄太多會被暫停，`promo-send` 每次最多 50 封。
 5. 部署（要先安裝 Supabase CLI 並 `supabase link`）。官網呼叫的三個不檢查 JWT：
 
    ```bash

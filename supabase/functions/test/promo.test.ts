@@ -135,13 +135,13 @@ test("promo-send → promo-claim：一個 token 一組代碼，再打開是同�
   s.claims[0].status = "approved";
   s.codes.push({ code: "IOS-1", app: "juango", platform: "ios" }, { code: "IOS-2", app: "juango", platform: "ios" });
   const mails: any[] = [];
-  const fakeResend = (async (_u: string, init: any) => { mails.push(JSON.parse(init.body)); return new Response("{}", { status: 200 }); }) as typeof fetch;
+  const fakeMail = async (m: any) => { mails.push(m); };
   const admin = { "x-admin-secret": "a-very-long-admin-secret-123" };
-  let r = await send(post("promo-send", { action: "send" }, "1.1.1.1", { "x-admin-secret": "wrong" }), db, env({ PROMO_ADMIN_SECRET: "a-very-long-admin-secret-123" }), fakeResend);
+  let r = await send(post("promo-send", { action: "send" }, "1.1.1.1", { "x-admin-secret": "wrong" }), db, env({ PROMO_ADMIN_SECRET: "a-very-long-admin-secret-123" }), fakeMail);
   assert.equal(r.status, 403);
-  r = await send(post("promo-send", { action: "send" }, "1.1.1.1", admin), db, env({ PROMO_ADMIN_SECRET: "a-very-long-admin-secret-123", RESEND_API_KEY: "re", PROMO_FROM_EMAIL: "HowWeiChi <a@b.c>" }), fakeResend);
+  r = await send(post("promo-send", { action: "send" }, "1.1.1.1", admin), db, env({ PROMO_ADMIN_SECRET: "a-very-long-admin-secret-123" }), fakeMail);
   assert.deepEqual((await r.json()).sent, [s.claims[0].id]);
-  assert.equal(mails[0].to[0], "student@example.com");
+  assert.equal(mails[0].to, "student@example.com");
   const token = mails[0].text.match(/redeem\/\?t=([\w-]+)/)[1];
   assert.equal(s.claims[0].token_hash, await sha256(token));
   assert.ok(!JSON.stringify(s.claims).includes(token), "token 本身不存");
@@ -165,7 +165,7 @@ test("promo-claim：過期、代碼發完；寄信失敗會退回 approved", asy
   assert.equal((await (await claim(post("promo-claim", { token: "s".repeat(43), platform: "ios" }), db, env())).json()).error, "sold_out");
   s.claims.push({ id: crypto.randomUUID(), email: "c@x.co", post_url: "u3", app: "juango", status: "approved" });
   const r = await send(post("promo-send", { action: "send" }, "1.1.1.1", { "x-admin-secret": "a-very-long-admin-secret-123" }),
-    db, env({ PROMO_ADMIN_SECRET: "a-very-long-admin-secret-123", RESEND_API_KEY: "re", PROMO_FROM_EMAIL: "a@b.c" }), (async () => new Response("no", { status: 500 })) as typeof fetch);
+    db, env({ PROMO_ADMIN_SECRET: "a-very-long-admin-secret-123" }), async () => { throw new Error("SMTP 535"); });
   assert.equal((await r.json()).failed.length, 1);
   assert.equal(s.claims[2].status, "approved");
 });
