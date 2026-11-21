@@ -359,16 +359,20 @@ language sql immutable set search_path = public as $$ select substr(md5('juango-
 
 create or replace function public.battle_bot_names() returns text[]
 language sql immutable set search_path = public as $$
-  -- names real players pick or never change: the default 形容詞+動物+兩位數, account-style English, nicknames
+  -- names real players pick or never change: the default 形容詞+動物+兩位數, Douyin-style nicknames,
+  -- pinyin initials of common names, and one-character nicknames (players may pick one character too)
   select array[
-    '勇敢的水獺08','安靜的石虎41','快樂的黑熊17','認真的貓頭鷹63','聰明的海豚29','好奇的藍鵲05','溫柔的穿山甲72','機靈的梅花鹿36','認真的水獺90','快樂的藍鵲24','安靜的海豚58',
-    '好奇的石虎13','機靈的黑熊81','溫柔的貓頭鷹47','勇敢的穿山甲66','聰明的梅花鹿02','kevin0812','amy_chen','jason.lin','ethan_wu','chloe1103',
-    'ian_huang','vivi_0920','leo.tsai','grace_lai','ryan27','annie.c','max_0505','yuki_tw','eric0716','joyce.h',
-    'wendy_yang','alan1029','iris_ko','daniel.lee','sandy0313','yuchen_','tingyu0228','weiting.c','hsuan_0619',
-    'pinyu_','yihsuan1107','chiahao_tw','tzuyu.w','po_han','shihyu0901','柚子茶加冰','一條鹹魚','肥宅快樂水','香菜退散','吐司邊','黑糖珍奶','雞排加辣','蘿蔔糕','小籠包控','綠茶無糖','今天吃什麼','窩不知道','數學好難QQ',
-    '壞掉的鬧鐘','安安你好','啾咪','起司貓','阿嬤的芭樂','林小柚','陳品妤','王小捲','蕭蕭','歐陽','品品','Ting','Yi',
-    'yu._.','chen','莓果優格','芒果冰','咖哩飯','鹽酥雞','豬豬','好想吃火鍋','隔壁的阿明','早餐店奶茶','卷卷','睡不飽','想放假','不想早起','珍奶續命','早八戰士','三分鐘熱度','讀書好累','一直想睡','今天也很累',
-    '肚子餓了','zzz','hihi','嗯嗯','好喔','qq','路過','隨便啦']
+    '勇敢的水獺08','安靜的石虎41','快樂的黑熊17','認真的貓頭鷹63','聰明的海豚29','好奇的藍鵲05','溫柔的穿山甲72','機靈的梅花鹿36','認真的水獺90','快樂的藍鵲24','安靜的海豚58','好奇的石虎13',
+    '機靈的黑熊81','溫柔的貓頭鷹47','勇敢的穿山甲66','聰明的梅花鹿02',
+    '用户3920571846','用户7158203964','是阿忆呀','小鹿不迷路','橘子汽水呀','一只小胖橘','晚风知我意','白开水不加糖','奶糖不甜','咸鱼翻身失败','今天也要加油鸭','一颗柠檬精',
+    '不吃香菜的猫','爱吃草莓的兔','暴躁小王在线','李不白','王大锤本锤','是七七啊','柯基不吃饭','熬夜冠军','momo酱','我是小透明','半夏微凉','人间清醒小李',
+    '干饭人阿杰','追风少年刘','emo小狗','栗子不炒','杨枝甘露续命','发呆的阿呆','山海不相逢','困到原地升天','别催了在写','小张今天不加班','路人甲乙丙',
+    'zjh0315','lyx_','wzx.','cxy520','hzy07','yzh_0811','lmy','zyx1999','wjj__','xyt.','ccy0624','lxr',
+    'zht_77','gzy2008','syq.','hyf0101','ljx_','tzq','fyh1203','wyh.','dzh_','pjy0909','ksy','zmy_',
+    'lzh2007','cjw','yxy__','whr0418','xzy.','qyh.',
+    '七','鹿','柒','柚','橙','栀','渡','简','默','昼','星','川',
+    '遇','念','晴','夏','木','糖','喵','哦','嗯','皮','酷','鱼',
+    '桃']
 $$;
 
 -- a computer name nobody uses, that wasn't reported, and that the caller hasn't blocked
@@ -1195,7 +1199,7 @@ declare
   clean text := btrim(regexp_replace(coalesce(p_name, ''), '[[:space:]　]+', ' ', 'g'));
 begin
   if me.name_locked then raise exception '你的名稱被檢舉，審核完成前不能修改'; end if;
-  if char_length(clean) not between 2 and 12 then raise exception '名稱要 2 到 12 個字'; end if;
+  if char_length(clean) not between 1 and 12 then raise exception '名稱要 1 到 12 個字'; end if;
   if clean ~ '[[:cntrl:]]' or clean ~ U&'[\200B-\200F\202A-\202E\2060-\2069\FEFF]' then
     raise exception '名稱有不能使用的字元';
   end if;

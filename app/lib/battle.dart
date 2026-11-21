@@ -1293,7 +1293,7 @@ class _RenamePageState extends State<_RenamePage> {
   String? _problem;
 
   String get _clean => _name.text.trim().replaceAll(RegExp(r'\s+'), ' ');
-  bool get _valid => _clean.runes.length >= 2 && _clean.runes.length <= 12;
+  bool get _valid => _clean.runes.isNotEmpty && _clean.runes.length <= 12;
 
   @override
   void dispose() {
@@ -1329,7 +1329,7 @@ class _RenamePageState extends State<_RenamePage> {
       ],
       slivers: [
         Sec(
-          footer: _problem ?? '2 到 12 個字，對手會看到這個名稱。',
+          footer: _problem ?? '1 到 12 個字，對手會看到這個名稱。',
           children: [
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),

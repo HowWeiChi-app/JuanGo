@@ -702,7 +702,7 @@ private struct BattleRename: View {
     }
 
     private var clean: String { name.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
-    private var valid: Bool { (2...12).contains(clean.unicodeScalars.count) }
+    private var valid: Bool { (1...12).contains(clean.unicodeScalars.count) }
 
     var body: some View {
         NavigationStack {
@@ -712,7 +712,7 @@ private struct BattleRename: View {
                         .autocorrectionDisabled().focused($typing).submitLabel(.done)
                         .onSubmit(save)
                 } footer: {
-                    Text(problem ?? "2 到 12 個字，對手會看到這個名稱。")
+                    Text(problem ?? "1 到 12 個字，對手會看到這個名稱。")
                 }
             }.listRowBackground(Color.cardFill) }
             .font(.app(.body))
