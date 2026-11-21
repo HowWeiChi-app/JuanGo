@@ -360,17 +360,16 @@ language sql immutable set search_path = public as $$ select substr(md5('juango-
 create or replace function public.battle_bot_names() returns text[]
 language sql immutable set search_path = public as $$
   -- names real players pick or never change: the default 形容詞+動物+兩位數, Douyin-style nicknames,
-  -- pinyin initials of common names, and one-character nicknames (players may pick one character too)
+  -- pinyin initials of common names, Chinese mixed with English, and a few one-character nicknames (players may pick one character too)
   select array[
-    '勇敢的水獺08','安靜的石虎41','快樂的黑熊17','認真的貓頭鷹63','聰明的海豚29','好奇的藍鵲05','溫柔的穿山甲72','機靈的梅花鹿36',
-    '用戶7158203964','小鹿不迷路','橘子汽水呀','白開水不加糖','奶糖不甜','一顆檸檬精','不吃香菜的貓','愛吃草莓的兔','暴躁小王在線','李不白','是七七啊','柯基不吃飯',
-    '熬夜冠軍','我是小透明','半夏微涼','追風少年劉','栗子不炒','發呆的阿呆','山海不相逢','困到原地升天','別催了在寫','小張今天不加班','路人甲乙丙',
-    '用户3920571846','是阿忆呀','一只小胖橘','晚风知我意','咸鱼翻身失败','今天也要加油鸭','王大锤本锤','momo酱','人间清醒小李','干饭人阿杰','emo小狗','杨枝甘露续命',
-    'LYX_','WZX.','LMY','TZQ','KSY','CJW','Wjj__','Xyt.','Lxr','Syq.','Ljx_','Wyh.',
-    'Dzh_','Zmy_','Yxy__','Xzy.','Qyh.','Zjh0315','cxy520','hzy07','yzh_0811','zyx1999','ccy0624','zht_77',
-    'gzy2008','hyf0101','fyh1203','pjy0909','lzh2007','whr0418',
-    '七','鹿','柚','橙','渡','默','星','川','念','晴','夏','糖',
-    '喵','嗯','桃']
+    '勇敢的水獺08','安靜的石虎41','快樂的黑熊17','認真的貓頭鷹63','聰明的海豚29','好奇的藍鵲05','溫柔的穿山甲72','機靈的梅花鹿36','用戶7158203964','小鹿不迷路','橘子汽水呀','白開水不加糖',
+    '奶糖不甜','一顆檸檬精','不吃香菜的貓','愛吃草莓的兔','暴躁小王在線','李不白','是七七啊','柯基不吃飯','熬夜冠軍','我是小透明','半夏微涼','追風少年劉',
+    '栗子不炒','發呆的阿呆','山海不相逢','困到原地升天','別催了在寫','小張今天不加班','路人甲乙丙','用户3920571846','是阿忆呀','一只小胖橘','晚风知我意','咸鱼翻身失败',
+    '今天也要加油鸭','王大锤本锤','momo酱','人间清醒小李','干饭人阿杰','emo小狗','杨枝甘露续命','LYX_','WZX.','LMY','TZQ','KSY',
+    'CJW','Wjj__','Xyt.','Lxr','Syq.','Ljx_','Wyh.','Dzh_','Zmy_','Yxy__','Xzy.','Qyh.',
+    'Zjh0315','cxy520','hzy07','yzh_0811','zyx1999','ccy0624','zht_77','gzy2008','hyf0101','fyh1203','pjy0909','lzh2007',
+    'whr0418','Amy不想上課','小陳Chen','阿杰Jay','Momo今天早睡','咖啡ing','Kevin林','Lisa的貓','早八killer','小雨Rain','奶茶yyds','Jason在讀書',
+    '考試PTSD','Vivi醬','單字OK嗎','Ian是我本人','七','鹿','星','喵','嗯']
 $$;
 
 -- a computer name nobody uses, that wasn't reported, and that the caller hasn't blocked
