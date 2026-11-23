@@ -274,16 +274,6 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  /// 免費版上限到期：刪掉這些字和它們的複習進度，清單本身留著
-  void removeForQuota(List<Word> ws) {
-    final now = DateTime.now();
-    for (final w in ws) {
-      removed[w.term] = now;
-      _byTerm.remove(w.term.toLowerCase());
-    }
-    save();
-  }
-
   Map<String, dynamic> listFile(String name, List<Word> ws) => {
     'app': 'JuanGo',
     'format': 1,

@@ -1,3 +1,6 @@
+-- ⚠️ 重跑這個檔之後，一定要依序再跑：battle_social.sql → battle_lobby.sql → subscriptions.sql → battle_grants.sql。
+--    這個檔裡的 battle_board／battle_board_season（排行不含電腦）、battle_bot_name、battle_bot_target、battle_bot_ms、
+--    battle_join、has_pro 是舊版，後面幾個檔會換成新版；只重跑這個檔，電腦會從排行消失、房間和 Pro 判斷也會變回舊的。
 -- JuanGo ranked battles (run after battle.sql and battle_words.sql): 10 questions, tiers, seasons, the computer
 -- playing like a player of the tier, the season leaderboard, nickname reports and blocking.
 -- The numbers live in supabase/battle_rules.json; the copy below must match it (tools/battle_sim.py checks).
@@ -359,20 +362,16 @@ language sql immutable set search_path = public as $$ select substr(md5('juango-
 
 create or replace function public.battle_bot_names() returns text[]
 language sql immutable set search_path = public as $$
-  -- names real players pick or never change: the default 形容詞+動物+兩位數, Douyin-style nicknames,
-  -- pinyin initials of common names, Chinese mixed with English, and a few one-character nicknames (players may pick one character too)
+  -- names real players pick or never change: the default 形容詞+動物+兩位數, account-style English, nicknames
   select array[
-    '勇敢的水獺08','安靜的石虎41','快樂的黑熊17','認真的貓頭鷹63','聰明的海豚29','好奇的藍鵲05','溫柔的穿山甲72','機靈的梅花鹿36','用戶7158203964','小鹿不迷路',
-    '橘子汽水呀','白開水不加糖謝謝','奶糖不甜','一顆檸檬精','一隻不吃香菜的貓咪','愛吃草莓的兔子不吃蘿蔔','暴躁小王在線罵人中','李不白','是七七啊','柯基不吃飯',
-    '熬夜冠軍','我只是一個小透明而已','半夏微涼','追風少年劉','栗子不炒','發呆的阿呆','山海不相逢','上課困到原地升天了','別催了在寫了在寫了','小張今天不加班',
-    '路人甲乙丙','用户3920571846','是阿忆呀','一只小胖橘','晚风知我意','咸鱼翻身失败第三次','今天也要加油鸭','王大锤本锤','momo酱','人间清醒小李同学',
-    '干饭人阿杰','emo小狗','杨枝甘露续命','LYX_','WZX.','LMY','TZQ','KSY','CJW','Wjj__',
-    'Xyt.','Lxr','Syq.','Ljx_','Wyh.','Dzh_','Zmy_','Yxy__','Xzy.','Qyh.',
-    'Zjh0315','cxy520','hzy07','yzh_0811','zyx1999','ccy0624','zht_77','gzy2008','hyf0101','fyh1203',
-    'pjy0909','lzh2007','whr0418','Amy不想上課','小陳Chen','阿杰Jay','Momo今天早睡','咖啡ing','Kevin林','Lisa的貓',
-    '早八killer','小雨Rain','奶茶yyds','Jason在讀書','期末考試PTSD中','Vivi醬','單字OK嗎','Ian是我本人','今天也是沒睡飽的一天','英文單字背了又忘忘了又背',
-    '媽媽說要早點睡但我不聽','這個帳號已經被我遺忘','不會取名字所以隨便打','Teddy今天也想放假','是你的小可爱吖不服来战','一起考上第一志願吧','momo的英文單字筆記本','下課鐘響就是我的BGM','七','鹿',
-    '星','喵','嗯']
+    '勇敢的水獺08','安靜的石虎41','快樂的黑熊17','認真的貓頭鷹63','聰明的海豚29','好奇的藍鵲05','溫柔的穿山甲72','機靈的梅花鹿36','認真的水獺90','快樂的藍鵲24','安靜的海豚58',
+    '好奇的石虎13','機靈的黑熊81','溫柔的貓頭鷹47','勇敢的穿山甲66','聰明的梅花鹿02','kevin0812','amy_chen','jason.lin','ethan_wu','chloe1103',
+    'ian_huang','vivi_0920','leo.tsai','grace_lai','ryan27','annie.c','max_0505','yuki_tw','eric0716','joyce.h',
+    'wendy_yang','alan1029','iris_ko','daniel.lee','sandy0313','yuchen_','tingyu0228','weiting.c','hsuan_0619',
+    'pinyu_','yihsuan1107','chiahao_tw','tzuyu.w','po_han','shihyu0901','柚子茶加冰','一條鹹魚','肥宅快樂水','香菜退散','吐司邊','黑糖珍奶','雞排加辣','蘿蔔糕','小籠包控','綠茶無糖','今天吃什麼','窩不知道','數學好難QQ',
+    '壞掉的鬧鐘','安安你好','啾咪','起司貓','阿嬤的芭樂','林小柚','陳品妤','王小捲','蕭蕭','歐陽','品品','Ting','Yi',
+    'yu._.','chen','莓果優格','芒果冰','咖哩飯','鹽酥雞','豬豬','好想吃火鍋','隔壁的阿明','早餐店奶茶','卷卷','睡不飽','想放假','不想早起','珍奶續命','早八戰士','三分鐘熱度','讀書好累','一直想睡','今天也很累',
+    '肚子餓了','zzz','hihi','嗯嗯','好喔','qq','路過','隨便啦']
 $$;
 
 -- a computer name nobody uses, that wasn't reported, and that the caller hasn't blocked
@@ -1199,7 +1198,7 @@ declare
   clean text := btrim(regexp_replace(coalesce(p_name, ''), '[[:space:]　]+', ' ', 'g'));
 begin
   if me.name_locked then raise exception '你的名稱被檢舉，審核完成前不能修改'; end if;
-  if char_length(clean) not between 1 and 12 then raise exception '名稱要 1 到 12 個字'; end if;
+  if char_length(clean) not between 2 and 12 then raise exception '名稱要 2 到 12 個字'; end if;
   if clean ~ '[[:cntrl:]]' or clean ~ U&'[\200B-\200F\202A-\202E\2060-\2069\FEFF]' then
     raise exception '名稱有不能使用的字元';
   end if;
@@ -1413,3 +1412,21 @@ grant execute on function public.battle_me(int), public.battle_set_name(text, in
   public.battle_block(text), public.battle_blocked(), public.battle_unblock(bigint), public.battle_set_hidden(boolean),
   public.battle_dev_limit(boolean)
   to authenticated;
+
+-- 上面的迴圈也會收回 battle_social.sql／battle_lobby.sql 的函式（好友列表、房間等候室、邀請…），
+-- 重跑這個檔時把它們還回去（和 battle_grants.sql 同一份清單；還沒建立的函式自動跳過）
+do $$
+declare f text;
+begin
+  for f in select p.oid::regprocedure::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+           where n.nspname = 'public' and p.proname = any (array[
+             'battle_retest_done',
+             'battle_room_add_bot', 'battle_room_set_public', 'battle_public_rooms', 'battle_join_public',
+             'battle_add_friend', 'battle_remove_friend', 'battle_friend_list', 'battle_tier_detail',
+             'battle_room_state', 'battle_room_ready', 'battle_room_start', 'battle_room_kick',
+             'battle_room_invite', 'battle_my_invites', 'battle_invite_dismiss', 'battle_room_invited'])
+  loop
+    execute format('revoke all on function %s from public, anon', f);
+    execute format('grant execute on function %s to authenticated', f);
+  end loop;
+end $$;

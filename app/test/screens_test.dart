@@ -224,7 +224,12 @@ void main() {
       expect(find.text('開發者選項'), findsNothing);
       await t.tapText('查看 Pro 方案');
       await t.shot('${tag}_pro_paywall');
-      await t.tapText('免費試用 7 天');
+      // 商店還沒開通：沒有試用資格，不顯示「免費試用」
+      expect(find.text('免費試用 7 天'), findsNothing);
+      await t.tapText('更多方案');
+      await t.shot('${tag}_pro_more');
+      expect(find.text('180 天大考衝刺包'), findsOneWidget);
+      await t.tapText('訂閱 GOs PRO');
       expect(find.text(ProStore.notOpen), findsOneWidget);
       await t.shot('${tag}_pro_not_open');
       await _close(t);

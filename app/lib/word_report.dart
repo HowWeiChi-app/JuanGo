@@ -13,7 +13,7 @@ import 'theme.dart';
 import 'widgets.dart';
 
 /// 和 pubspec.yaml 的 version 一致（test/word_report_test.dart 會檢查）
-const appVersion = '0.1.1';
+const appVersion = '1.0.0';
 
 class WordReport {
   static const kinds = [

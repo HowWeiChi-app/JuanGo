@@ -1,7 +1,7 @@
 name: juango
 description: JuanGo：英文單字學習 App（Android 版）
 publish_to: "none"
-version: 0.1.1+7
+version: 1.0.0+10
 
 environment:
   sdk: ^3.13.0
@@ -26,6 +26,7 @@ dependencies:
   google_mlkit_document_scanner: ^0.7.2   # 課文書架：拍課本（自動裁切、拉正、可從相簿匯入）
   image: ^4.13.1                        # 課文書架：照片縮小、壓成 JPEG 再上傳
   pdfx: ^2.9.2                          # 課文書架：把 PDF 每頁畫成圖片再辨識
+  qr: ^4.0.1
 
 dev_dependencies:
   flutter_test:

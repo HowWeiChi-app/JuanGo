@@ -12,6 +12,15 @@ enum CloudConfig {
     static var configured: Bool { !url.absoluteString.contains("PROJECT") }
 }
 
+/// JuanGo's cloud AI for Pro (supabase/functions/ai): an OpenAI-compatible endpoint that forwards to Agnes with the
+/// key kept on the server, within a monthly quota. Used when the iPhone has no Apple Intelligence.
+enum CloudAI {
+    static let baseURL = CloudConfig.url.appendingPathComponent("functions/v1/ai").absoluteString
+    /// the server picks the model; sent only because the API shape expects one
+    static let model = "agnes-3.0-flash"
+    static var available: Bool { ProStore.shared.isPro && Cloud.shared.signedIn }
+}
+
 /// Account (email sign-in link), backup sync and share codes, talking to Supabase's REST API directly.
 @MainActor @Observable
 final class Cloud {
@@ -62,15 +71,32 @@ final class Cloud {
 
     // MARK: Sign in
 
-    /// Emails a sign-in link; opening it on this iPhone comes back through juango://login-callback.
-    func sendLink(to email: String) async throws {
-        var c = URLComponents(url: CloudConfig.url.appendingPathComponent("auth/v1/otp"), resolvingAgainstBaseURL: false)!
-        c.queryItems = [URLQueryItem(name: "redirect_to", value: CloudConfig.redirect)]
-        _ = try await send(c.url!, method: "POST", json: ["email": email.trimmingCharacters(in: .whitespaces), "create_user": true],
-                           auth: false)
+    /// Emails a 6-digit sign-in code (the Supabase email template shows {{ .Token }}). A code works on any device and
+    /// any Wi-Fi, unlike a link that has to open back into the app.
+    func sendCode(to email: String) async throws {
+        _ = try await send(CloudConfig.url.appendingPathComponent("auth/v1/otp"), method: "POST",
+                           json: ["email": email.trimmingCharacters(in: .whitespaces).lowercased(), "create_user": true], auth: false)
     }
 
-    /// juango://login-callback#access_token=…&refresh_token=…&expires_in=…  (or #error=…&error_description=…)
+    /// Signs in with the emailed code.
+    func verify(email: String, code: String) async throws {
+        let body: [String: Any] = ["type": "email", "email": email.trimmingCharacters(in: .whitespaces).lowercased(),
+                                   "token": code.filter(\.isNumber)]
+        let d: Data
+        do { d = try await send(CloudConfig.url.appendingPathComponent("auth/v1/verify"), method: "POST", json: body, auth: false) }
+        catch let f as Failure where f.status == 400 || f.status == 401 || f.status == 403 {
+            throw Failure(message: "驗證碼錯誤或已過期，請重新寄一次", status: f.status)
+        }
+        guard let o = try JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let access = o["access_token"] as? String, let refresh = o["refresh_token"] as? String,
+              let claims = Self.claims(access), let sub = claims["sub"] as? String
+        else { throw Failure(message: "登入失敗：看不懂登入資料") }
+        store(Session(accessToken: access, refreshToken: refresh,
+                      expiresAt: .now.addingTimeInterval((o["expires_in"] as? Double ?? 3600) - 60),
+                      userID: sub, email: claims["email"] as? String ?? email))
+    }
+
+    /// Links from older sign-in emails: juango://login-callback#access_token=…&refresh_token=…&expires_in=…
     @discardableResult
     func handle(_ url: URL) -> Bool {
         guard url.scheme == "juango" else { return false }
@@ -128,6 +154,9 @@ final class Cloud {
         guard let d = Data(base64Encoded: b) else { return nil }
         return try? JSONSerialization.jsonObject(with: d) as? [String: Any]
     }
+
+    /// The signed-in access token (refreshed when needed), for calling JuanGo's cloud AI.
+    func bearer() async throws -> String { try await accessToken() }
 
     private func accessToken() async throws -> String {
         guard let s = session else { throw Failure(message: "請先登入") }

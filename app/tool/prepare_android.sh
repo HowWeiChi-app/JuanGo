@@ -63,6 +63,33 @@ login = """
 if 'android:scheme="juango"' not in m:
     m = m.replace("</activity>", login + "\n        </activity>", 1)
 
+# 好友和房間的連結（連結、QR code、限動圖片都用這個）：juango://friend/<好友代碼>、juango://room/<房間代碼>
+share = """
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="juango" android:host="friend"/>
+                <data android:scheme="juango" android:host="room"/>
+            </intent-filter>"""
+if 'android:host="friend"' not in m:
+    m = m.replace("</activity>", share + "\n        </activity>", 1)
+
+# 分享到 Instagram 限動：要能看到 Instagram（Android 11 以上的套件可見性），並把圖片用 content:// 給它讀
+ig = """
+        <package android:name="com.instagram.android" />
+        <intent>
+            <action android:name="com.instagram.share.ADD_TO_STORY" />
+            <data android:mimeType="image/*" />
+        </intent>"""
+if "com.instagram.share.ADD_TO_STORY" not in m:
+    m = m.replace("<queries>", "<queries>" + ig, 1)
+provider = """
+        <provider android:name=".StoryProvider" android:authorities="${applicationId}.story"
+            android:exported="false" android:grantUriPermissions="true" />"""
+if ".StoryProvider" not in m:
+    m = m.replace("</application>", provider + "\n    </application>", 1)
+
 # 5. 桌面上顯示的名稱：中文系統是「捲字」，其他語言是 JuanGo（和 iOS 版相同）
 m = re.sub(r'android:label="[^"]*"', 'android:label="@string/app_name"', m, count=1)
 open(path, "w", encoding="utf-8").write(m)
@@ -78,6 +105,82 @@ for dir in values-zh values-zh-rTW values-zh-rHK values-b+zh+Hant; do
   printf '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <string name="app_name">捲字</string>\n</resources>\n' \
     > "android/app/src/main/res/$dir/strings.xml"
 done
+
+# 分享到 Instagram 限動（Meta 的「分享到限時動態」）：Flutter 端在 lib/friends.dart 的 shareToStory。
+# 圖片在 App 的暫存資料夾，StoryProvider 只把那個資料夾裡的檔案唯讀給 Instagram。
+cat > android/app/src/main/kotlin/io/github/howweichi/juango/MainActivity.kt <<'KT'
+package io.github.howweichi.juango
+
+import android.content.ContentProvider
+import android.content.ContentValues
+import android.content.Intent
+import android.database.Cursor
+import android.database.MatrixCursor
+import android.net.Uri
+import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+import java.io.File
+
+class MainActivity : FlutterActivity() {
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "juango/instagram").setMethodCallHandler { call, result ->
+            if (call.method != "shareStory") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            val name = File(call.argument<String>("path") ?: "").name
+            val appId = call.argument<String>("appId") ?: ""
+            val uri = Uri.parse("content://$packageName.story/$name")
+            val intent = Intent("com.instagram.share.ADD_TO_STORY").apply {
+                setDataAndType(uri, "image/png")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                // 2023 年起一定要帶 Meta App ID，不然 Instagram 會說「不支援分享到限時動態」
+                putExtra("source_application", appId)
+            }
+            when {
+                packageManager.resolveActivity(intent, 0) == null -> result.success("notInstalled")
+                appId.isEmpty() -> result.success("noAppId")
+                else -> try {
+                    grantUriPermission("com.instagram.android", uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    startActivity(intent)
+                    result.success("opened")
+                } catch (e: Exception) {
+                    result.error("share", e.message, null)
+                }
+            }
+        }
+    }
+}
+
+class StoryProvider : ContentProvider() {
+    private fun file(uri: Uri): File? {
+        val dir = context?.cacheDir ?: return null
+        val f = File(dir, File(uri.lastPathSegment ?: return null).name)
+        return if (f.isFile && f.canonicalPath.startsWith(dir.canonicalPath)) f else null
+    }
+
+    override fun onCreate() = true
+    override fun getType(uri: Uri) = "image/png"
+    override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor? =
+        file(uri)?.let { ParcelFileDescriptor.open(it, ParcelFileDescriptor.MODE_READ_ONLY) }
+
+    override fun query(uri: Uri, projection: Array<out String>?, selection: String?,
+                       selectionArgs: Array<out String>?, sortOrder: String?): Cursor? {
+        val f = file(uri) ?: return null
+        return MatrixCursor(arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)).apply {
+            addRow(arrayOf<Any>(f.name, f.length()))
+        }
+    }
+
+    override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+    override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?) = 0
+    override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?) = 0
+}
+KT
 
 # 6. flutter_local_notifications 需要 core library desugaring
 python3 - android/app/build.gradle.kts <<'PY'

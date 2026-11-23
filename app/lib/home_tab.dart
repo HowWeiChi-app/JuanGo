@@ -431,7 +431,8 @@ class HomeTab extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(Radii.lg),
+          // 圓角和其他 section 相同
+          borderRadius: BorderRadius.circular(Radii.section),
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,

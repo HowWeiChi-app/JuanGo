@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'account_page.dart';
 import 'cloud.dart';
 import 'dev_log.dart';
 import 'theme.dart';
@@ -19,7 +20,7 @@ const devGosPro = true;
 /// 捲字 Pro 只解鎖捲字；GOs PRO 解鎖 HowWeiChi 所有 App，包括之後推出的
 enum ProPlan {
   juango('捲字 Pro', '只有捲字', 'juango'),
-  gos('GOs PRO', '捲字、校板和未來所有 App', 'gos');
+  gos('GOs PRO', '捲字與 GOs PRO 合作服務', 'gos');
 
   const ProPlan(this.label, this.blurb, this._id);
   final String label, blurb, _id;
@@ -41,6 +42,29 @@ enum ProPeriod {
 
   const ProPeriod(this.unit);
   final String unit;
+}
+
+/// 收在「更多方案」裡、不會自動續訂的方案
+enum ProExtra {
+  /// 180 天大考衝刺包：Google Play 訂閱底下的預付方案（效期 6 個月）；iOS 是非續訂型訂閱。再買天數會疊加
+  pass180(
+    '180 天大考衝刺包',
+    300,
+    'juango_pass_180',
+    '捲字 Pro 180 天，不自動續訂，沒有試用。再買一次天數會往後加。',
+  ),
+
+  /// 火星贊助者：消耗型單次贊助，不解鎖功能，只給「🚀 火星贊助者」徽章，可以重複買
+  tipMars(
+    '火星贊助者',
+    30,
+    'juango_tip_mars',
+    '單次贊助，不解鎖功能，獲得「🚀 火星贊助者」徽章，可以重複贊助。',
+  );
+
+  const ProExtra(this.label, this.price, this.productId, this.blurb);
+  final String label, productId, blurb;
+  final int price;
 }
 
 /// 已經做好的付費功能，開發版可以在「開發者選項」一個個關掉
@@ -110,7 +134,12 @@ class ProStore extends ChangeNotifier {
 
   static const notOpen = '商店還沒開通，App 上架後就能訂閱。';
 
+  /// 這個 Google 帳號還能不能用 7 天免費試用（每個訂閱群組一生一次）。
+  /// Google Play 只會把有資格的人的試用優惠傳回來；商店還沒開通前一律 false，付費牆就不寫「免費試用」
+  bool introEligible = false;
+
   Future<void> purchase(ProPlan plan, ProPeriod period) async => throw notOpen;
+  Future<void> purchaseExtra(ProExtra extra) async => throw notOpen;
   Future<void> restore() async => throw notOpen;
 
   static final terms = Uri.parse('https://howweichi-app.github.io/terms/');
@@ -140,10 +169,29 @@ class _ProPaywallState extends State<ProPaywall> {
   /// 買了的方案；開發版的解鎖不算，付費牆才能完整展示
   ProPlan? get _held => _pro.devUnlocked ? null : _pro.plan;
 
+  /// 只有商店確認有試用資格才寫「7 天免費試用」
+  bool get _trial => _pro.introEligible && _held == null;
+
   Future<void> _run(Future<void> Function() f) async {
     setState(() => _busy = true);
     try {
       await f();
+      // 沒登入也能買；買完提醒可以登入，讓 iPhone 和 Android 共用 Pro
+      if (mounted && !Cloud.shared.signedIn) {
+        await showAlert(
+          context,
+          '要同步到其他裝置嗎？',
+          message: '若需在 iPhone 與 Android 之間同步 Pro 資格（含 GOs PRO 套裝）與學習進度，請登入 Email 帳號綁定。',
+          actions: [
+            const AlertAction('之後再說'),
+            AlertAction(
+              '登入 Email',
+              bold: true,
+              onTap: () => pushPage(context, const AccountPage()),
+            ),
+          ],
+        );
+      }
     } catch (e) {
       if (mounted) await showAlert(context, '無法完成', message: '$e');
     }
@@ -190,7 +238,7 @@ class _ProPaywallState extends State<ProPaywall> {
                         Text(
                           _pro.devUnlocked
                               ? '開發版已解鎖所有 Pro 功能。'
-                              : '捲字、校板和之後推出的 App 都能用 Pro 功能。',
+                              : '捲字 Pro 與 GOs PRO 合作服務的完整功能都能使用。',
                           textAlign: TextAlign.center,
                           style: ts(F.sub, c: p.sec),
                         ),
@@ -221,7 +269,7 @@ class _ProPaywallState extends State<ProPaywall> {
                   SizedBox(
                     width: double.infinity,
                     child: Text(
-                      '訂閱 GOs PRO，解鎖包含捲字、校板和所有即將推出的 App 之進階功能。',
+                      '解鎖捲字 Pro 與 GOs PRO 合作服務完整功能，並享有未來新服務優先體驗權。',
                       style: ts(F.foot, c: p.sec),
                     ),
                   ),
@@ -241,15 +289,15 @@ class _ProPaywallState extends State<ProPaywall> {
                       _feature(
                         p,
                         Icons.translate_rounded,
-                        '內建 AI 翻譯與例句',
-                        '不用自己填 API key',
+                        'AI 智慧引擎',
+                        '無上限智慧例句生成、課文掃描自動校對與免填 Key 翻譯',
                       ),
                       _feature(p, Icons.bolt_rounded, '單字對戰不限場次', '免費版每天 10 場'),
                       _feature(
                         p,
                         Icons.auto_stories_rounded,
-                        '課文書架',
-                        '掃描課文變成電子書，修正掃錯的字，免費版可試用 1 課',
+                        '課文書架不限課數',
+                        '掃描課文變成電子書，免費版可試用 1 課（最多 3 頁）',
                       ),
                       _feature(
                         p,
@@ -262,12 +310,6 @@ class _ProPaywallState extends State<ProPaywall> {
                         Icons.palette_rounded,
                         '額外主題色和 App 圖示',
                         '即將推出',
-                      ),
-                      _feature(
-                        p,
-                        Icons.auto_awesome_rounded,
-                        '更多即將推出的功能',
-                        '包含訂閱期間所有推出的新功能',
                         last: true,
                       ),
                     ],
@@ -276,7 +318,9 @@ class _ProPaywallState extends State<ProPaywall> {
                 if (!owned) ...[
                   const SizedBox(height: 22),
                   PrimaryButton(
-                    label: upgrade ? '升級到 GOs PRO' : '免費試用 7 天',
+                    label: upgrade
+                        ? '升級到 GOs PRO'
+                        : (_trial ? '免費試用 7 天' : '訂閱 ${_plan.label}'),
                     width: double.infinity,
                     onTap: _busy
                         ? null
@@ -286,11 +330,15 @@ class _ProPaywallState extends State<ProPaywall> {
                   Text(
                     upgrade
                         ? '改成 NT\$$price / ${_period.unit}，剩下的捲字 Pro 費用由 Google Play 按比例折抵。'
-                        : '試用結束後 NT\$$price / ${_period.unit}，自動續訂。',
+                        : _trial
+                        ? '試用 7 天後 NT\$$price / ${_period.unit}，自動續訂。'
+                        : 'NT\$$price / ${_period.unit}，自動續訂。',
                     textAlign: TextAlign.center,
                     style: ts(F.foot, c: p.sec),
                   ),
                 ],
+                const SizedBox(height: 18),
+                _more(p),
                 const SizedBox(height: 18),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -302,13 +350,13 @@ class _ProPaywallState extends State<ProPaywall> {
                 ),
                 const SizedBox(height: 18),
                 Text(
-                  '訂閱會自動續訂。首次訂閱可免費試用 7 天，試用結束才開始扣款。可以隨時在 Google Play 的「付款和訂閱 › 訂閱」取消。',
+                  '${_trial ? '首次訂閱可免費試用 7 天，試用結束才開始扣款。' : ''}月繳和年繳會自動續訂：目前期間結束前 24 小時內自動扣款續訂，可以隨時在 Google Play 的「付款和訂閱 › 訂閱」取消。180 天大考衝刺包和火星贊助者不會自動扣款。',
                   textAlign: TextAlign.center,
                   style: ts(F.cap, c: p.sec),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Pro 到期後，超過 1000 個的單字會在 30 天後從最早加入的開始刪除，刪除前會通知你。',
+                  'Pro 到期後不會刪除任何單字：超過 1000 個時暫停新增，原有單字照常瀏覽和複習。',
                   textAlign: TextAlign.center,
                   style: ts(F.cap, c: p.sec),
                 ),
@@ -333,6 +381,59 @@ class _ProPaywallState extends State<ProPaywall> {
       ],
     );
   }
+
+  /// 「更多方案」：預設收合，主畫面只留兩個訂閱
+  Widget _more(Palette p) => Material(
+    color: p.card,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(Radii.lg),
+    ),
+    clipBehavior: Clip.antiAlias,
+    child: Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+        iconColor: p.ink,
+        collapsedIconColor: p.ink,
+        title: Text('更多方案', style: ts(F.sub, w: w6, c: p.ink)),
+        children: [
+          for (final e in ProExtra.values)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(e.label, style: ts(F.sub, w: w6, c: p.ink)),
+                        const SizedBox(height: 3),
+                        Text(e.blurb, style: ts(F.cap, c: p.sec)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  OutlinedButton(
+                    onPressed: _busy
+                        ? null
+                        : () => _run(() => _pro.purchaseExtra(e)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: p.accent,
+                      side: BorderSide(color: p.accent),
+                    ),
+                    child: Text(
+                      'NT\$${e.price}',
+                      style: ts(F.sub, w: w7, c: p.accent),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
 
   Widget _box(Palette p, Widget child) => Container(
     width: double.infinity,

@@ -22,11 +22,14 @@ build)
   grep -q "devGosPro = true" app/lib/pro.dart || { echo "這裡不是開發版（devGosPro 不是 true）" >&2; exit 1; }
   NOTES="${2:-}"
   VERSION="$(sed -n 's/^version: \([^+]*\)+.*/\1/p' app/pubspec.yaml)"
-  NEXT=$(( $(sed -n 's/^version: [^+]*+\(.*\)/\1/p' app/pubspec.yaml) + 1 ))
-  sed -i '' "s/^version: .*/version: $VERSION+$NEXT/" app/pubspec.yaml
+  # 內測版號照 devBuild +1（以前照 pubspec 的 +號，兩個不同步時會跳號）；Android versionCode 不能變小，所以取兩者較大的
+  CODE="$(sed -n 's/^version: [^+]*+\(.*\)/\1/p' app/pubspec.yaml)"
+  NEXT=$(( $(sed -n 's/^const devBuild = \([0-9]*\);/\1/p' app/lib/dev_update.dart) + 1 ))
+  (( CODE < NEXT )) && CODE=$NEXT
+  sed -i '' "s/^version: .*/version: $VERSION+$CODE/" app/pubspec.yaml
   sed -i '' "s/^const devBuild = .*/const devBuild = $NEXT;/" app/lib/dev_update.dart
   echo "== 開發版 $VERSION ($NEXT)"
-  (cd app && flutter build apk --release --target-platform android-arm64)
+  (cd app && flutter build apk --release --target-platform android-arm64 -Parm64only=true)
   mkdir -p "$OUT"
   NAME="build-$NEXT-$(openssl rand -hex 8).apk"
   cp app/build/app/outputs/flutter-apk/app-release.apk "$OUT/$NAME"

@@ -212,7 +212,7 @@ struct BookView: View {
                 if let id = target { shelf.renameLesson(id, title: t) } else { open = shelf.addLesson(to: bookID, title: t).id }
             }
         } message: { Text("標題之後也可以改。") }
-        .confirmationDialog("刪除「\(shelf.book(bookID)?.title ?? "")」？", isPresented: $confirmDelete, titleVisibility: .visible) {
+        .alert("刪除「\(shelf.book(bookID)?.title ?? "")」？", isPresented: $confirmDelete) {
             Button("刪除這本書和所有課", role: .destructive) { shelf.deleteBook(bookID); dismiss() }
             Button("取消", role: .cancel) {}
         } message: { Text("所有裝置上的這本書都會刪掉，無法復原。") }

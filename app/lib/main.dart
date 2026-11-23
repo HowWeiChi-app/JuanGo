@@ -15,6 +15,7 @@ import 'demo.dart';
 import 'dictionary.dart';
 import 'exam.dart';
 import 'explore_tab.dart';
+import 'friends.dart';
 import 'home_tab.dart';
 import 'onboarding.dart';
 import 'profile_tab.dart';
@@ -55,6 +56,8 @@ class _JuanGoAppState extends State<JuanGoApp> {
           'app',
           '開啟 · ${DevLog.deviceSummary} · ${Cloud.shared.signedIn ? '已登入' : '未登入'}',
         );
+        listenForShareLinks();
+        listenForInvites();
         return Cloud.shared.listenForLinks();
       });
 
@@ -253,6 +256,21 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
         final c = appNavigator.currentContext;
         if (c == null || !c.mounted) return;
         final step = BattleAutoplay.demoStep;
+        // friends：用真的帳號資料打開好友頁（截圖用）
+        if (step == 'friends')
+          return unawaited(presentFull(c, const FriendsPage()));
+        // tiers：用示範資料打開段位詳細頁（截圖用）
+        if (step == 'tiers')
+          return unawaited(
+            // ignore: invalid_use_of_visible_for_testing_member
+            presentFull(c, TierDetailPage(model: BattleModel()..demo('home'))),
+          );
+        // board：用示範資料打開賽季排行（截圖用）
+        if (step == 'board')
+          return unawaited(
+            // ignore: invalid_use_of_visible_for_testing_member
+            presentFull(c, BattleBoardPage(model: BattleModel()..demo('home'))),
+          );
         // ignore: invalid_use_of_visible_for_testing_member
         if (step != null)
           return unawaited(
@@ -264,7 +282,7 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
     );
   }
 
-  /// 超過免費版上限時跳提醒，或到期刪字
+  /// 清掉舊版的刪字倒數（超過上限不會刪字）
   void _checkQuota() {
     final c = appNavigator.currentContext;
     if (c != null) QuotaCountdown.check(c);

@@ -867,7 +867,7 @@ class _SettingsRoot extends StatelessWidget {
               footer: '大考詞彙和學測考古題永遠免費。資料來源、授權和隱私說明請見「關於與授權」。',
               children: [
                 RowTile(title: '字典', value: '${Dict.all.length} 個內建單字'),
-                const RowTile(title: '版本', value: '0.1.1'),
+                const RowTile(title: '版本', value: '1.0.0'),
                 RowTile(
                   title: '關於與授權',
                   chevron: true,

@@ -14,6 +14,7 @@ import 'account_page.dart';
 import 'cloud.dart';
 import 'dictionary.dart';
 import 'exam.dart' show AnswerOption, AnswerState;
+import 'friends.dart';
 import 'models.dart';
 import 'onboarding.dart';
 import 'pro.dart' show devGosPro;
@@ -251,12 +252,22 @@ class BattleModel extends ChangeNotifier {
   String? code, error;
   int waited = 0;
 
+  /// 自己建立、還在等人的房間：可以加電腦、切換公開／私人
+  String? roomMatch;
+  bool roomPublic = false, addingBot = false;
+
+  /// 房間等候室（supabase/battle_lobby.sql）：自己是不是房主、房客在不在、房客準備好了沒
+  bool roomHost = true, roomGuest = false, guestReady = false, roomBusy = false;
+
+  /// 這個房間邀請過的好友（pid）
+  final Set<String> invited = {};
+
   /// 這次配對開始的時間：等待畫面的時鐘用手機自己算，每秒都會跳，不用等伺服器
   DateTime searchStarted = DateTime.now();
 
   double _clockOffset = 0, _bestTrip = double.infinity;
   int _run = 0; // 每次換畫面就加一，舊的輪詢看到不同的值就停
-  bool _demo = false, _closed = false;
+  bool _demo = false, _closed = false, _noLobby = false;
 
   Cloud get _cloud => Cloud.shared;
 
@@ -278,6 +289,11 @@ class BattleModel extends ChangeNotifier {
     picks.clear();
     code = error = null;
     waited = 0;
+    roomMatch = null;
+    roomPublic = addingBot = false;
+    roomHost = true;
+    roomGuest = guestReady = roomBusy = false;
+    invited.clear();
     searchStarted = DateTime.now();
     _bestTrip = double.infinity;
     if (!_closed) notifyListeners();
@@ -330,6 +346,16 @@ class BattleModel extends ChangeNotifier {
     if (_demo) return demoBoard;
     return await _cloud.rpc(
       'battle_board',
+      const {},
+      const Duration(seconds: 10),
+    ) as Map<String, dynamic>;
+  }
+
+  /// 段位詳細：分數分布、各段位人數和勝率（supabase/battle_social.sql 的 battle_tier_detail）
+  Future<Map<String, dynamic>> tierDetail() async {
+    if (_demo) return demoTierDetail;
+    return await _cloud.rpc(
+      'battle_tier_detail',
       const {},
       const Duration(seconds: 10),
     ) as Map<String, dynamic>;
@@ -388,7 +414,9 @@ class BattleModel extends ChangeNotifier {
         failures = 0;
         final id = t['match'] as String?;
         if (id != null) return await _poll(id, run);
-        _set(() => waited = t['waited'] as int? ?? waited);
+        // 等待秒數沒變就不通知，免得配對中每秒整頁重建一次
+        final w = t['waited'] as int? ?? waited;
+        if (w != waited) _set(() => waited = w);
       } catch (e) {
         if (++failures >= 4) return _fail(run, e);
       }
@@ -406,6 +434,7 @@ class BattleModel extends ChangeNotifier {
       if (run != _run) return;
       _set(() {
         code = t['code'] as String;
+        roomMatch = t['match'] as String;
         phase = BattlePhase.room;
       });
       await _poll(t['match'] as String, run);
@@ -414,17 +443,128 @@ class BattleModel extends ChangeNotifier {
     }
   }
 
-  Future<void> join(String roomCode) async {
+  /// 房間裡等不到人：補一台電腦坐進房間，房主按「開始」才開始（不計分）。
+  /// 舊版伺服器（battle_lobby.sql 還沒更新）會馬上開始，輪詢會看到對戰開始
+  Future<void> addBot() async {
+    final id = roomMatch;
+    if (id == null || addingBot || _demo) return;
+    _set(() => addingBot = true);
+    try {
+      await _rpc('battle_room_add_bot', {'p_match': id});
+      // 電腦已經坐進房間：馬上顯示在座位上，不用等下一次輪詢
+      if (roomMatch == id) {
+        _set(() {
+          addingBot = false;
+          roomGuest = guestReady = true;
+        });
+      }
+    } catch (e) {
+      if (roomMatch == id) {
+        _set(() {
+          addingBot = false;
+          error = _clean(e);
+        });
+      }
+    }
+  }
+
+  /// 公開房間會出現在「公開房間」列表；私人房間只能用代碼、連結或 QR code 加入
+  Future<void> setRoomPublic(bool v) async {
+    final id = roomMatch;
+    if (id == null || _demo) return;
+    final old = roomPublic;
+    _set(() => roomPublic = v);
+    try {
+      await _rpc('battle_room_set_public', {'p_match': id, 'p_public': v});
+    } catch (e) {
+      if (roomMatch == id) {
+        _set(() {
+          roomPublic = old;
+          error = _clean(e);
+        });
+      }
+    }
+  }
+
+  /// fromPublic：從「公開房間」列表加入，伺服器會再確認房間還是公開的（房主可能剛改成私人）
+  Future<void> join(String roomCode, {bool fromPublic = false}) async {
     _reset(BattlePhase.searching);
     final run = _run;
     try {
-      final t = await _rpc('battle_join', {
+      final t = await _rpc(fromPublic ? 'battle_join_public' : 'battle_join', {
         'p_code': roomCode,
         'p_level': level,
       }) as Map<String, dynamic>;
-      if (run == _run) await _poll(t['match'] as String, run);
+      if (run != _run) return;
+      // 新版伺服器：先進等候室，按「準備」後等房主開始；舊版伺服器一加入就開打
+      if (t['lobby'] == true) {
+        _set(() {
+          code = roomCode.toUpperCase();
+          roomMatch = t['match'] as String;
+          roomHost = false;
+          roomGuest = true;
+          phase = BattlePhase.room;
+        });
+      }
+      await _poll(t['match'] as String, run);
     } catch (e) {
       _fail(run, e);
+    }
+  }
+
+  /// 房客：準備／取消準備
+  Future<void> setReady(bool v) async {
+    final id = roomMatch;
+    if (id == null || roomHost || _demo) return;
+    _set(() => guestReady = v);
+    try {
+      await _rpc('battle_room_ready', {'p_match': id, 'p_ready': v});
+    } catch (e) {
+      if (roomMatch == id) _set(() => error = _clean(e));
+    }
+  }
+
+  /// 房主：房客準備好了就開始
+  Future<void> startRoom() async {
+    final id = roomMatch;
+    if (id == null || !roomHost || roomBusy || _demo) return;
+    _set(() => roomBusy = true);
+    try {
+      await _rpc('battle_room_start', {'p_match': id});
+    } catch (e) {
+      if (roomMatch == id) _set(() => error = _clean(e));
+    } finally {
+      if (roomMatch == id) _set(() => roomBusy = false);
+    }
+  }
+
+  /// 房主：請房客離開（這個人之後不能再加入這個房間）
+  Future<void> kickGuest() async {
+    final id = roomMatch;
+    if (id == null || !roomHost || _demo) return;
+    try {
+      await _rpc('battle_room_kick', {'p_match': id});
+      if (roomMatch == id) _set(() => roomGuest = guestReady = false);
+    } catch (e) {
+      if (roomMatch == id) _set(() => error = _clean(e));
+    }
+  }
+
+  /// 房主：邀請好友，好友的 App 會跳出邀請
+  Future<void> invite(String pid) async {
+    final id = roomMatch;
+    if (id == null || !roomHost) return;
+    _set(() => invited.add(pid));
+    if (_demo) return;
+    try {
+      await _rpc('battle_room_invite', {'p_match': id, 'p_pid': pid});
+    } catch (e) {
+      if (roomMatch == id) {
+        _set(() {
+          invited.remove(pid);
+          error = _clean(e);
+        });
+      }
     }
   }
 
@@ -433,13 +573,33 @@ class BattleModel extends ChangeNotifier {
     while (run == _run) {
       try {
         final sent = _local;
+        // 等候室用 battle_room_state（多帶房客準備的狀態），開打後用 battle_state
+        final lobby = phase == BattlePhase.room && !_noLobby;
         final j =
-            await _rpc('battle_state', {'p_match': id}) as Map<String, dynamic>;
+            await _rpc(lobby ? 'battle_room_state' : 'battle_state', {
+                  'p_match': id,
+                })
+                as Map<String, dynamic>;
         failures = 0;
+        if (j['lobby'] case final Map<String, dynamic> l when run == _run) {
+          roomHost = l['host'] as bool? ?? roomHost;
+          roomGuest = l['guest'] as bool? ?? false;
+          // 房客自己按的準備以本機為準，伺服器回來的舊值不要蓋掉
+          if (roomHost) guestReady = l['ready'] as bool? ?? false;
+        }
         final s = BattleState(j);
         _apply(s, sent, run);
         if (s.status == 'finished') return;
       } catch (e) {
+        // 被房主請離開、或已經不在房間裡：不用再試
+        final m = _clean(e);
+        if (m.contains('請你離開') || m.contains('已經離開這個房間'))
+          return _fail(run, m);
+        // 伺服器還沒執行 battle_lobby.sql：退回舊的輪詢，不算失敗
+        if (m.contains('還沒開通') && phase == BattlePhase.room && !_noLobby) {
+          _noLobby = true;
+          continue;
+        }
         if (++failures >= 16) return _fail(run, e);
       }
       await _wait(_nextPoll());
@@ -486,7 +646,9 @@ class BattleModel extends ChangeNotifier {
         s.result != null &&
         phase != BattlePhase.finished) {
       if (phase == BattlePhase.room || phase == BattlePhase.rematch) {
+        final guest = phase == BattlePhase.room && !roomHost;
         _reset(BattlePhase.home);
+        if (guest) _set(() => error = '房主關閉了房間');
         return;
       }
       // 最後一題的答案先留在畫面上一下，再進結果頁
@@ -702,9 +864,35 @@ class BattleModel extends ChangeNotifier {
       searchStarted = DateTime.now().subtract(const Duration(seconds: 6));
       return;
     }
-    if (step == 'room') {
+    // room：房主還在等人；lobby：房客已經加入並準備好（截圖用）
+    if (step == 'room' || step == 'lobby') {
       phase = BattlePhase.room;
       code = 'K7Q3';
+      roomMatch = 'demo';
+      if (step == 'lobby') {
+        roomGuest = guestReady = true;
+        state = BattleState({
+          'id': 'demo',
+          'status': 'waiting',
+          'rated': false,
+          'round': 0,
+          'now': now,
+          'you': {
+            'name': '勇敢的水獺08',
+            'pid': 'demo-me',
+            'rating': 1218,
+            'tier': 3,
+            'tier_name': '至尊星耀',
+          },
+          'opponent': {
+            'name': '柚子',
+            'pid': 'd2',
+            'rating': 1342,
+            'tier': 3,
+            'tier_name': '至尊星耀',
+          },
+        });
+      }
       return;
     }
     if (step == 'boss') {
@@ -802,10 +990,35 @@ class BattleModel extends ChangeNotifier {
     phase = result ? BattlePhase.finished : BattlePhase.playing;
   }
 
+  /// 示範模式的段位詳細（截圖用，數字是假的）
+  static final demoTierDetail = <String, dynamic>{
+    'season': '2026 S6',
+    'season_end': '2026-12-31',
+    'players': 214,
+    'tiers': [
+      {'index': 1, 'name': '尊貴鉑金', 'from': 0, 'next': 1100, 'win': 28, 'loss': 14, 'reset': 900, 'players': 52, 'win_rate': 0.333, 'estimated': true},
+      {'index': 2, 'name': '永恆鑽石', 'from': 1100, 'next': 1200, 'win': 25, 'loss': 17, 'reset': 1000, 'players': 61, 'win_rate': 0.405, 'estimated': true},
+      {'index': 3, 'name': '至尊星耀', 'from': 1200, 'next': 1400, 'win': 20, 'loss': 20, 'reset': 1100, 'players': 58, 'win_rate': 0.5, 'estimated': true},
+      {'index': 4, 'name': '無雙卷哥', 'from': 1400, 'next': 1600, 'win': 18, 'loss': 22, 'reset': 1200, 'players': 27, 'win_rate': 0.55, 'estimated': true},
+      {'index': 5, 'name': '璀璨卷王', 'from': 1600, 'next': 1800, 'win': 16, 'loss': 24, 'reset': 1300, 'players': 12, 'win_rate': 0.6, 'estimated': true},
+      {'index': 6, 'name': '傳奇卷神', 'from': 1800, 'next': null, 'win': 15, 'loss': 25, 'reset': 1400, 'players': 4, 'win_rate': 0.625, 'estimated': true},
+    ],
+    'histogram': [
+      for (final (b, n) in const [
+        (900, 6), (950, 9), (1000, 15), (1050, 22), (1100, 30), (1150, 31),
+        (1200, 27), (1250, 18), (1300, 9), (1350, 4), (1400, 10), (1450, 8),
+        (1500, 5), (1550, 4), (1600, 5), (1650, 4), (1700, 2), (1750, 1),
+        (1800, 2), (1850, 2),
+      ])
+        {'from': b, 'n': n},
+    ],
+    'me': {'rating': 1218, 'games': 12, 'wins': 7, 'losses': 4, 'draws': 1, 'win_rate': 0.583, 'percentile': 0.551},
+  };
+
   static final demoBoard = <String, dynamic>{
     'season': '2026 S6',
     'previous': '2026 S5',
-    'has_previous': true,
+    'has_previous': false,
     'min_games': 60,
     'live_min_games': 10,
     'current': {
@@ -879,8 +1092,37 @@ class BattleModel extends ChangeNotifier {
 // MARK: 畫面
 
 class BattlePage extends StatefulWidget {
-  const BattlePage({super.key, this.model});
+  const BattlePage({super.key, this.model, this.joinCode});
   final BattleModel? model;
+
+  /// 從房間連結、公開房間或好友打開：一進來就加入這個房間
+  final String? joinCode;
+
+  /// 開著幾個對戰頁（friends.dart 的 listenForInvites 用 inMatch 判斷要不要跳好友邀請）
+  static int open = 0;
+  static final Set<_BattlePageState> _pages = {};
+
+  /// 正在配對、在房間裡、對戰中或在做程度測驗：這時不跳好友邀請。只停在對戰首頁時照樣跳
+  static bool get inMatch => _pages.any(
+    (s) => s._placing || s._model == null || s._m.phase != BattlePhase.home,
+  );
+
+  /// 好友邀請按「加入」：已經開著對戰首頁就直接在這頁加入房間，不再疊一個對戰頁
+  static bool joinFromOpenPage(String code) {
+    for (final s in _pages) {
+      if (s.mounted && !s._placing && s._model != null && s._m.phase == BattlePhase.home) {
+        // 對戰首頁上面開著好友、公開房間之類的頁面：先關掉，才看得到房間
+        final route = ModalRoute.of(s.context);
+        if (route != null) {
+          Navigator.of(s.context, rootNavigator: true).popUntil((r) => r == route);
+        }
+        unawaited(s._m.join(code));
+        return true;
+      }
+    }
+    return false;
+  }
+
   @override
   State<BattlePage> createState() => _BattlePageState();
 }
@@ -894,6 +1136,8 @@ class _BattlePageState extends State<BattlePage> {
   @override
   void initState() {
     super.initState();
+    BattlePage.open++;
+    BattlePage._pages.add(this);
     Cloud.shared.addListener(_signedInChanged);
     if (!_placing) _start();
   }
@@ -904,6 +1148,11 @@ class _BattlePageState extends State<BattlePage> {
       _m.load().then((_) {
         if (mounted && widget.model == null && _m.me?.retest == true) {
           unawaited(_retest());
+          return;
+        }
+        final join = widget.joinCode;
+        if (mounted && join != null && _m.phase == BattlePhase.home) {
+          unawaited(_m.join(join));
           return;
         }
         if (mounted &&
@@ -949,6 +1198,8 @@ class _BattlePageState extends State<BattlePage> {
 
   @override
   void dispose() {
+    BattlePage.open--;
+    BattlePage._pages.remove(this);
     Cloud.shared.removeListener(_signedInChanged);
     _model?.dispose();
     super.dispose();
@@ -1101,8 +1352,16 @@ class _HomeState extends State<_Home> {
                     ),
                   ],
                 ),
+              // 排位賽：戰績、開始配對、賽季排行包在同一個 section，說明放在 section 下方
               Sec(
-                header: me?.season,
+                header: me?.season == null ? '排位賽' : '${me!.season} 排位賽',
+                footer: [
+                  '配對積分相近的對手，一局 10 題，每題 10 秒，答錯不倒扣。',
+                  if (me?.freeLeft case final left?)
+                    left > 0
+                        ? '免費版今天還能打 $left 場排名賽。'
+                        : '今天的 10 場免費排名賽打完了，升級 Pro 就不限場次。',
+                ].join('\n'),
                 children: [
                   if (me == null && m.meFailed)
                     RowTile(
@@ -1148,9 +1407,36 @@ class _HomeState extends State<_Home> {
                                       ),
                                     ),
                                     const Spacer(),
-                                    Text(
-                                      me.tierText,
-                                      style: ts(F.sub, w: w6, c: p.accent),
+                                    // 點段位看分數分布和勝率
+                                    Tap(
+                                      label: '${me.tierText}，查看段位詳細',
+                                      onTap: () => pushPage(
+                                        context,
+                                        TierDetailPage(model: m),
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 6,
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(
+                                              me.tierText,
+                                              style: ts(
+                                                F.sub,
+                                                w: w6,
+                                                c: p.accent,
+                                              ),
+                                            ),
+                                            Icon(
+                                              Icons.chevron_right_rounded,
+                                              size: 18,
+                                              color: p.accent,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -1174,6 +1460,16 @@ class _HomeState extends State<_Home> {
                               ],
                             ),
                     ),
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: PrimaryButton(
+                      label: '開始配對',
+                      icon: Icons.bolt_rounded,
+                      onTap: me?.open == false || me?.freeLeft == 0
+                          ? null
+                          : () => unawaited(m.find()),
+                    ),
+                  ),
                   RowTile(
                     leading: Icon(
                       Icons.format_list_numbered_rounded,
@@ -1187,28 +1483,7 @@ class _HomeState extends State<_Home> {
                 ],
               ),
               Sec(
-                footer: [
-                  '配對積分相近的對手，一共 10 題，每題 10 秒。答對 25 分，越快最多再加 75 分。',
-                  if (me?.freeLeft case final left?)
-                    left > 0
-                        ? '免費版今天還能打 $left 場排名賽。'
-                        : '今天的 10 場免費排名賽打完了，升級 Pro 就不限場次。',
-                ].join('\n'),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: PrimaryButton(
-                      label: '開始配對',
-                      icon: Icons.bolt_rounded,
-                      onTap: me?.open == false || me?.freeLeft == 0
-                          ? null
-                          : () => unawaited(m.find()),
-                    ),
-                  ),
-                ],
-              ),
-              Sec(
-                header: '和朋友對戰',
+                header: '即時對戰',
                 children: [
                   RowTile(
                     leading: Icon(
@@ -1219,6 +1494,38 @@ class _HomeState extends State<_Home> {
                     title: '建立房間',
                     chevron: true,
                     onTap: () => unawaited(m.createRoom()),
+                  ),
+                  RowTile(
+                    leading: Icon(
+                      Icons.public_rounded,
+                      size: 22,
+                      color: p.accent,
+                    ),
+                    title: '公開房間',
+                    chevron: true,
+                    onTap: () async {
+                      final c = await presentFull<String>(
+                        context,
+                        const PublicRoomsPage(),
+                      );
+                      if (c != null) unawaited(m.join(c, fromPublic: true));
+                    },
+                  ),
+                  RowTile(
+                    leading: Icon(
+                      Icons.person_add_alt_1_rounded,
+                      size: 22,
+                      color: p.accent,
+                    ),
+                    title: '好友',
+                    chevron: true,
+                    onTap: () async {
+                      final c = await presentFull<String>(
+                        context,
+                        FriendsPage(me: me),
+                      );
+                      if (c != null) unawaited(m.join(c));
+                    },
                   ),
                   Padding(
                     padding: const EdgeInsets.only(left: 16, right: 8),
@@ -1293,7 +1600,7 @@ class _RenamePageState extends State<_RenamePage> {
   String? _problem;
 
   String get _clean => _name.text.trim().replaceAll(RegExp(r'\s+'), ' ');
-  bool get _valid => _clean.runes.isNotEmpty && _clean.runes.length <= 12;
+  bool get _valid => _clean.runes.length >= 2 && _clean.runes.length <= 12;
 
   @override
   void dispose() {
@@ -1329,7 +1636,7 @@ class _RenamePageState extends State<_RenamePage> {
       ],
       slivers: [
         Sec(
-          footer: _problem ?? '1 到 12 個字，對手會看到這個名稱。',
+          footer: _problem ?? '2 到 12 個字，對手會看到這個名稱。',
           children: [
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1365,11 +1672,32 @@ class _Searching extends StatefulWidget {
 
 class _SearchingState extends State<_Searching>
     with SingleTickerProviderStateMixin {
-  late final Ticker _ticker = createTicker((_) => setState(() {}))..start();
+  /// 雷達和頭像跟著螢幕每一格動，但只重畫那兩塊；時鐘和搜尋範圍一秒才變一次，才重建文字。
+  /// 以前每一格都 setState 整頁重建、重新排版所有文字，Android 上配對畫面的動畫會卡
+  late final _t = ValueNotifier<double>(_elapsed);
+  late final _sec = ValueNotifier<int>(_secOf(_t.value));
+  late final Ticker _ticker = createTicker((_) {
+    final t = _elapsed;
+    _t.value = t;
+    _sec.value = _secOf(t);
+  });
+
+  double get _elapsed =>
+      DateTime.now().difference(widget.model.searchStarted).inMilliseconds /
+      1000;
+  static int _secOf(double t) => t.floor().clamp(0, 5999);
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker.start();
+  }
 
   @override
   void dispose() {
     _ticker.dispose();
+    _t.dispose();
+    _sec.dispose();
     super.dispose();
   }
 
@@ -1378,17 +1706,18 @@ class _SearchingState extends State<_Searching>
     final p = Palette.of(context);
     final m = widget.model;
     final still = MediaQuery.disableAnimationsOf(context);
-    final t = DateTime.now().difference(m.searchStarted).inMilliseconds / 1000;
-    final sec = t.floor().clamp(0, 5999);
     final r = m.me?.rating;
-    // 伺服器從 ±10 開始，每秒放寬 10（10 秒），再用 ±200 擴大範圍找 6 秒，之後再過 4～7 秒配電腦
-    final w = 10 + 10 * sec;
-    final range = sec >= 16
-        ? '正在尋找實力相當的對手'
-        : sec >= 10
-        ? '正在擴大範圍搜尋'
-        : (r != null ? '積分 ${(r - w).clamp(0, 99999)}–${r + w}' : '尋找積分相近的對手');
     final name = m.me?.name ?? '';
+    final avatar = Container(
+      width: 76,
+      height: 76,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(color: p.accent, shape: BoxShape.circle),
+      child: Text(
+        name.isEmpty ? '我' : name.characters.first,
+        style: ts(30, w: w7, c: p.onAccent),
+      ),
+    );
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -1396,27 +1725,23 @@ class _SearchingState extends State<_Searching>
           children: [
             const Spacer(),
             ExcludeSemantics(
-              child: SizedBox(
-                width: 250,
-                height: 250,
-                child: CustomPaint(
-                  painter: _Radar(t: still ? null : t, color: p.accent),
-                  child: Center(
-                    child: Transform.scale(
-                      scale: still ? 1 : 1 + .04 * math.sin(t * 4),
-                      child: Container(
-                        width: 76,
-                        height: 76,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: p.accent,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Text(
-                          name.isEmpty ? '我' : name.characters.first,
-                          style: ts(30, w: w7, c: p.onAccent),
-                        ),
-                      ),
+              child: RepaintBoundary(
+                child: SizedBox(
+                  width: 250,
+                  height: 250,
+                  child: CustomPaint(
+                    painter: _Radar(t: still ? null : _t, color: p.accent),
+                    child: Center(
+                      child: still
+                          ? avatar
+                          : AnimatedBuilder(
+                              animation: _t,
+                              builder: (context, child) => Transform.scale(
+                                scale: 1 + .04 * math.sin(_t.value * 4),
+                                child: child,
+                              ),
+                              child: avatar,
+                            ),
                     ),
                   ),
                 ),
@@ -1428,28 +1753,47 @@ class _SearchingState extends State<_Searching>
               style: ts(F.title2, w: w7, c: p.ink),
             ),
             const SizedBox(height: 6),
-            Text(
-              '${sec ~/ 60}:${(sec % 60).toString().padLeft(2, '0')}',
-              style: ts(F.title3, w: w6, c: p.accent),
-            ),
-            const SizedBox(height: 18),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 250),
-              child: Container(
-                key: ValueKey(range),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 7,
-                ),
-                decoration: BoxDecoration(
-                  color: p.card,
-                  borderRadius: BorderRadius.circular(99),
-                ),
-                child: Text(
-                  range,
-                  style: ts(F.sub, w: w6, c: p.sec),
-                ),
-              ),
+            ValueListenableBuilder<int>(
+              valueListenable: _sec,
+              builder: (context, sec, _) {
+                // 伺服器從 ±10 開始，每秒放寬 10（10 秒），再用 ±200 擴大範圍找 6 秒，之後再過 4～7 秒配電腦
+                final w = 10 + 10 * sec;
+                final range = sec >= 16
+                    ? '正在尋找實力相當的對手'
+                    : sec >= 10
+                    ? '正在擴大範圍搜尋'
+                    : (r != null
+                          ? '積分 ${(r - w).clamp(0, 99999)}–${r + w}'
+                          : '尋找積分相近的對手');
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${sec ~/ 60}:${(sec % 60).toString().padLeft(2, '0')}',
+                      style: ts(F.title3, w: w6, c: p.accent),
+                    ),
+                    const SizedBox(height: 18),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 250),
+                      child: Container(
+                        key: ValueKey(range),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          color: p.card,
+                          borderRadius: BorderRadius.circular(99),
+                        ),
+                        child: Text(
+                          range,
+                          style: ts(F.sub, w: w6, c: p.sec),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
             const Spacer(),
             PillButton(
@@ -1464,40 +1808,46 @@ class _SearchingState extends State<_Searching>
   }
 }
 
-/// 三圈往外擴散的波紋加一道掃描光；t 是 null 時（減少動態效果）只畫靜止的圈
+/// 三圈往外擴散的波紋加一道掃描光；t 是 null 時（減少動態效果）只畫靜止的圈。
+/// t 一變就只重畫這一塊（repaint），不用重建整個畫面
 class _Radar extends CustomPainter {
-  _Radar({required this.t, required this.color});
-  final double? t;
+  _Radar({required this.t, required this.color}) : super(repaint: t);
+  final ValueNotifier<double>? t;
   final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
+    final t = this.t?.value;
     final c = size.center(Offset.zero);
+    final ring = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
     for (var i = 0; i < 3; i++) {
-      final f = t == null ? .35 + i * .25 : (t! / 2.4 + i / 3) % 1;
+      final f = t == null ? .35 + i * .25 : (t / 2.4 + i / 3) % 1;
       canvas.drawCircle(
         c,
         (120 + 126 * f) / 2,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2
-          ..color = color.withValues(alpha: .5 * (1 - f)),
+        ring..color = color.withValues(alpha: .5 * (1 - f)),
       );
     }
     canvas.drawCircle(c, 60, Paint()..color = color.withValues(alpha: .12));
     if (t != null) {
-      final a = t! * 150 * math.pi / 180;
+      // 角度要先換算回 0～2π：SweepGradient 的 startAngle／endAngle 超出這個範圍時，
+      // Android 的 Skia 會把超出的部分當成透明，等待幾秒後掃描光就整個不見（iPhone 不會）。
+      // 所以漸層固定畫在 0～sweep，再用 GradientRotation 轉到現在的角度。
+      const sweep = .18 * 2 * math.pi;
+      final a = (t * 150 * math.pi / 180) % (2 * math.pi);
       final rect = Rect.fromCircle(center: c, radius: 60);
       canvas.drawArc(
         rect,
-        a - .18 * 2 * math.pi,
-        .18 * 2 * math.pi,
+        a - sweep,
+        sweep,
         true,
         Paint()
           ..shader = SweepGradient(
-            startAngle: a - .18 * 2 * math.pi,
-            endAngle: a,
+            endAngle: sweep,
             colors: [color.withValues(alpha: 0), color.withValues(alpha: .55)],
+            transform: GradientRotation(a - sweep),
           ).createShader(rect),
       );
     }
@@ -1544,51 +1894,319 @@ class _RematchWait extends StatelessWidget {
   }
 }
 
-class _Room extends StatelessWidget {
+/// 房間：最上面是房間代碼和 QR code，接著是公開／私人開關、對戰等候（房客準備、房主開始）、
+/// 邀請好友和加入電腦，最下面是關閉房間。和 iPhone 版 BattleRoom 相同。
+class _Room extends StatefulWidget {
   const _Room({required this.model});
   final BattleModel model;
   @override
+  State<_Room> createState() => _RoomState();
+}
+
+class _RoomState extends State<_Room> {
+  List<Friend>? _friends;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.model.roomHost) unawaited(_loadFriends());
+  }
+
+  Future<void> _loadFriends() async {
+    if (widget.model._demo) {
+      setState(
+        () => _friends = [
+          Friend({'name': '柚子', 'pid': 'd2', 'rating': 1342, 'tier': 3, 'tier_name': '至尊星耀'}),
+          Friend({'name': '單字狂人', 'pid': 'd1', 'rating': 1684, 'tier': 5, 'tier_name': '璀璨卷王'}),
+        ],
+      );
+      return;
+    }
+    try {
+      final f = await Social.friends();
+      if (mounted) setState(() => _friends = f);
+    } catch (_) {
+      if (mounted) setState(() => _friends = const []);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final p = Palette.of(context);
-    final code = model.code ?? '';
+    final m = widget.model;
+    final code = m.code ?? '';
+    final link = roomLink(code);
+    final pub = m.roomPublic;
+    final host = m.roomHost;
+    final me = m.state?.you ?? m.me;
+    final other = m.roomGuest || !host ? m.state?.opponent : null;
+    final friends = _friends;
+    final String status;
+    if (!host) {
+      status = m.guestReady ? '準備好了，等房主開始' : '準備好就按「準備」';
+    } else if (other == null) {
+      status = '等朋友加入';
+    } else {
+      status = m.guestReady ? '${other.name} 準備好了' : '等 ${other.name} 按準備';
+    }
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: [
-            const Spacer(),
-            Text('房間代碼', style: ts(F.sub, c: p.sec)),
-            const SizedBox(height: 10),
-            SelectableText(
-              code,
-              style: ts(
-                44,
-                w: w7,
-                c: p.ink,
-                mono: true,
-              ).copyWith(letterSpacing: 4),
+      child: CustomScrollView(
+        slivers: [
+          const SliverToBoxAdapter(child: SizedBox(height: 12)),
+          // 房間代碼：QR code 在左，代碼和分享在右
+          Sec(
+            footer: '房間對戰不影響積分',
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    if (code.isNotEmpty) QrView(data: link, size: 96),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('房間代碼', style: ts(F.sub, c: p.sec)),
+                          SelectableText(
+                            code,
+                            style: ts(
+                              36,
+                              w: w7,
+                              c: p.ink,
+                              mono: true,
+                            ).copyWith(letterSpacing: 4),
+                          ),
+                          const SizedBox(height: 8),
+                          Builder(
+                            builder: (c) => PillButton(
+                              label: '分享',
+                              icon: Icons.ios_share_rounded,
+                              height: 40,
+                              width: 112,
+                              onTap: () {
+                                final box = c.findRenderObject() as RenderBox?;
+                                unawaited(
+                                  SharePlus.instance.share(
+                                    ShareParams(
+                                      text: '來捲字 JuanGo 和我對戰，房間代碼：$code\n$link',
+                                      sharePositionOrigin: box == null
+                                          ? null
+                                          : box.localToGlobal(Offset.zero) &
+                                                box.size,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (host)
+            Sec(
+              children: [
+                RowTile(
+                  leading: Icon(
+                    pub ? Icons.public_rounded : Icons.lock_rounded,
+                    size: 21,
+                    color: p.accent,
+                  ),
+                  title: pub ? '公開房間' : '私人房間',
+                  subtitle: pub ? '所有人都能加入' : '知道代碼的人才能加入',
+                  trailing: Switch.adaptive(
+                    value: pub,
+                    onChanged: m.roomMatch == null
+                        ? null
+                        : (v) => unawaited(m.setRoomPublic(v)),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 10),
-            Text(
-              '請朋友到「單字對戰」輸入代碼，加入後立刻開始。朋友對戰不影響積分。',
-              textAlign: TextAlign.center,
-              style: ts(F.sub, c: p.sec),
+          // 對戰等候：和配對完成後的倒數畫面一樣，兩邊玩家中間是 VS
+          Sec(
+            header: '對戰',
+            footer: status,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 16, 12, 12),
+                child: Row(
+                  children: [
+                    _Seat(side: me, mine: true, tag: host ? '房主' : (m.guestReady ? '已準備' : '未準備'), on: host || m.guestReady),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Text(
+                        'VS',
+                        style: ts(24, w: FontWeight.w900, c: p.accent),
+                      ),
+                    ),
+                    _Seat(
+                      side: other,
+                      mine: false,
+                      tag: host ? (m.guestReady ? '已準備' : '未準備') : '房主', on: !host || m.guestReady,
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: host
+                    ? PrimaryButton(
+                        label: m.roomBusy ? '開始中…' : '開始',
+                        icon: Icons.play_arrow_rounded,
+                        width: double.infinity,
+                        onTap: other != null && m.guestReady && !m.roomBusy
+                            ? () => unawaited(m.startRoom())
+                            : null,
+                      )
+                    : PrimaryButton(
+                        label: m.guestReady ? '取消準備' : '準備',
+                        icon: m.guestReady
+                            ? Icons.close_rounded
+                            : Icons.check_rounded,
+                        width: double.infinity,
+                        onTap: () => unawaited(m.setReady(!m.guestReady)),
+                      ),
+              ),
+              if (host && other != null)
+                RowTile(
+                  title: '請 ${other.name} 離開',
+                  titleColor: p.destructive,
+                  onTap: () => confirmAction(
+                    context,
+                    '請 ${other.name} 離開房間？',
+                    message: '他之後不能再加入這個房間。',
+                    label: '請他離開',
+                    onConfirm: () => unawaited(m.kickGuest()),
+                  ),
+                ),
+            ],
+          ),
+          if (host)
+            Sec(
+              header: '邀請好友',
+              children: [
+                if (friends == null)
+                  const Padding(
+                    padding: EdgeInsets.all(18),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (friends.isEmpty)
+                  RowTile(
+                    leading: Icon(Icons.person_off_rounded, size: 21, color: p.sec),
+                    title: '目前沒有好友',
+                    titleColor: p.sec,
+                  ),
+                for (final f in friends ?? const <Friend>[])
+                  RowTile(
+                    leading: Icon(Icons.person_rounded, size: 21, color: p.accent),
+                    title: f.name,
+                    subtitle: '${f.tierText}・${f.rating}',
+                    trailing: Text(
+                      m.invited.contains(f.pid) ? '已邀請' : '邀請',
+                      style: ts(
+                        F.body,
+                        w: w6,
+                        c: m.invited.contains(f.pid) ? p.sec : p.accent,
+                      ),
+                    ),
+                    onTap: f.pid == null || m.invited.contains(f.pid) || other != null
+                        ? null
+                        : () => unawaited(m.invite(f.pid!)),
+                  ),
+                Opacity(
+                  opacity: other != null ? .4 : 1,
+                  child: RowTile(
+                    leading: Icon(Icons.smart_toy_rounded, size: 21, color: p.accent),
+                    title: m.addingBot ? '電腦加入中…' : '加入電腦',
+                    titleColor: p.accent,
+                    onTap: m.addingBot || m.roomMatch == null || other != null
+                        ? null
+                        : () => unawaited(m.addBot()),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 18),
-            PrimaryButton(
-              label: '傳給朋友',
-              icon: Icons.ios_share_rounded,
-              width: double.infinity,
-              onTap: () => SharePlus.instance.share(
-                ShareParams(text: '來捲字 JuanGo 和我對戰，房間代碼：$code'),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              child: PillButton(
+                label: host ? '關閉房間' : '離開房間',
+                width: double.infinity,
+                onTap: () => unawaited(m.leave()),
               ),
             ),
-            const Spacer(),
-            PillButton(
-              label: '關閉房間',
-              width: double.infinity,
-              onTap: () => unawaited(model.leave()),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 等候室的一個位子：頭像、名字、段位；沒人時是「等待加入」
+class _Seat extends StatelessWidget {
+  const _Seat({required this.side, required this.mine, required this.tag, required this.on});
+  final BattleSide? side;
+  final bool mine, on;
+
+  /// 名字下面的小字：房主、已準備、未準備
+  final String tag;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Palette.of(context);
+    final x = side;
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+        decoration: BoxDecoration(
+          color: p.fill,
+          borderRadius: BorderRadius.circular(Radii.lg),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: x == null
+                    ? Colors.transparent
+                    : (mine ? p.accent : p.sec.withValues(alpha: .35)),
+                shape: BoxShape.circle,
+                border: x == null
+                    ? Border.all(color: p.sec.withValues(alpha: .5), width: 1.5)
+                    : null,
+              ),
+              child: Text(
+                x == null || x.name.isEmpty ? '?' : x.name.characters.first,
+                style: ts(24, w: w7, c: x != null && mine ? p.onAccent : p.sec),
+              ),
             ),
+            const SizedBox(height: 6),
+            Text(
+              x?.name ?? '等待加入',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: ts(F.sub, w: w6, c: x == null ? p.sec : p.ink),
+            ),
+            Text(
+              x == null ? ' ' : '${x.tierText}・${x.rating}',
+              maxLines: 1,
+              style: ts(F.cap, c: p.sec),
+            ),
+            ...[
+              const SizedBox(height: 4),
+              Text(
+                x == null ? ' ' : tag,
+                style: ts(F.cap, w: w6, c: on ? p.accent : p.sec),
+              ),
+            ],
           ],
         ),
       ),
@@ -1819,14 +2437,17 @@ class _GameState extends State<_Game> {
           _page(p, s, n, body),
         if (_bossPlaying(s))
           Positioned.fill(
-            child: _BossTakeover(
-              key: ValueKey(s.id),
-              boss: s.opponent!,
-              line: s.boss!,
-              late: (s.starts ?? 0) - now < 5000,
-              target: _spotRect,
-              onCovered: () => setState(() => _bossCovered = s.id),
-              onDone: () => setState(() => _bossDone = s.id),
+            // 開場色塊每一格都在動，自己一層，不會連帶底下的頁面一起重畫
+            child: RepaintBoundary(
+              child: _BossTakeover(
+                key: ValueKey(s.id),
+                boss: s.opponent!,
+                line: s.boss!,
+                late: (s.starts ?? 0) - now < 5000,
+                target: _spotRect,
+                onCovered: () => setState(() => _bossCovered = s.id),
+                onDone: () => setState(() => _bossDone = s.id),
+              ),
             ),
           ),
       ],
@@ -2764,7 +3385,7 @@ class _BossTakeoverState extends State<_BossTakeover>
 
 /// 整個寬度上，夾在兩條波浪邊緣中間的帶狀色塊
 class _FlowSheet {
-  const _FlowSheet({
+  _FlowSheet({
     required this.top,
     required this.bottom,
     required this.wave,
@@ -2772,7 +3393,17 @@ class _FlowSheet {
   });
   final double top, bottom, wave, phase;
 
+  Size? _size;
+  Path? _path;
+
+  /// 同一格裡色塊和裁切用同一條波浪，算一次就好
   Path path(Size size) {
+    if (_path != null && _size == size) return _path!;
+    _size = size;
+    return _path = _build(size);
+  }
+
+  Path _build(Size size) {
     double y(double base, double x, double shift) {
       final u = x / math.max(1, size.width) * 2 * math.pi;
       return base +
@@ -3030,6 +3661,169 @@ class _PlayerMenu extends StatelessWidget {
 }
 
 /// 上賽季前 20 名和本賽季的預估排名
+/// 段位詳細：自己的勝率和名次百分比、這個賽季的分數分布、各段位的人數和平均勝率。
+/// 點單字對戰首頁戰績卡上的段位名稱打開。和 iPhone 版 TierDetailView 相同。
+class TierDetailPage extends StatefulWidget {
+  const TierDetailPage({super.key, required this.model});
+  final BattleModel model;
+  @override
+  State<TierDetailPage> createState() => _TierDetailPageState();
+}
+
+class _TierDetailPageState extends State<TierDetailPage> {
+  Map<String, dynamic>? _d;
+  String? _failed;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    setState(() => _failed = null);
+    try {
+      final d = await widget.model.tierDetail();
+      if (mounted) setState(() => _d = d);
+    } catch (e) {
+      if (mounted) setState(() => _failed = BattleModel._clean(e));
+    }
+  }
+
+  static String _pct(Object? v) =>
+      v == null ? '—' : '${((v as num) * 100).toStringAsFixed(1)}%';
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Palette.of(context);
+    final d = _d;
+    if (d == null) {
+      return NavPage(
+        title: '段位',
+        slivers: [
+          Sec(
+            children: [
+              if (_failed != null)
+                RowTile(
+                  title: '讀不到段位資料，再試一次',
+                  subtitle: _failed,
+                  titleColor: p.accent,
+                  onTap: () => unawaited(_load()),
+                )
+              else
+                const SizedBox(
+                  height: 96,
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+            ],
+          ),
+        ],
+      );
+    }
+    final tiers = [
+      for (final t in d['tiers'] as List? ?? const [])
+        t as Map<String, dynamic>,
+    ];
+    final me = d['me'] as Map<String, dynamic>?;
+    final rating = me?['rating'] as int? ?? widget.model.me?.rating;
+    int tierOf(int r) =>
+        tiers.lastIndexWhere((t) => r >= (t['from'] as int)) + 1;
+    final myTier = rating == null ? null : tierOf(rating);
+    final mine = myTier == null || myTier < 1 ? null : tiers[myTier - 1];
+    final total = d['players'] as int? ?? 0;
+    final end = DateTime.tryParse('${d['season_end'] ?? ''}');
+    return NavPage(
+      title: '段位',
+      slivers: [
+        Sec(
+          header: '${d['season'] ?? ''} 我的段位'.trim(),
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    mine?['name'] as String? ?? widget.model.me?.tierText ?? '',
+                    style: ts(F.title2, w: w7, c: p.accent),
+                  ),
+                  if (rating != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '$rating 分',
+                      style: ts(F.headline, w: w6, c: p.ink),
+                    ),
+                  ],
+                  if (me != null) ...[
+                    const SizedBox(height: 14),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: _stat(p, '我的勝率', _pct(me['win_rate'])),
+                        ),
+                        Expanded(
+                          child: _stat(p, '贏過玩家', _pct(me['percentile'])),
+                        ),
+                      ],
+                    ),
+                  ],
+                  if (mine?['reset'] case final int reset) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      '下賽季從 $reset 分開始',
+                      style: ts(F.sub, c: p.sec),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+        // 分數分布併在這裡：每個段位占全部玩家（含電腦）的比例。勝率在真人不夠多時是理論值，前面加「約」
+        Sec(
+          header: '各段位詳細資料',
+          children: [
+            for (final t in tiers)
+              RowTile(
+                title: t['name'] as String,
+                titleColor: t['index'] == myTier ? p.accent : null,
+                // 分數範圍和占比放副標題，右邊只放勝率，窄螢幕才不會被截斷
+                subtitle:
+                    '${t['next'] == null ? '${t['from']} 分以上' : '${t['from']}–${(t['next'] as int) - 1} 分'}'
+                    '・占 ${total == 0 ? '—' : _pct((t['players'] as int? ?? 0) / total)}',
+                value:
+                    '勝率 ${t['estimated'] == true ? '約 ' : ''}${_pct(t['win_rate'])}',
+              ),
+          ],
+        ),
+        // 重置分數：和伺服器的 battle_season_reset 同一條規則（依賽季最後的積分所在段位）
+        Sec(
+          header: end == null ? '賽季重置' : '賽季重置（${end.month}/${end.day}）',
+          children: [
+            for (final t in tiers)
+              if (t['reset'] != null)
+                RowTile(
+                  title: t['name'] as String,
+                  titleColor: t['index'] == myTier ? p.accent : null,
+                  value: '${t['reset']} 分',
+                ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _stat(Palette p, String label, String value) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(label, style: ts(F.foot, c: p.sec)),
+      const SizedBox(height: 2),
+      Text(value, style: ts(28, w: w7, c: p.ink, h: 1.15)),
+    ],
+  );
+}
+
 class BattleBoardPage extends StatefulWidget {
   const BattleBoardPage({super.key, required this.model});
   final BattleModel model;
@@ -3095,7 +3889,7 @@ class _BattleBoardPageState extends State<BattleBoardPage> {
       slivers: [
         Sec(
           header: '${b['season']} 即時排名',
-          footer: '本賽季打滿 $liveMin 場排名賽就會上榜，名次隨時更新。勝率含電腦局。長按暱稱可以檢舉或封鎖。',
+          footer: '長按暱稱可以檢舉或封鎖。',
           children: _rows(
             p,
             b['current'] as Map<String, dynamic>?,
@@ -3103,18 +3897,17 @@ class _BattleBoardPageState extends State<BattleBoardPage> {
             '還沒有人打滿 $liveMin 場排名賽',
           ),
         ),
-        Sec(
-          header: '${b['previous']} 最終排名',
-          footer: '上賽季打滿 $minGames 場排名賽才會列入。',
-          children: b['has_previous'] != true
-              ? [RowTile(title: '第一季，還沒有排名', titleColor: p.sec)]
-              : _rows(
-                  p,
-                  b['last'] as Map<String, dynamic>?,
-                  minGames,
-                  '上賽季沒有人打滿 $minGames 場',
-                ),
-        ),
+        // 第一季（2026 S6）沒有上賽季，整個 section 不顯示；第二季起顯示上賽季的最終排名
+        if (b['has_previous'] == true)
+          Sec(
+            header: '${b['previous']} 最終排名',
+            children: _rows(
+              p,
+              b['last'] as Map<String, dynamic>?,
+              minGames,
+              '上賽季沒有人打滿 $minGames 場',
+            ),
+          ),
       ],
     );
   }

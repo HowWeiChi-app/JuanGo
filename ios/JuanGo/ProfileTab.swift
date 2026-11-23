@@ -308,11 +308,13 @@ struct SettingsView: View {
             .alert(message ?? "", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
                 Button("好") { message = nil }
             }
-            .confirmationDialog("重設所有學習進度？", isPresented: $confirmReset, titleVisibility: .visible) {
+            .alert("重設所有學習進度？", isPresented: $confirmReset) {
                 Button("重設", role: .destructive) { resetProgress() }
+                Button("取消", role: .cancel) {}
             } message: { Text("單字會保留，但熟練度和學習紀錄會歸零。") }
-            .confirmationDialog("清除所有單字與紀錄？", isPresented: $confirmWipe, titleVisibility: .visible) {
+            .alert("清除所有單字與紀錄？", isPresented: $confirmWipe) {
                 Button("全部清除", role: .destructive) { wipe() }
+                Button("取消", role: .cancel) {}
             } message: { Text("這個動作無法復原。") }
         }
     }
@@ -404,6 +406,8 @@ struct AccountView: View {
     @State private var email = ""
     @State private var sending = false
     @State private var sentTo: String?
+    @State private var code = ""
+    @State private var verifying = false
     @State private var message: String?
     @State private var lists: [Cloud.SharedList] = []
     @State private var confirmDelete = false
@@ -454,26 +458,31 @@ struct AccountView: View {
                     TextField("Email", text: $email)
                         .keyboardType(.emailAddress).textContentType(.emailAddress)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Button(sending ? "寄送中…" : "寄登入連結") {
-                        Task {
-                            sending = true; defer { sending = false }
-                            do { try await cloud.sendLink(to: email); sentTo = email }
-                            catch { message = error.localizedDescription }
-                        }
-                    }.disabled(sending || !email.contains("@") || !email.contains("."))
-                    if let sentTo {
-                        Text("已寄到 \(sentTo)。點擊信件「Sign in」就會回到 JuanGo 完成登入。沒收到請查看垃圾郵件。")
-                            .font(.app(.footnote)).foregroundStyle(.secondary)
+                        .disabled(sentTo != nil)
+                    if sentTo == nil {
+                        Button(sending ? "寄送中…" : "寄驗證碼") { Task { await sendCode() } }
+                            .disabled(sending || !email.contains("@") || !email.contains("."))
                     }
                 } header: { Text("登入") } footer: {
-                    Text("用 Email 連結登入，資料會同步到雲端，也能參加單字對戰。")
+                    Text("用 Email 收 6 位數驗證碼登入，資料會同步到雲端，也能參加單字對戰。")
+                }
+                if let sentTo {
+                    Section {
+                        CodeBoxes(code: $code).onChange(of: code) { _, c in if c.count == 6 { Task { await verify() } } }
+                        Button(verifying ? "登入中…" : "登入") { Task { await verify() } }
+                            .disabled(verifying || code.count != 6)
+                        Button("重新寄驗證碼") { Task { await sendCode() } }.disabled(sending)
+                        Button("換一個 Email") { self.sentTo = nil; code = "" }
+                    } header: { Text("輸入驗證碼") } footer: {
+                        Text("已寄到 \(sentTo)，在任何裝置上看信都可以。沒收到請查看垃圾郵件。")
+                    }
                 }
             }
         }.listRowBackground(Color.cardFill) }.themedBackground()
         .navigationTitle("帳號登入")
         .task { await loadLists() }
         .onChange(of: cloud.signedIn) { _, _ in Task { await loadLists() } }
-        .confirmationDialog("刪除帳號？", isPresented: $confirmDelete, titleVisibility: .visible) {
+        .alert("刪除帳號？", isPresented: $confirmDelete) {
             Button("刪除帳號", role: .destructive) {
                 Task {
                     deleting = true; defer { deleting = false }
@@ -481,6 +490,7 @@ struct AccountView: View {
                     catch { message = error.localizedDescription }
                 }
             }
+            Button("取消", role: .cancel) {}
         } message: {
             Text("會永久刪除這個帳號和雲端上的所有資料，無法復原。這台裝置上的單字和進度會保留。有訂閱的話，要另外到 App Store 取消。")
         }
@@ -492,5 +502,56 @@ struct AccountView: View {
     private func loadLists() async {
         guard cloud.signedIn else { return }
         lists = (try? await cloud.myLists()) ?? []
+    }
+
+    private func sendCode() async {
+        sending = true; defer { sending = false }
+        do { try await cloud.sendCode(to: email); sentTo = email.trimmingCharacters(in: .whitespaces); code = "" }
+        catch { message = error.localizedDescription }
+    }
+
+    private func verify() async {
+        guard let sentTo, code.count == 6, !verifying else { return }
+        verifying = true; defer { verifying = false }
+        do {
+            try await cloud.verify(email: sentTo, code: code)
+            self.sentTo = nil; code = ""
+            let r = (try? await cloud.sync(ctx)) ?? ""
+            message = "已登入 \(cloud.session?.email ?? "")\(r.isEmpty ? "" : "，\(r)")"
+        } catch { code = ""; message = error.localizedDescription }
+    }
+}
+
+/// Six boxes for the emailed sign-in code; one hidden field takes the typing (and the code iOS suggests from Mail).
+struct CodeBoxes: View {
+    @Binding var code: String
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        ZStack {
+            TextField("", text: $code)
+                .keyboardType(.numberPad).textContentType(.oneTimeCode)
+                .focused($focused).opacity(0.02).accessibilityLabel("6 位數驗證碼")
+                .onChange(of: code) { _, c in
+                    let d = String(c.filter(\.isNumber).prefix(6))
+                    if d != c { code = d }
+                }
+            HStack(spacing: 8) {
+                ForEach(0..<6, id: \.self) { i in
+                    let ch = i < code.count ? String(code[code.index(code.startIndex, offsetBy: i)]) : ""
+                    Text(ch).font(.app(size: 24, .bold)).monospacedDigit()
+                        .frame(maxWidth: .infinity).frame(height: 48)
+                        .background(RoundedRectangle(cornerRadius: Radius.md, style: .continuous).fill(Color.secondary.opacity(0.12)))
+                        .overlay(RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
+                            .strokeBorder(focused && i == min(code.count, 5) ? Color.themeAccent : .clear, lineWidth: 2))
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { focused = true }
+        .onAppear { focused = true }
+        .padding(.vertical, 4)
     }
 }

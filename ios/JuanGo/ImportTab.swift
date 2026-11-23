@@ -84,10 +84,9 @@ struct ImportTab: View {
             }.listRowBackground(Color.cardFill) }.themedBackground()
             .listStyle(.insetGrouped)
             .scrollDismissesKeyboard(.immediately)
-            .safeAreaInset(edge: .bottom) {
-                if let toast {
-                    Toast(text: toast, action: nil) { withAnimation { self.toast = nil } }.padding(.horizontal, 20)
-                }
+            // 加入結果、錯誤一律用 alert（以前是畫面下方自己跳出來的提示）
+            .alert(toast ?? "", isPresented: Binding(get: { toast != nil }, set: { if !$0 { toast = nil } })) {
+                Button("好", role: .cancel) {}
             }
             .overlay { if busy { ProgressView("正在辨識文字…").padding(24).background(.regularMaterial, in: .rect(cornerRadius: Radius.lg)) } }
             .navigationTitle("新增")

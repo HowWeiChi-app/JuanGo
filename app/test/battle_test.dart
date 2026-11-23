@@ -236,6 +236,7 @@ void main() {
       'home',
       'search',
       'room',
+      'lobby',
       'question',
       'reveal',
       'result',

@@ -46,6 +46,9 @@ struct BattleState: Decodable {
     var note: String? = nil
     /// the hidden computer's opening line; set only when it is the opponent
     var boss: String? = nil
+    /// 房間等候室（battle_room_state）：自己是不是房主、房客在不在、房客準備好了沒
+    struct Lobby: Decodable { var host: Bool; var ready: Bool; var guest: Bool }
+    var lobby: Lobby? = nil
 }
 
 struct BattlePlayer: Decodable {
@@ -68,7 +71,7 @@ struct BattlePlayer: Decodable {
 /// 第 2 級 used to be shown for the tier; the server now names it (尊貴鉑金…傳奇卷神).
 func tierText(_ name: String?, _ tier: Int) -> String { name ?? levelLabel(String(tier)) }
 
-private struct BattleTicket: Decodable { var match: String?; var code: String?; var waited: Int? }
+private struct BattleTicket: Decodable { var match: String?; var code: String?; var waited: Int?; var lobby: Bool? }
 private struct RematchTicket: Decodable { var match: String; var waiting: Bool }
 
 // MARK: - Match flow
@@ -157,6 +160,14 @@ final class BattleModel {
         return try await call("battle_board")
     }
 
+    /// 段位詳細：分數分布、各段位人數和勝率（supabase/battle_social.sql 的 battle_tier_detail）
+    func tierDetail() async throws -> TierDetail {
+        #if DEBUG
+        if isDemo { return .demo }
+        #endif
+        return try await call("battle_tier_detail")
+    }
+
     static func clean(_ e: Error) -> String {
         e.localizedDescription.replacingOccurrences(of: "（\\d+）$", with: "", options: .regularExpression)
     }
@@ -206,13 +217,81 @@ final class BattleModel {
         }
     }
 
-    func join(_ code: String) {
+    /// fromPublic: joined from the 公開房間 list, so the server checks the room is still public (the host may have just made it private)
+    func join(_ code: String, fromPublic: Bool = false) {
         reset(.searching)
         loop = Task {
             do {
-                let t: BattleTicket = try await call("battle_join", ["p_code": code, "p_level": levelArg])
-                if let id = t.match { play(id) }
+                let t: BattleTicket = try await call(fromPublic ? "battle_join_public" : "battle_join", ["p_code": code, "p_level": levelArg])
+                guard let id = t.match else { return }
+                // newer server (battle_lobby.sql): wait in the room, tap 準備, and the host starts; older ones start at once
+                if t.lobby == true {
+                    roomHost = false; roomGuest = true
+                    phase = .room(code.uppercased())
+                }
+                play(id)
             } catch { fail(error) }
+        }
+    }
+
+    // MARK: 房間等候室（supabase/battle_lobby.sql）
+
+    /// 房主 or 房客, whether a guest is in the room and whether they tapped 準備
+    private(set) var roomHost = true
+    private(set) var roomGuest = false
+    private(set) var guestReady = false
+    private(set) var roomBusy = false
+    /// friends (pid) invited to this room
+    private(set) var invited: Set<String> = []
+    @ObservationIgnored private var noLobby = false
+
+    func setReady(_ v: Bool) {
+        guard let id = roomID, !roomHost else { return }
+        guestReady = v
+        #if DEBUG
+        if isDemo { return }
+        #endif
+        Task {
+            do { _ = try await Cloud.shared.rpc("battle_room_ready", ["p_match": id, "p_ready": v], timeout: 5) }
+            catch { if roomID == id { self.error = Self.clean(error) } }
+        }
+    }
+
+    func startRoom() {
+        guard let id = roomID, roomHost, !roomBusy else { return }
+        #if DEBUG
+        if isDemo { return }
+        #endif
+        roomBusy = true
+        Task {
+            defer { if roomID == id { roomBusy = false } }
+            do { _ = try await Cloud.shared.rpc("battle_room_start", ["p_match": id], timeout: 5) }
+            catch { if roomID == id { self.error = Self.clean(error) } }
+        }
+    }
+
+    /// 房主 asks the guest to leave; they can't come back to this room
+    func kickGuest() {
+        guard let id = roomID, roomHost else { return }
+        #if DEBUG
+        if isDemo { return }
+        #endif
+        Task {
+            do { _ = try await Cloud.shared.rpc("battle_room_kick", ["p_match": id], timeout: 5); if roomID == id { roomGuest = false; guestReady = false } }
+            catch { if roomID == id { self.error = Self.clean(error) } }
+        }
+    }
+
+    /// 房主 invites a friend; the friend's app shows the invite
+    func invite(_ pid: String) {
+        guard let id = roomID, roomHost else { return }
+        invited.insert(pid)
+        #if DEBUG
+        if isDemo { return }
+        #endif
+        Task {
+            do { _ = try await Cloud.shared.rpc("battle_room_invite", ["p_match": id, "p_pid": pid], timeout: 5) }
+            catch { if roomID == id { invited.remove(pid); self.error = Self.clean(error) } }
         }
     }
 
@@ -227,11 +306,24 @@ final class BattleModel {
         while !Task.isCancelled {
             do {
                 let sent = Date.now.timeIntervalSince1970 * 1000
-                let s: BattleState = try await call("battle_state", ["p_match": id])
+                // the room uses battle_room_state (with the guest's 準備); the match itself battle_state
+                var inRoom = false
+                if case .room = phase { inRoom = !noLobby }
+                let s: BattleState = try await call(inRoom ? "battle_room_state" : "battle_state", ["p_match": id])
                 failures = 0
+                if let l = s.lobby {
+                    roomHost = l.host; roomGuest = l.guest
+                    // the guest's own tap wins over an older answer still on the way
+                    if l.host { guestReady = l.ready }
+                }
                 apply(s, sent: sent)
                 if s.status == "finished" { return }
             } catch {
+                let m = Self.clean(error)
+                // asked to leave, or not in the room any more: no point trying again
+                if m.contains("請你離開") || m.contains("已經離開這個房間") { fail(error); return }
+                // the server hasn't run battle_lobby.sql yet: fall back to the old poll
+                if m.contains("還沒開通"), case .room = phase, !noLobby { noLobby = true; continue }
                 failures += 1
                 if failures >= 16 { fail(error); return }
             }
@@ -270,7 +362,12 @@ final class BattleModel {
         if s.status == "playing" {
             phase = .playing
         } else if s.status == "finished", s.result != nil, phase != .finished {
-            if case .room = phase { phase = .home; return }
+            if case .room = phase {
+                let guest = !roomHost
+                reset(.home)
+                if guest { error = "房主關閉了房間" }
+                return
+            }
             if phase == .rematch { phase = .home; return }
             // the last answer stays on screen for a moment before the result
             let played = s.last != nil && s.result?.reason == "score"
@@ -426,11 +523,53 @@ final class BattleModel {
         reset(.home)
         if let id { Task { _ = try? await Cloud.shared.rpc("battle_quit", ["p_match": id]) } }
     }
-    private var roomID: String? { state?.id }
+    var roomID: String? { state?.id }
+
+    /// the room this player opened and is waiting in: public rooms show up in 公開房間; private ones need the code, link or QR code
+    private(set) var roomPublic = false
+    private(set) var addingBot = false
+    /// opened from a friend link: the home screen shows the friends page with this code
+    var pendingFriend: String?
+    /// JUANGO_BATTLE=tiers：示範資料直接打開段位詳細頁（截圖用）
+    var openTiers = false
+    /// JUANGO_BATTLE=board：示範資料直接打開賽季排行（截圖用）
+    var openBoard = false
+
+    /// Nobody came: a computer takes the seat (counted as ready) and the host taps 開始 (rooms never change ratings).
+    /// An older server (battle_lobby.sql not re-run) starts the match at once; the poll sees it start.
+    func addBot() {
+        #if DEBUG
+        if isDemo { return }
+        #endif
+        guard let id = roomID, !addingBot else { return }
+        addingBot = true
+        Task {
+            do {
+                _ = try await Cloud.shared.rpc("battle_room_add_bot", ["p_match": id], timeout: 5)
+                if roomID == id { addingBot = false; roomGuest = true; guestReady = true }
+            }
+            catch { if roomID == id { addingBot = false; self.error = Self.clean(error) } }
+        }
+    }
+
+    func setRoomPublic(_ v: Bool) {
+        #if DEBUG
+        if isDemo { return }
+        #endif
+        guard let id = roomID else { return }
+        let old = roomPublic
+        roomPublic = v
+        Task {
+            do { _ = try await Cloud.shared.rpc("battle_room_set_public", ["p_match": id, "p_public": v], timeout: 5) }
+            catch { if roomID == id { roomPublic = old; self.error = Self.clean(error) } }
+        }
+    }
 
     private func reset(_ p: Phase) {
         loop?.cancel()
         phase = p; state = nil; current = nil; previous = nil; picks = [:]; waited = 0; error = nil; searchStarted = .now
+        roomPublic = false; addingBot = false
+        roomHost = true; roomGuest = false; guestReady = false; roomBusy = false; invited = []
         bestTrip = .infinity
     }
 
@@ -462,6 +601,12 @@ final class BattleModel {
         guard step != "home" else { return }
         if step == "search" { phase = .searching; waited = 6; searchStarted = .now.addingTimeInterval(-6); return }
         if step == "room" { phase = .room("K7Q3"); return }
+        if step == "lobby" {
+            phase = .room("K7Q3"); roomGuest = true; guestReady = true
+            state = BattleState(id: "demo", status: "waiting", rated: false, code: "K7Q3", round: 0, now: now, you: you,
+                                opponent: BattleState.Side(name: "柚子", rating: 1342, tier: 3, score: 0, pid: "d2", tierName: "至尊星耀"))
+            return
+        }
         current = q
         var s = BattleState(id: "demo", status: "playing", rated: true, code: nil, round: 3, now: now, you: you, opponent: opp,
                             starts: now - 3200, ends: now + 6800, answered: false, opponentAnswered: true, question: q,
@@ -499,11 +644,16 @@ final class BattleModel {
 // MARK: - Screens
 
 struct BattleView: View {
+    /// opened from a room or friend link
+    var link: BattleLink? = nil
     @Environment(AppSettings.self) private var settings
     @Environment(\.dismiss) private var dismiss
     @State private var model: BattleModel?
     /// showing the level test (kept up through its result page, after levelTested is already set)
     @State private var placing = false
+    @Environment(\.scenePhase) private var scenePhase
+    /// a friend's invite, shown while this screen is on its home page
+    @State private var invite: BattleInvite?
 
     var body: some View {
         Group {
@@ -513,6 +663,7 @@ struct BattleView: View {
         }
         .themedBackground()
         .onAppear {
+            Social.battleOpen += 1
             placing = !settings.levelTested
             #if DEBUG
             if ProcessInfo.processInfo.environment["JUANGO_BATTLE"] != nil { placing = false }
@@ -521,7 +672,25 @@ struct BattleView: View {
         }
         .onChange(of: model?.me?.retest) { _, r in if r == true { retest() } }
         .onChange(of: model?.phase) { _, p in UIApplication.shared.isIdleTimerDisabled = p == .playing }
-        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false; Social.battleOpen -= 1 }
+        // a friend tapped 邀請 while I sit on the battle home: the app-wide alert can't show over this full-screen cover, so check here
+        .task(id: scenePhase) {
+            while scenePhase == .active, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard invite == nil, !placing, model?.phase == .home else { continue }
+                #if DEBUG
+                if model?.isDemo == true { continue }
+                #endif
+                if let i = await Social.nextInvite(fromBattleHome: true), !placing, model?.phase == .home { invite = i }
+            }
+        }
+        .alert("\(invite?.name ?? "") 邀請你對戰", isPresented: Binding(get: { invite != nil }, set: { if !$0 { invite = nil } }),
+               presenting: invite) { i in
+            Button("加入") { if model?.phase == .home { model?.join(i.code) } }
+            Button("不要", role: .cancel) {}
+        } message: { i in
+            Text("房間代碼 \(i.code)")
+        }
     }
 
     /// Everyone takes the 18-question level test once before their first battle, so ratings start where they belong.
@@ -567,14 +736,28 @@ struct BattleView: View {
         let m = BattleModel(level: settings.level, tested: settings.levelTested)
         model = m
         #if DEBUG
-        if let step = ProcessInfo.processInfo.environment["JUANGO_BATTLE"] { m.demo(step); return }
+        if let step = ProcessInfo.processInfo.environment["JUANGO_BATTLE"] {
+            // friends 用真的帳號資料打開好友頁（截圖用）
+            if step == "friends" { Task { await m.load(); m.pendingFriend = "" }; return }
+            if step == "tiers" { m.demo("home"); m.openTiers = true; return }
+            if step == "board" { m.demo("home"); m.openBoard = true; return }
+            m.demo(step); return
+        }
         if BattleModel.autoDelay != nil {
             BattleModel.log("自動對戰開始，每題 \(BattleModel.autoDelay!) 秒後作答；按 Ctrl-C 停止")
             Task { await m.load(); m.autoFind() }
             return
         }
         #endif
-        Task { await m.load() }
+        let link = link
+        Task {
+            await m.load()
+            guard let link, m.phase == .home else { return }
+            switch link.kind {
+            case .room: m.join(link.code)
+            case .friend: m.pendingFriend = link.code
+            }
+        }
     }
 
     @ViewBuilder private func content(_ m: BattleModel) -> some View {
@@ -599,6 +782,8 @@ private struct BattleHome: View {
     let close: () -> Void
     @State private var code = ""
     @State private var renaming = false
+    @State private var showTiers = false
+    @State private var showBoard = false
     @FocusState private var typing: Bool
     private var cloud: Cloud { .shared }
     private var cleanCode: String { code.uppercased().filter { $0.isLetter || $0.isNumber } }
@@ -610,28 +795,32 @@ private struct BattleHome: View {
                     if let n = model.me?.seasonNotice {
                         Section { Label(n, pulso: "moon.stars.fill").font(.app(.subheadline, .semibold)) }
                     }
+                    // 排位賽: record, 開始配對 and 賽季排行 in one section; the explanation goes in its footer
                     Section {
                         playerCard
-                        NavigationLink { BattleBoardView(model: model) } label: { Label("賽季排行", pulso: "list.number") }
-                    } header: {
-                        if let season = model.me?.season { Text(season) }
-                    }
-                    Section {
                         Button { model.find() } label: { Label("開始配對", pulso: "bolt.fill") }
                             .buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
                             .disabled(model.me?.open == false || model.me?.freeLeft == 0)
-                            .listRowBackground(Color.clear)
-                            .listRowInsets(EdgeInsets())
+                            // the label is centered, so by default the line under this row would start at the text
+                            // in the middle of the row; start it at the row's left edge like a full divider
+                            .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
+                        NavigationLink { BattleBoardView(model: model) } label: { Label("賽季排行", pulso: "list.number") }
+                    } header: {
+                        Text(model.me?.season.map { "\($0) 排位賽" } ?? "排位賽")
                     } footer: {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("配對積分相近的對手，一共 10 題，每題 10 秒。答對 25 分，越快最多再加 75 分。")
+                            Text("配對積分相近的對手，一局 10 題，每題 10 秒，答錯不倒扣。")
                             if let left = model.me?.freeLeft {
                                 Text(left > 0 ? "免費版今天還能打 \(left) 場排名賽。" : "今天的 10 場免費排名賽打完了，升級 Pro 就不限場次。")
                             }
                         }
                     }
-                    Section("和朋友對戰") {
+                    Section("即時對戰") {
                         Button { model.createRoom() } label: { Label("建立房間", pulso: "person.2.fill") }
+                        NavigationLink { PublicRoomsView(model: model) } label: { Label("公開房間", systemImage: "globe") }
+                        NavigationLink { FriendsView(model: model, myPid: model.me?.pid) } label: {
+                            Label("好友", systemImage: "person.badge.plus")
+                        }
                         HStack {
                             TextField("輸入 4 碼房間代碼", text: $code)
                                 .textInputAutocapitalization(.characters).autocorrectionDisabled()
@@ -655,6 +844,15 @@ private struct BattleHome: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button(role: .close, action: close) } }
             .task(id: cloud.signedIn) { await model.load() }
             .sheet(isPresented: $renaming) { BattleRename(model: model) }
+            .navigationDestination(isPresented: $showTiers) { TierDetailView(model: model) }
+            .navigationDestination(isPresented: $showBoard) { BattleBoardView(model: model) }
+            .onAppear {
+                if model.openTiers { model.openTiers = false; showTiers = true }
+                if model.openBoard { model.openBoard = false; showBoard = true }
+            }
+            .navigationDestination(item: Binding(get: { model.pendingFriend }, set: { model.pendingFriend = $0 })) { c in
+                FriendsView(model: model, myPid: model.me?.pid, addCode: c)
+            }
             .alert("無法對戰", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
                 Button("好", role: .cancel) {}
             } message: { Text(model.error ?? "") }
@@ -672,7 +870,16 @@ private struct BattleHome: View {
                     .buttonStyle(.borderless)
                     .accessibilityLabel("修改對戰名稱")
                     Spacer()
-                    Text(tierText(p.tierName, p.tier)).font(.app(.subheadline, .semibold)).foregroundStyle(Color.themeAccent)
+                    // 點段位看分數分布、勝率和賽季重置
+                    Button { showTiers = true } label: {
+                        HStack(spacing: 2) {
+                            Text(tierText(p.tierName, p.tier))
+                            LIcon("chevron.right").font(.app(.caption, .semibold))
+                        }
+                        .font(.app(.subheadline, .semibold)).foregroundStyle(Color.themeAccent)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("\(tierText(p.tierName, p.tier))，查看段位詳細")
                 }
                 Text(verbatim: String(p.rating)).font(.app(size: 44, .bold)).monospacedDigit()
                 TierProgress(rating: p.rating, from: p.tierFrom, next: p.tierNext, nextName: p.nextName)
@@ -702,7 +909,7 @@ private struct BattleRename: View {
     }
 
     private var clean: String { name.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
-    private var valid: Bool { (1...12).contains(clean.unicodeScalars.count) }
+    private var valid: Bool { (2...12).contains(clean.unicodeScalars.count) }
 
     var body: some View {
         NavigationStack {
@@ -712,7 +919,7 @@ private struct BattleRename: View {
                         .autocorrectionDisabled().focused($typing).submitLabel(.done)
                         .onSubmit(save)
                 } footer: {
-                    Text(problem ?? "1 到 12 個字，對手會看到這個名稱。")
+                    Text(problem ?? "2 到 12 個字，對手會看到這個名稱。")
                 }
             }.listRowBackground(Color.cardFill) }
             .font(.app(.body))
@@ -820,22 +1027,185 @@ private struct BattleSearching: View {
     }
 }
 
+/// The room, top to bottom: the room code with its QR code, the public/private switch, the two seats with
+/// 準備 (guest) or 開始 (host), friends to invite with 加入電腦, and 關閉房間. Same as the Android _Room.
 private struct BattleRoom: View {
     let code: String
     let model: BattleModel
+    @State private var friends: [Friend]?
+    @State private var kicking = false
+
+    private var host: Bool { model.roomHost }
+    private var me: BattleState.Side? {
+        model.state?.you ?? model.me.map { BattleState.Side(name: $0.name, rating: $0.rating, tier: $0.tier, score: 0, pid: $0.pid, tierName: $0.tierName) }
+    }
+    private var other: BattleState.Side? { model.roomGuest || !host ? model.state?.opponent : nil }
+    private var status: String {
+        if !host { return model.guestReady ? "準備好了，等房主開始" : "準備好就按「準備」" }
+        guard let o = other else { return "等朋友加入" }
+        return model.guestReady ? "\(o.name) 準備好了" : "等 \(o.name) 按準備"
+    }
+
     var body: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Text("房間代碼").font(.app(.subheadline)).foregroundStyle(.secondary)
-            Text(code).font(.app(size: 44, .bold)).monospaced().kerning(4).textSelection(.enabled)
-            Text("請朋友到「單字對戰」輸入代碼，加入後立刻開始。朋友對戰不影響積分。")
-                .font(.app(.subheadline)).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            ShareLink(item: "來捲字 JuanGo 和我對戰，房間代碼：\(code)") { Label("傳給朋友", pulso: "square.and.arrow.up") }
+        List { Group {
+            Section {
+                HStack(spacing: 16) {
+                    QRCodeView(text: BattleLink.roomURL(code), size: 96)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("房間代碼").font(.app(.subheadline)).foregroundStyle(.secondary)
+                        Text(code).font(.app(size: 36, .bold)).monospaced().kerning(4).textSelection(.enabled)
+                        ShareLink(item: "來捲字 JuanGo 和我對戰，房間代碼：\(code)\n\(BattleLink.roomURL(code))") {
+                            Label("分享", pulso: "square.and.arrow.up").font(.app(.subheadline, .semibold))
+                        }
+                        .buttonStyle(.bordered).buttonBorderShape(.capsule).tint(.themeAccent)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 6)
+            } footer: {
+                Text("房間對戰不影響積分")
+            }
+
+            if host {
+                Section {
+                    Toggle(isOn: Binding(get: { model.roomPublic }, set: { model.setRoomPublic($0) })) {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(model.roomPublic ? "公開房間" : "私人房間")
+                                Text(model.roomPublic ? "所有人都能加入" : "知道代碼的人才能加入")
+                                    .font(.app(.footnote)).foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            LIcon(model.roomPublic ? "globe" : "lock.fill").foregroundStyle(Color.themeAccent)
+                        }
+                    }
+                    .disabled(model.roomID == nil)
+                }
+            }
+
+            // like the countdown after a match is found: both players with VS between them
+            Section {
+                HStack(spacing: 10) {
+                    RoomSeat(side: me, mine: true,
+                             tag: host ? "房主" : (model.guestReady ? "已準備" : "未準備"), on: host || model.guestReady)
+                    Text("VS").font(.app(size: 24, .heavy)).foregroundStyle(Color.themeAccent)
+                    RoomSeat(side: other, mine: false,
+                             tag: host ? (model.guestReady ? "已準備" : "未準備") : "房主", on: !host || model.guestReady)
+                }
+                .padding(.vertical, 6)
+                .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
+                Group {
+                    if host {
+                        Button { model.startRoom() } label: {
+                            Label(model.roomBusy ? "開始中…" : "開始", pulso: "play.fill").frame(maxWidth: .infinity)
+                        }
+                        .disabled(other == nil || !model.guestReady || model.roomBusy)
+                    } else {
+                        Button { model.setReady(!model.guestReady) } label: {
+                            Label(model.guestReady ? "取消準備" : "準備", pulso: model.guestReady ? "xmark" : "checkmark").frame(maxWidth: .infinity)
+                        }
+                    }
+                }
                 .buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
-            Spacer()
-            Button("關閉房間") { model.leaveRoom(code) }.buttonStyle(PillButtonStyle())
+                .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
+                if host, let o = other {
+                    Button("請 \(o.name) 離開", role: .destructive) { kicking = true }
+                        .alert("請 \(o.name) 離開房間？", isPresented: $kicking) {
+                            Button("請他離開", role: .destructive) { model.kickGuest() }
+                            Button("取消", role: .cancel) {}
+                        } message: { Text("他之後不能再加入這個房間。") }
+                }
+            } header: {
+                Text("對戰")
+            } footer: {
+                Text(status)
+            }
+
+            if host {
+                Section("邀請好友") {
+                    if let friends {
+                        if friends.isEmpty {
+                            Label("目前沒有好友", pulso: "person.slash").foregroundStyle(.secondary)
+                        }
+                        ForEach(friends) { f in
+                            let done = f.pid.map { model.invited.contains($0) } ?? true
+                            Button { if let p = f.pid { model.invite(p) } } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(f.name).foregroundStyle(Color.primary)
+                                        Text(verbatim: "\(f.tierText)・\(f.rating)").font(.app(.footnote)).foregroundStyle(Color.secondary)
+                                    }
+                                    Spacer()
+                                    Text(done ? "已邀請" : "邀請").font(.app(.body, .semibold))
+                                        .foregroundStyle(done ? Color.secondary : Color.themeAccent)
+                                }
+                            }
+                            .disabled(done || other != nil)
+                        }
+                    } else {
+                        HStack { Spacer(); ProgressView(); Spacer() }
+                    }
+                    Button { model.addBot() } label: {
+                        Label(model.addingBot ? "電腦加入中…" : "加入電腦", pulso: "desktopcomputer")
+                    }
+                    .disabled(model.addingBot || model.roomID == nil || other != nil)
+                }
+            }
+
+            Section {
+                Button(host ? "關閉房間" : "離開房間") { model.leaveRoom(code) }
+                    .buttonStyle(PillButtonStyle())
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
+            }
+        }.listRowBackground(Color.cardFill) }
+        .font(.app(.body))
+        .themedBackground()
+        .task { await loadFriends() }
+    }
+
+    private func loadFriends() async {
+        guard host else { return }
+        #if DEBUG
+        if model.isDemo {
+            friends = [Friend(name: "柚子", rating: 1342, tier: 3, pid: "d2", tierName: "至尊星耀"),
+                       Friend(name: "單字狂人", rating: 1684, tier: 5, pid: "d1", tierName: "璀璨卷王")]
+            return
         }
-        .padding(24)
+        #endif
+        friends = (try? await Social.friends()) ?? []
+    }
+}
+
+/// One seat in the room: avatar, name and tier, or 等待加入 when it's empty
+private struct RoomSeat: View {
+    let side: BattleState.Side?
+    let mine: Bool
+    /// 房主, 已準備 or 未準備
+    let tag: String
+    let on: Bool
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Group {
+                if let s = side {
+                    Circle().fill(mine ? Color.themeAccent : Color.secondary.opacity(0.35))
+                        .overlay { Text(String(s.name.first ?? "?")).font(.app(size: 24, .bold)).foregroundStyle(mine ? Color.onAccent : .primary) }
+                } else {
+                    Circle().strokeBorder(Color.secondary.opacity(0.5), lineWidth: 1.5)
+                        .overlay { Text("?").font(.app(size: 24, .bold)).foregroundStyle(.secondary) }
+                }
+            }
+            .frame(width: 56, height: 56)
+            Text(side?.name ?? "等待加入").font(.app(.subheadline, .semibold)).lineLimit(1).minimumScaleFactor(0.7)
+                .foregroundStyle(side == nil ? .secondary : .primary)
+            Text(verbatim: side.map { "\(tierText($0.tierName, $0.tier))・\($0.rating)" } ?? " ")
+                .font(.app(.caption)).foregroundStyle(.secondary).monospacedDigit()
+            Text(verbatim: side == nil ? " " : tag).font(.app(.caption, .semibold))
+                .foregroundStyle(on ? Color.themeAccent : .secondary)
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, 14)
+        .background(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous).fill(Color.secondary.opacity(0.12)))
     }
 }
 
@@ -1537,7 +1907,7 @@ struct BattleBoard: Decodable {
     var last: Season
 
     #if DEBUG
-    static let demo = BattleBoard(season: "2026 S6", previous: "2026 S5", hasPrevious: true, minGames: 60, liveMinGames: 10,
+    static let demo = BattleBoard(season: "2026 S6", previous: "2026 S5", hasPrevious: false, minGames: 60, liveMinGames: 10,
         current: Season(top: [
             Row(rank: 1, name: "單字狂人", pid: "d1", rating: 1684, tierName: "璀璨卷王", winRate: 0.71),
             Row(rank: 2, name: "柚子", pid: "d2", rating: 1522, tierName: "無雙卷哥", winRate: 0.66),
@@ -1562,16 +1932,13 @@ struct BattleBoardView: View {
                 Section {
                     rows(b.current, min: b.liveMinGames, empty: "還沒有人打滿 \(b.liveMinGames) 場排名賽")
                 } header: { Text("\(b.season) 即時排名") } footer: {
-                    Text("本賽季打滿 \(b.liveMinGames) 場排名賽就會上榜，名次隨時更新。勝率含電腦局。長按暱稱可以檢舉或封鎖。")
+                    Text("長按暱稱可以檢舉或封鎖。")
                 }
-                Section {
-                    if !b.hasPrevious {
-                        Text("第一季，還沒有排名").foregroundStyle(.secondary)
-                    } else {
+                // 第一季（2026 S6）沒有上賽季，整個 section 不顯示；第二季起顯示上賽季的最終排名
+                if b.hasPrevious {
+                    Section {
                         rows(b.last, min: b.minGames, empty: "上賽季沒有人打滿 \(b.minGames) 場")
-                    }
-                } header: { Text("\(b.previous) 最終排名") } footer: {
-                    Text("上賽季打滿 \(b.minGames) 場排名賽才會列入。")
+                    } header: { Text("\(b.previous) 最終排名") }
                 }
             } else if let failed {
                 Button("讀不到排行，再試一次") { Task { await load() } }

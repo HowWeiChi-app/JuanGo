@@ -117,9 +117,9 @@ private struct QuotaFullCard: View {
 extension View {
     /// Asks 「只能加入前 N 個」 before adding a batch that only partly fits; `fits` is set by the caller.
     func quotaPartial(_ fits: Binding<Int?>, add: @escaping () -> Void) -> some View {
-        confirmationDialog(fits.wrappedValue.map { "只能加入前 \($0) 個" } ?? "",
-                           isPresented: Binding(get: { fits.wrappedValue != nil }, set: { if !$0 { fits.wrappedValue = nil } }),
-                           titleVisibility: .visible) {
+        alert(fits.wrappedValue.map { "只能加入前 \($0) 個" } ?? "",
+                           isPresented: Binding(get: { fits.wrappedValue != nil }, set: { if !$0 { fits.wrappedValue = nil } })
+                           ) {
             Button("加入 \(fits.wrappedValue ?? 0) 個") { QuotaGate.shared.quietly(add) }
             Button("取消", role: .cancel) {}
         } message: { Text(WordQuota.fullMessage) }
@@ -152,204 +152,74 @@ struct QuotaUsage: View {
     }
 }
 
-// MARK: - Over the limit: countdown, warnings and deleting the extra words
-
-/// Runs the over-limit countdown on this device: starts and cancels it, pops up the 7-day and 1-day reminders,
-/// and on the day it ends deletes the words added first (they go into `Removed` so syncing doesn't bring them back).
-@Observable final class QuotaCountdown {
-    static let shared = QuotaCountdown()
-    private static let key = "quota.countdown"
-
-    private(set) var state: WordQuota.Countdown
-    /// days left, while the reminder is up
-    var reminder: Int?
-    /// how many words were just deleted, while that notice is up
-    var deleted: Int?
-
-    private init() {
-        state = UserDefaults.standard.data(forKey: Self.key)
-            .flatMap { try? JSONDecoder().decode(WordQuota.Countdown.self, from: $0) } ?? .init()
-    }
-
-    /// Local day number (days since 1970-01-01 on this phone's clock).
-    static func day(_ d: Date = .now) -> Int {
-        Int(floor((d.timeIntervalSince1970 + Double(TimeZone.current.secondsFromGMT(for: d))) / 86_400))
-    }
-
-    static func date(_ day: Int) -> Date {
-        let utc = Date(timeIntervalSince1970: Double(day) * 86_400)
-        return utc.addingTimeInterval(-Double(TimeZone.current.secondsFromGMT(for: utc)))
-    }
-
-    var deleteDate: Date? { state.deleteOn.map(Self.date) }
-
-    /// On launch, on coming back to the app and whenever the word count changes.
-    func refresh(_ ctx: ModelContext, popUps: Bool = false) {
-        let today = Self.day()
-        let used = WordQuota.used(in: ctx)
-        var s = WordQuota.countdown(state, used: used, unlimited: WordQuota.unlimited, today: today)
-        if popUps {
-            if WordQuota.due(s, today: today) {
-                deleted = delete(in: ctx, used: used)
-                s = WordQuota.countdown(s, used: WordQuota.used(in: ctx), unlimited: WordQuota.unlimited, today: today)
-            } else if let left = WordQuota.reminder(s, today: today) {
-                reminder = left
-                if left == 1 { s.shown1 = true; s.shown7 = true } else { s.shown7 = true }
-            }
-        }
-        if s != state {
-            state = s
-            UserDefaults.standard.set(try? JSONEncoder().encode(s), forKey: Self.key)
-        }
-    }
-
-    /// The counted words added first, as many as are over the limit.
-    func doomed(in ctx: ModelContext) -> [Word] {
-        let used = WordQuota.used(in: ctx)
-        guard !WordQuota.unlimited, used > WordQuota.limit else { return [] }
-        let words = (try? ctx.fetch(FetchDescriptor<Word>(sortBy: [SortDescriptor(\.addedAt)]))) ?? []
-        return Array(words.filter(WordQuota.counts).prefix(WordQuota.over(used)))
-    }
-
-    /// Deletes the extra words with their progress; lists stay, even when empty. Returns how many went.
-    private func delete(in ctx: ModelContext, used: Int) -> Int {
-        guard !WordQuota.unlimited else { return 0 }   // checked again right before deleting
-        let gone = doomed(in: ctx)
-        guard !gone.isEmpty else { return 0 }
-        Removed.add(gone.map(\.term))
-        for w in gone { ctx.delete(w) }
-        try? ctx.save()
-        return gone.count
-    }
-
-    /// 「只匯出要被刪的字」: a CSV of the words that will be deleted.
-    func csv(in ctx: ModelContext) -> URL? {
-        func cell(_ s: String) -> String { s.contains(where: { ",\"\n".contains($0) }) ? "\"\(s.replacingOccurrences(of: "\"", with: "\"\""))\"" : s }
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
-        var lines = ["word,meaning,part_of_speech,added_at,level"]
-        for w in doomed(in: ctx) {
-            lines.append([w.term, w.meaningLine, w.pos, f.string(from: w.addedAt), String(w.srsLevel)].map(cell).joined(separator: ","))
-        }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("捲字_將被刪除的單字.csv")
-        // with a byte order mark so Excel reads the Chinese correctly
-        guard (try? ("\u{FEFF}" + lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)) != nil else { return nil }
-        return url
-    }
-}
+// MARK: - Over the limit (e.g. after Pro ends): keep every word, only pause adding
 
 extension Date {
     var monthDay: String { formatted(.dateTime.month(.defaultDigits).day().locale(.zh)) }
 }
 
-/// The warning at the top of 主頁 and 我的單字 while over the limit; it can't be closed.
+/// The note at the top of 主頁 and 我的單字 while over the limit. Nothing is ever deleted: the words can still be
+/// browsed and reviewed, only adding counted words is paused until back within the limit or on Pro.
 struct QuotaBanner: View {
     let words: [Word]
-    @Environment(\.modelContext) private var ctx
     @State private var details = false
-    private var countdown: QuotaCountdown { .shared }
 
     var body: some View {
         let used = words.filter(WordQuota.counts).count
-        Group {
-            if !WordQuota.unlimited, used > WordQuota.limit, let date = countdown.deleteDate {
-                Button { details = true } label: {
-                    HStack(alignment: .top, spacing: 12) {
-                        LIcon("exclamationmark.triangle.fill").font(.app(.title3)).foregroundStyle(Color.hsnuMagenta)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("單字超過上限 \(WordQuota.over(used)) 個").font(.app(.subheadline, .bold))
-                            Text("\(date.monthDay)會刪除最早加入的 \(WordQuota.over(used)) 個字，訂閱 Pro 或自己刪到 1000 個以下就不會刪。")
-                                .font(.app(.footnote)).foregroundStyle(.secondary).multilineTextAlignment(.leading)
-                        }
-                        Spacer(minLength: 0)
-                        LIcon("chevron.right").font(.app(.footnote, .semibold)).foregroundStyle(.tertiary)
+        if !WordQuota.unlimited, used > WordQuota.limit {
+            Button { details = true } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    LIcon("lock.fill").font(.app(.title3)).foregroundStyle(Color.hsnuMagenta)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("單字超過上限 \(WordQuota.over(used)) 個，暫停新增").font(.app(.subheadline, .bold))
+                        Text(WordQuota.overMessage)
+                            .font(.app(.footnote)).foregroundStyle(.secondary).multilineTextAlignment(.leading)
                     }
-                    .padding(14)
-                    .background(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous).fill(Color.hsnuMagentaFill))
+                    Spacer(minLength: 0)
+                    LIcon("chevron.right").font(.app(.footnote, .semibold)).foregroundStyle(.tertiary)
                 }
-                .buttonStyle(.plain)
-                .sheet(isPresented: $details) { QuotaOverView() }
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous).fill(Color.hsnuMagentaFill))
             }
+            .buttonStyle(.plain)
+            .sheet(isPresented: $details) { QuotaOverView() }
         }
-        .onAppear { countdown.refresh(ctx) }
     }
 }
 
-/// What will be deleted and the three ways out: Pro, deleting words yourself, exporting first.
+/// Why adding is paused and the two ways out: Pro, or deleting words yourself.
 struct QuotaOverView: View {
     @Environment(\.modelContext) private var ctx
     @Environment(\.dismiss) private var dismiss
     @State private var paywall = false
-    @State private var showAll = false
-    private var countdown: QuotaCountdown { .shared }
 
     var body: some View {
-        let doomed = countdown.doomed(in: ctx)
         let used = WordQuota.used(in: ctx)
         NavigationStack {
             Form { Group {
                 Section {
-                    Text("免費版的「我的單字」最多 \(WordQuota.limit) 個（大考詞彙和考古題加入的字不算）。你現在有 \(used) 個，超過 \(doomed.count) 個。")
+                    Text("免費版的「我的單字」最多 \(WordQuota.limit) 個（大考詞彙和考古題加入的字不算）。你現在有 \(used) 個，超過 \(WordQuota.over(used)) 個。")
                         .font(.app(.subheadline))
-                    if let date = countdown.deleteDate {
-                        Text("如果 \(date.monthDay) 前沒有處理，會刪掉最早加入的 \(doomed.count) 個字和它們的複習紀錄。自訂清單會留著，只是少了這些字。")
-                            .font(.app(.subheadline)).foregroundStyle(.secondary)
-                    }
+                    Text(WordQuota.overMessage).font(.app(.subheadline)).foregroundStyle(.secondary)
                 }
                 Section {
-                    Button { paywall = true } label: { Label("訂閱 Pro，字全部保留", systemImage: "crown.fill") }
-                    Button { if let url = countdown.csv(in: ctx) { presentShareSheet(url) } } label: {
-                        Label("匯出要被刪的字（CSV）", systemImage: "square.and.arrow.up")
-                    }
+                    Button { paywall = true } label: { Label("訂閱 Pro，不限個數", systemImage: "crown.fill") }
                 } header: { Text("你可以") } footer: {
-                    Text("也可以到「字庫 › 我的單字」自己刪掉一些字，刪到 \(WordQuota.limit) 個以下就取消。完整備份在「設定 › 備份」。")
-                }
-                Section("會被刪的字（最早加入的在前）") {
-                    ForEach(showAll ? doomed : Array(doomed.prefix(20))) { w in
-                        HStack {
-                            Text(w.term).font(.app(.headline))
-                            Text(w.primaryMeaning).foregroundStyle(.secondary).lineLimit(1)
-                            Spacer()
-                            Text(w.addedAt.monthDay).font(.app(.caption)).foregroundStyle(.secondary).monospacedDigit()
-                        }
-                    }
-                    if doomed.count > 20, !showAll {
-                        Button("看完整清單（\(doomed.count) 個）") { showAll = true }
-                    }
+                    Text("也可以到「字庫 › 我的單字」自己刪掉一些字，刪到 \(WordQuota.limit) 個以內就能再新增。")
                 }
             }.listRowBackground(Color.cardFill) }
             .themedBackground()
             .navigationTitle("單字超過上限")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
-            .sheet(isPresented: $paywall, onDismiss: { countdown.refresh(ctx); if WordQuota.unlimited { dismiss() } }) { ProPaywall() }
+            .sheet(isPresented: $paywall, onDismiss: { if WordQuota.unlimited { dismiss() } }) { ProPaywall() }
         }
     }
 }
 
-/// The 7-day and 1-day reminders and the notice after deleting, shown from the root.
+/// Clears the countdown older versions saved (they deleted words 30 days after going over the limit).
 struct QuotaReminders: ViewModifier {
-    @Environment(\.modelContext) private var ctx
-    @Environment(\.scenePhase) private var phase
-    @State private var countdown = QuotaCountdown.shared
-    @State private var details = false
-
     func body(content: Content) -> some View {
-        content
-            .task { countdown.refresh(ctx, popUps: true) }
-            .onChange(of: phase) { _, p in if p == .active { countdown.refresh(ctx, popUps: true) } }
-            .alert(countdown.reminder == 1 ? "明天會刪除超過上限的單字" : "還剩 \(countdown.reminder ?? 7) 天會刪除超過上限的單字",
-                   isPresented: Binding(get: { countdown.reminder != nil }, set: { if !$0 { countdown.reminder = nil } })) {
-                Button("查看") { details = true }
-                Button("稍後", role: .cancel) {}
-            } message: {
-                Text("\(countdown.deleteDate?.monthDay ?? "")會刪除最早加入的 \(WordQuota.over(WordQuota.used(in: ctx))) 個字。訂閱 Pro、自己刪到 \(WordQuota.limit) 個以下，或先匯出要被刪的字。")
-            }
-            .alert("已刪除 \(countdown.deleted ?? 0) 個單字",
-                   isPresented: Binding(get: { (countdown.deleted ?? 0) > 0 }, set: { if !$0 { countdown.deleted = nil } })) {
-                Button("好", role: .cancel) {}
-            } message: {
-                Text("依照免費版 \(WordQuota.limit) 字上限，刪除了最早加入的字和它們的複習紀錄。之後想再練可以重新加入（有 Pro 就沒有上限）。")
-            }
-            .sheet(isPresented: $details) { QuotaOverView() }
+        content.task { UserDefaults.standard.removeObject(forKey: "quota.countdown") }
     }
 }

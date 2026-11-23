@@ -82,7 +82,7 @@ struct DevLogView: View {
                 Button("清除", role: .destructive) { confirmClear = true }.disabled(text.isEmpty)
             }
         }
-        .confirmationDialog("清除這支手機上的 log？", isPresented: $confirmClear, titleVisibility: .visible) {
+        .alert("清除這支手機上的 log？", isPresented: $confirmClear) {
             Button("清除", role: .destructive) { DevLog.clear(); text = "" }
             Button("取消", role: .cancel) {}
         }

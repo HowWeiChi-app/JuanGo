@@ -15,7 +15,7 @@ enum ProPlan: String, CaseIterable, Identifiable {
     case juango, gos
     var id: String { rawValue }
     var name: String { self == .gos ? "GOs PRO" : "捲字 Pro" }
-    var blurb: String { self == .gos ? "捲字、校板和未來所有 App" : "只有捲字" }
+    var blurb: String { self == .gos ? "捲字與 GOs PRO 合作服務" : "只有捲字" }
     func price(_ p: ProPeriod) -> Int {
         switch (self, p) {
         case (.juango, .monthly): 60
@@ -32,6 +32,22 @@ enum ProPeriod: String, CaseIterable, Identifiable {
     case monthly, yearly
     var id: String { rawValue }
     var unit: String { self == .yearly ? "年" : "月" }
+}
+
+/// The plans folded under 更多方案: they don't renew.
+enum ProExtra: String, CaseIterable, Identifiable {
+    /// 180 天大考衝刺包: a non-renewing subscription on iOS (a prepaid plan on Google Play); bought again, the days add up
+    case pass180
+    /// 火星贊助者: a consumable tip that unlocks nothing but the 🚀 badge, and can be bought again
+    case tipMars
+    var id: String { rawValue }
+    var productID: String { self == .pass180 ? "juango_pass_180" : "juango_tip_mars" }
+    var name: String { self == .pass180 ? "180 天大考衝刺包" : "火星贊助者" }
+    var price: Int { self == .pass180 ? 300 : 30 }
+    var blurb: String {
+        self == .pass180 ? "捲字 Pro 180 天，不自動續訂，沒有試用。再買一次天數會往後加。"
+                         : "單次贊助，不解鎖功能，獲得「🚀 火星贊助者」徽章，可以重複贊助。"
+    }
 }
 
 // MARK: - Status
@@ -85,7 +101,23 @@ final class ProStore {
 
     private init() {}
 
+    /// Whether this Apple Account can still get the 7-day free trial. One trial per subscription group for life,
+    /// so the paywall shows 免費試用 only when StoreKit says yes (App Store Guideline 3.1.2); while the products
+    /// aren't in App Store Connect yet this stays false.
+    private(set) var introEligible = false
+
+    func checkIntroEligibility() async {
+        let ids = ProPlan.allCases.flatMap { p in ProPeriod.allCases.map { p.productID($0) } }
+        guard let products = try? await Product.products(for: ids), !products.isEmpty else { introEligible = false; return }
+        var eligible = false
+        for p in products where p.subscription?.introductoryOffer != nil {
+            if await p.subscription?.isEligibleForIntroOffer == true { eligible = true; break }
+        }
+        introEligible = eligible
+    }
+
     func purchase(_ plan: ProPlan, _ period: ProPeriod) async throws { throw NotOpen() }
+    func purchase(_ extra: ProExtra) async throws { throw NotOpen() }
     func restore() async throws { throw NotOpen() }
 
     static let termsURL = URL(string: "https://howweichi-app.github.io/terms/")!
@@ -101,9 +133,14 @@ struct ProPaywall: View {
     @State private var busy = false
     @State private var message: String?
     @State private var redeeming = false
+    @State private var moreOpen = false
+    /// after a purchase while signed out: offer to sign in so Pro also unlocks on the other platform
+    @State private var offerSync = false
+    @State private var signingIn = false
     private var pro: ProStore { .shared }
     /// the plan bought; the dev build's unlock is left out so the paywall shows in full for demos
     private var held: ProPlan? { pro.devUnlocked ? nil : pro.plan }
+    private var trial: Bool { pro.introEligible && held == nil }
 
     var body: some View {
         NavigationStack {
@@ -122,11 +159,12 @@ struct ProPaywall: View {
                             ForEach(ProPlan.allCases) { card($0) }
                         }
                         .fixedSize(horizontal: false, vertical: true)
-                        Text("訂閱 GOs PRO，解鎖包含捲字、校板和所有即將推出的 App 之進階功能。")
+                        Text("解鎖捲字 Pro 與 GOs PRO 合作服務完整功能，並享有未來新服務優先體驗權。")
                             .font(.app(.footnote)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                     }
                     features
                     if held != .gos { buy }
+                    more
                     extras
                     legal
                 }
@@ -137,8 +175,16 @@ struct ProPaywall: View {
             .alert("無法完成", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
                 Button("好", role: .cancel) {}
             } message: { Text(message ?? "") }
+            .alert("要同步到其他裝置嗎？", isPresented: $offerSync) {
+                Button("登入 Email") { signingIn = true }
+                Button("之後再說", role: .cancel) {}
+            } message: {
+                Text("若需在 iPhone 與 Android 之間同步 Pro 資格（含 GOs PRO 套裝）與學習進度，請登入 Email 帳號綁定。")
+            }
+            .sheet(isPresented: $signingIn) { NavigationStack { AccountView() } }
             .offerCodeRedemption(isPresented: $redeeming) { _ in }
             .onAppear { if held == .juango { plan = .gos } }
+            .task { await pro.checkIntroEligibility() }
         }
     }
 
@@ -155,7 +201,7 @@ struct ProPaywall: View {
     private var owned: some View {
         VStack(spacing: 6) {
             Text("你已經有 GOs PRO").font(.app(.headline))
-            Text(pro.devUnlocked ? "開發版已解鎖所有 Pro 功能。" : "捲字、校板和之後推出的 App 都能用 Pro 功能。")
+            Text(pro.devUnlocked ? "開發版已解鎖所有 Pro 功能。" : "捲字 Pro 與 GOs PRO 合作服務的完整功能都能使用。")
                 .font(.app(.subheadline)).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity).padding(18)
@@ -180,7 +226,11 @@ struct ProPaywall: View {
                 Spacer(minLength: 6)
                 Text("NT$\(price)").font(.app(size: 26, .bold)).monospacedDigit()
                 Text(period == .yearly ? "每年・約 NT$\(price / 12) / 月" : "每月").font(.app(.caption)).foregroundStyle(.secondary)
-                if current { Text("目前方案").font(.app(.caption, .bold)).foregroundStyle(Color.themeAccent) }
+                if current {
+                    Text("目前方案").font(.app(.caption, .bold)).foregroundStyle(Color.themeAccent)
+                } else if trial {
+                    Text("7 天免費試用").font(.app(.caption, .bold)).foregroundStyle(Color.themeAccent)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(14)
@@ -196,12 +246,11 @@ struct ProPaywall: View {
     private var features: some View {
         VStack(alignment: .leading, spacing: 12) {
             feature("infinity", "「我的單字」不限個數", "免費版最多 1000 個")
-            feature("character.bubble", "內建 AI 翻譯與例句", "不用自己填 API key")
+            feature("character.bubble", "AI 智慧引擎", "無上限智慧例句生成、課文掃描自動校對與免填 Key 翻譯")
             feature("bolt.fill", "單字對戰不限場次", "免費版每天 10 場")
-            feature("books.vertical.fill", "課文書架", "掃描課文變成電子書，Apple Intelligence 修正掃錯的字，免費版可試用 1 課")
+            feature("books.vertical.fill", "課文書架不限課數", "掃描課文變成電子書，免費版可試用 1 課（最多 3 頁）")
             feature("chart.bar.xaxis", "進階統計", "每週報告、常錯字、學測詞彙涵蓋率")
             feature("paintpalette.fill", "額外主題色和 App 圖示", "即將推出")
-            feature("sparkles", "更多即將推出的功能", "包含訂閱期間所有推出的新功能")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
@@ -218,30 +267,60 @@ struct ProPaywall: View {
         }
     }
 
+    private func run(_ f: @escaping () async throws -> Void) {
+        busy = true
+        Task {
+            do {
+                try await f()
+                if !Cloud.shared.signedIn { offerSync = true }
+            } catch { message = error.localizedDescription }
+            busy = false
+        }
+    }
+
     private var buy: some View {
         VStack(spacing: 8) {
-            Button {
-                busy = true
-                Task {
-                    do { try await pro.purchase(plan, period) } catch { message = error.localizedDescription }
-                    busy = false
-                }
-            } label: {
-                Text(held == .juango ? "升級到 GOs PRO" : "免費試用 7 天")
+            Button { run { try await pro.purchase(plan, period) } } label: {
+                Text(held == .juango ? "升級到 GOs PRO" : trial ? "免費試用 7 天" : "訂閱 \(plan.name)")
             }
             .buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
             .disabled(busy)
             Text(held == .juango ? "改成 NT$\(plan.price(period)) / \(period.unit)，剩下的捲字 Pro 費用由 App Store 按比例退還。"
-                 : "試用結束後 NT$\(plan.price(period)) / \(period.unit)，自動續訂。")
+                 : trial ? "試用 7 天後 NT$\(plan.price(period)) / \(period.unit)，自動續訂。"
+                 : "NT$\(plan.price(period)) / \(period.unit)，自動續訂。")
                 .font(.app(.footnote)).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
     }
 
+    /// 更多方案, folded by default so the paywall stays two choices
+    private var more: some View {
+        DisclosureGroup(isExpanded: $moreOpen) {
+            VStack(spacing: 12) {
+                ForEach(ProExtra.allCases) { e in
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(e.name).font(.app(.subheadline, .semibold))
+                            Text(e.blurb).font(.app(.caption)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        Button("NT$\(e.price)") { run { try await pro.purchase(e) } }
+                            .font(.app(.subheadline, .bold)).buttonStyle(.bordered).tint(Color.themeAccent)
+                            .disabled(busy)
+                    }
+                }
+            }
+            .padding(.top, 10)
+        } label: {
+            Text("更多方案").font(.app(.subheadline, .semibold))
+        }
+        .tint(.primary)
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous).fill(Color.cardFill))
+    }
+
     private var extras: some View {
         HStack(spacing: 22) {
-            Button("恢復購買") {
-                Task { do { try await pro.restore() } catch { message = error.localizedDescription } }
-            }
+            Button("恢復購買") { run { try await pro.restore() } }
             Button("有兌換碼？") { redeeming = true }
         }
         .font(.app(.subheadline, .semibold))
@@ -249,8 +328,9 @@ struct ProPaywall: View {
 
     private var legal: some View {
         VStack(spacing: 8) {
-            Text("訂閱會自動續訂。首次訂閱可免費試用 7 天，試用結束才開始扣款。可隨時在 iPhone 的「設定 › Apple 帳號 › 訂閱項目」取消。")
-            Text("Pro 到期後，超過 1000 個的單字會在 30 天後從最早加入的開始刪除，刪除前會通知你。")
+            Text((trial ? "首次訂閱可免費試用 7 天，試用結束才開始扣款。" : "")
+                 + "月繳和年繳會自動續訂：目前期間結束前 24 小時內自動扣款續訂，可隨時在 iPhone 的「設定 › Apple 帳號 › 訂閱項目」取消。180 天大考衝刺包和火星贊助者不會自動扣款。")
+            Text("Pro 到期後不會刪除任何單字：超過 1000 個時暫停新增，原有單字照常瀏覽和複習。")
             HStack(spacing: 16) {
                 Link("服務條款", destination: ProStore.termsURL)
                 Link("隱私權政策", destination: ProStore.privacyURL)

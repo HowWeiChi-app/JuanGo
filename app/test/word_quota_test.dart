@@ -100,31 +100,11 @@ void main() {
     expect(Word.fromJson({'term': 'x'}).fromExam, isFalse);
   });
 
-  test('超過上限的倒數、提醒和到期', () {
-    Countdown cd(Map<String, dynamic> j) => Countdown.fromJson(j);
-    for (final c in (cases['countdown'] as List).cast<Map<String, dynamic>>()) {
-      final note = c['note'] as String, today = c['today'] as int;
-      final got = WordQuota.countdown(
-        cd((c['before'] as Map).cast()),
-        used: c['used'] as int,
-        unlimited: c['unlimited'] as bool,
-        today: today,
-      );
-      expect(got, cd((c['after'] as Map).cast()), reason: note);
-      expect(
-        WordQuota.reminder(got, today: today),
-        c['reminder'],
-        reason: note,
-      );
-      expect(WordQuota.due(got, today: today), c['due'], reason: note);
-    }
-  });
-
-  test('到期刪掉最早加入的字，同步回來的備份不會把它們帶回來', () {
+  test('超過上限（例如 Pro 到期）不刪任何字，只暫停新增', () {
     final s = AppStore.shared;
     final others = Dict.all
         .where((e) => !examLevels.contains(e.lv))
-        .take(1003)
+        .take(1004)
         .toList();
     s.restore(
       BackupFile({
@@ -132,7 +112,7 @@ void main() {
         'format': 2,
         'kind': 'backup',
         'words': [
-          for (final (i, e) in others.indexed)
+          for (final (i, e) in others.take(1003).indexed)
             (Word.fromEntry(e)
                   ..addedAt = DateTime(2026, 1, 1).add(Duration(minutes: i)))
                 .toJson(),
@@ -141,34 +121,17 @@ void main() {
       }),
       settings: false,
     );
-    final ceec = s.add(Dict.all.firstWhere((e) => examLevels.contains(e.lv)))!
-      ..addedAt = DateTime(2020);
-    final list = s.createList('考前');
-    s.word(others.first.w)!.lists.add(list.id);
     expect(WordQuota.used(), 1003);
-    final cloud = s.fullBackup();
-
-    s.countdown = Countdown(
-      overSince: QuotaCountdown.day() - 30,
-      deleteOn: QuotaCountdown.day(),
-      lastStart: QuotaCountdown.day() - 30,
-    );
-    expect(
-      QuotaCountdown.doomed().map((w) => w.term),
-      others.take(3).map((e) => e.w),
-    );
-    final r = QuotaCountdown.refresh(popUps: true);
-    expect(r.deleted, 3);
-    expect(WordQuota.used(), 1000);
-    expect(s.word(ceec.term), isNotNull);
-    expect(s.lists.map((l) => l.name), contains('考前'));
-    expect(s.countdown.deleteOn, isNull);
-
-    // 雲端還是刪除前的備份：合併後也不會回來
-    s.restore(BackupFile(cloud), settings: false);
-    expect(s.word(others.first.w), isNull);
-    expect(WordQuota.used(), 1000);
-    // 刪除標記會放進備份，別台裝置收到也會刪
-    expect((s.fullBackup()['removed'] as List).length, 3);
+    // 舊版留下、已經到期的刪字倒數
+    s.countdown = const Countdown(overSince: 1, deleteOn: 2, lastStart: 1);
+    expect(QuotaBanner.showing, isTrue);
+    expect(WordQuota.hasRoom, isFalse);
+    expect(WordQuota.admitted([others.last]), isEmpty);
+    // 大考詞彙不佔名額，照樣可以加
+    final ceec = Dict.all.firstWhere((e) => examLevels.contains(e.lv));
+    expect(WordQuota.admitted([ceec]), [ceec]);
+    expect(WordQuota.used(), 1003);
+    expect(s.word(others.first.w), isNotNull);
+    expect(s.countdown.isEmpty, isFalse);
   });
 }

@@ -14,6 +14,7 @@ import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 
 import 'cloud.dart';
+import 'cloud_ai.dart';
 import 'dev_log.dart';
 import 'dictionary.dart';
 import 'models.dart';
@@ -203,7 +204,13 @@ class TBCorrection {
 
   TBPos get pos => (p: p, s: s, w: w);
   bool get isPending => status == 'pending';
-  String get sourceName => source == 'ai' ? 'Apple Intelligence' : source == 'manual' ? '手動修改' : '字典比對';
+  String get sourceName => source == 'ai'
+      ? 'Apple Intelligence'
+      : source == 'cloud_ai'
+      ? '捲字雲端 AI'
+      : source == 'manual'
+      ? '手動修改'
+      : '字典比對';
 
   Map<String, dynamic> toJson() =>
       {'p': p, 's': s, 'w': w, 'original': original, 'suggestion': suggestion, 'source': source, 'status': status};
@@ -889,6 +896,31 @@ class OcrFixer {
     return out;
   }
 
+  /// Pro：字典修不了的可疑字，再請雲端 AI（Agnes）校對一次。失敗（沒網路、配額用完）就只用字典的結果
+  static Future<List<TBCorrection>> suggestWithCloud(TBContent c) async {
+    final out = suggest(c);
+    if (!CloudAI.available) return out;
+    final done = {for (final x in out) (x.p, x.s, x.w)};
+    final rest = candidates(c).where((x) => !done.contains((x.pos.p, x.pos.s, x.pos.w))).toList();
+    if (rest.isEmpty) return out;
+    try {
+      final fixes = await CloudAI.fixSpelling(
+        {for (final x in rest) x.word}.toList(),
+        c.allWords.map((x) => x.$2.core).join(' '),
+      );
+      for (final cand in rest) {
+        final s = fixes[cand.word];
+        if (s == null) continue;
+        out.add(TBCorrection(
+            p: cand.pos.p, s: cand.pos.s, w: cand.pos.w, original: cand.word, suggestion: matchCase(s, cand.word),
+            source: 'cloud_ai', status: 'pending'));
+      }
+    } catch (e) {
+      DevLog.add('textbook', '雲端 AI 校對沒有成功：$e');
+    }
+    return out;
+  }
+
   static String matchCase(String s, String like) =>
       like.isNotEmpty && like[0] != like[0].toLowerCase() && s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : s;
 
@@ -1021,7 +1053,7 @@ class PageImporter {
       if (photo == null) continue;
       try {
         final content = await read(photo.path, photo.bytes, photo.width, photo.height);
-        final fixes = content.isVocab ? <TBCorrection>[] : OcrFixer.suggest(content);
+        final fixes = content.isVocab ? <TBCorrection>[] : await OcrFixer.suggestWithCloud(content);
         await shelf.addPage(lessonId, content, fixes);
         if (content.isVocab) {
           DevLog.add('textbook', '辨識單字表：${content.entries?.length ?? 0} 個字、${content.grammar?.length ?? 0} 個文法重點');

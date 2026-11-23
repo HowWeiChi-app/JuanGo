@@ -1,8 +1,5 @@
-import 'dart:io';
 
 import 'package:material_ui/material_ui.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 import 'models.dart';
 import 'pro.dart';
@@ -55,43 +52,14 @@ class WordQuota {
   static String? usage(int used, {required bool unlimited}) =>
       unlimited || used < showFrom ? null : '已用 $used / $limit';
 
-  // —— 超過上限：先警告，期限到了刪掉最早加入的字 ——
+  // —— 超過上限（例如 Pro 到期）：唯讀保留，不刪任何字 ——
+  // 原有單字照常瀏覽和複習，只暫停新增會佔名額的字，直到自己刪到 1000 個以內或重新訂閱 Pro。
 
-  /// 第一次倒數 30 天；90 天內第二次只有 7 天
-  static const grace = 30, repeatGrace = 7, repeatWindow = 90;
-
-  /// 第一天超過就開始倒數；回到上限以內或有 Pro 就取消
-  static Countdown countdown(
-    Countdown c, {
-    required int used,
-    required bool unlimited,
-    required int today,
-  }) {
-    if (unlimited || used <= limit) return Countdown(lastStart: c.lastStart);
-    if (c.overSince != null) return c;
-    final again = c.lastStart != null && today - c.lastStart! < repeatWindow;
-    return Countdown(
-      overSince: today,
-      deleteOn: today + (again ? repeatGrace : grace),
-      lastStart: today,
-    );
-  }
-
-  /// 現在要跳提醒的話，回傳剩幾天（7 或 1）
-  static int? reminder(Countdown c, {required int today}) {
-    final end = c.deleteOn;
-    if (end == null || today >= end) return null;
-    final left = end - today;
-    if (left <= 1) return c.shown1 ? null : 1;
-    if (left <= 7) return c.shown7 ? null : 7;
-    return null;
-  }
-
-  static bool due(Countdown c, {required int today}) =>
-      c.deleteOn != null && today >= c.deleteOn!;
-
-  /// 要刪幾個字：刪到剛好 1000 個
+  /// 超過上限幾個
   static int over(int used) => used > limit ? used - limit : 0;
+
+  static const overMessage =
+      '單字都會保留，可以照常瀏覽和複習；只是暫停新增，刪到 1000 個以內或訂閱 Pro 就能再加。';
 
   // —— App 裡的用法 ——
 
@@ -226,7 +194,8 @@ void addWithinQuota(
   );
 }
 
-/// 倒數到哪裡了。日期用「1970-01-01 起的第幾天」（手機的時區）
+/// 舊版「超過上限 30 天後刪字」的倒數紀錄。現在不刪字了，只為了讀得懂舊的設定檔和備份；
+/// 打開 App 時會清掉
 class Countdown {
   const Countdown({
     this.overSince,
@@ -237,6 +206,9 @@ class Countdown {
   });
   final int? overSince, deleteOn, lastStart;
   final bool shown7, shown1;
+
+  bool get isEmpty =>
+      overSince == null && deleteOn == null && lastStart == null;
 
   factory Countdown.fromJson(Map<String, dynamic> j) => Countdown(
     overSince: j['overSince'] as int?,
@@ -254,14 +226,6 @@ class Countdown {
     if (shown1) 'shown1': true,
   };
 
-  Countdown shown(int left) => Countdown(
-    overSince: overSince,
-    deleteOn: deleteOn,
-    lastStart: lastStart,
-    shown7: true,
-    shown1: shown1 || left == 1,
-  );
-
   @override
   bool operator ==(Object other) =>
       other is Countdown && other.toJson().toString() == toJson().toString();
@@ -271,131 +235,18 @@ class Countdown {
   String toString() => toJson().toString();
 }
 
-/// 在這台裝置上跑超過上限的倒數：開始、取消、剩 7 天和 1 天的提醒，到期刪掉最早加入的字
+/// 打開 App、回到 App 時呼叫。不會刪字，只清掉舊版留下的刪字倒數
 class QuotaCountdown {
-  static AppStore get _store => AppStore.shared;
-
-  /// 手機時區的第幾天（1970-01-01 是第 0 天）
-  static int day([DateTime? d]) {
-    final t = d ?? DateTime.now();
-    return DateTime.utc(t.year, t.month, t.day).millisecondsSinceEpoch ~/
-        86400000;
-  }
-
-  static DateTime dateOf(int day) {
-    final u = DateTime.fromMillisecondsSinceEpoch(day * 86400000, isUtc: true);
-    return DateTime(u.year, u.month, u.day);
-  }
-
-  static DateTime? get deleteDate => _store.countdown.deleteOn == null
-      ? null
-      : dateOf(_store.countdown.deleteOn!);
-
-  /// 最早加入、算進上限的字，超過幾個就取幾個
-  static List<Word> doomed() {
-    final used = WordQuota.used();
-    if (WordQuota.unlimited || used <= WordQuota.limit) return const [];
-    final ws = _store.words.where(WordQuota.countsWord).toList()
-      ..sort((a, b) => a.addedAt.compareTo(b.addedAt));
-    return ws.take(WordQuota.over(used)).toList();
-  }
-
-  /// 更新倒數。popUps 時（打開 App、回到 App）會到期刪除或回傳要跳的提醒
-  static ({int? reminder, int? deleted}) refresh({bool popUps = false}) {
-    final today = day();
-    var c = WordQuota.countdown(
-      _store.countdown,
-      used: WordQuota.used(),
-      unlimited: WordQuota.unlimited,
-      today: today,
-    );
-    int? reminder, deleted;
-    if (popUps) {
-      if (WordQuota.due(c, today: today)) {
-        final gone = WordQuota.unlimited
-            ? const <Word>[]
-            : doomed(); // 刪之前再確認一次 Pro
-        if (gone.isNotEmpty) {
-          _store.removeForQuota(gone);
-          deleted = gone.length;
-        }
-        c = WordQuota.countdown(
-          c,
-          used: WordQuota.used(),
-          unlimited: WordQuota.unlimited,
-          today: today,
-        );
-      } else {
-        reminder = WordQuota.reminder(c, today: today);
-        if (reminder != null) c = c.shown(reminder);
-      }
-    }
-    if (c != _store.countdown) {
-      _store.countdown = c;
-      _store.save();
-    }
-    return (reminder: reminder, deleted: deleted);
-  }
-
-  /// 「只匯出要被刪的字」CSV
-  static Future<void> shareCsv() async {
-    String cell(String s) =>
-        s.contains(RegExp(r'[,"\n]')) ? '"${s.replaceAll('"', '""')}"' : s;
-    String date(DateTime d) =>
-        '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-    final lines = [
-      'word,meaning,part_of_speech,added_at,level',
-      for (final w in doomed())
-        [
-          w.term,
-          w.meaningLine,
-          w.pos,
-          date(w.addedAt),
-          '${w.srsLevel}',
-        ].map(cell).join(','),
-    ];
-    final file = File('${(await getTemporaryDirectory()).path}/捲字_將被刪除的單字.csv');
-    await file.writeAsString(
-      '\uFEFF${lines.join('\n')}\n',
-    ); // 加 BOM，Excel 才讀得懂中文
-    await SharePlus.instance.share(
-      ShareParams(files: [XFile(file.path, mimeType: 'text/csv')]),
-    );
-  }
-
-  /// 打開 App 或回到 App 時呼叫：跳提醒或說明刪了幾個字
   static void check(BuildContext c) {
-    final r = refresh(popUps: true);
-    if (!c.mounted) return;
-    if (r.deleted != null) {
-      showAlert(
-        c,
-        '已刪除 ${r.deleted} 個單字',
-        message:
-            '依照免費版 ${WordQuota.limit} 字上限，刪除了最早加入的字和它們的複習紀錄。之後想再練可以重新加入（有 Pro 就沒有上限）。',
-      );
-    } else if (r.reminder != null) {
-      final left = r.reminder!;
-      showAlert(
-        c,
-        left == 1 ? '明天會刪除超過上限的單字' : '還剩 $left 天會刪除超過上限的單字',
-        message:
-            '${monthDay(deleteDate!)}會刪除最早加入的 ${WordQuota.over(WordQuota.used())} 個字。'
-            '訂閱 Pro、自己刪到 ${WordQuota.limit} 個以下，或先匯出要被刪的字。',
-        actions: [
-          const AlertAction('稍後'),
-          AlertAction(
-            '查看',
-            bold: true,
-            onTap: () => presentFull(c, const QuotaOverPage()),
-          ),
-        ],
-      );
+    final s = AppStore.shared;
+    if (!s.countdown.isEmpty) {
+      s.countdown = const Countdown();
+      s.save();
     }
   }
 }
 
-/// 超過上限時，主頁和「我的單字」頂端的警告，不能關掉
+/// 超過上限時，主頁和「我的單字」頂端的說明
 class QuotaBanner extends StatelessWidget {
   const QuotaBanner({super.key});
 
@@ -404,9 +255,8 @@ class QuotaBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final date = QuotaCountdown.deleteDate;
+    if (!showing) return const SizedBox.shrink();
     final over = WordQuota.over(WordQuota.used());
-    if (!showing || date == null) return const SizedBox.shrink();
     final p = Palette.of(context);
     return Tap(
       onTap: () => presentFull(context, const QuotaOverPage()),
@@ -419,21 +269,18 @@ class QuotaBanner extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.warning_rounded, color: p.hsnuMagenta, size: 24),
+            Icon(Icons.lock_rounded, color: p.hsnuMagenta, size: 24),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '單字超過上限 $over 個',
+                    '單字超過上限 $over 個，暫停新增',
                     style: ts(F.sub, w: w7, c: p.ink),
                   ),
                   const SizedBox(height: 3),
-                  Text(
-                    '${monthDay(date)}會刪除最早加入的 $over 個字，訂閱 Pro 或自己刪到 ${WordQuota.limit} 個以下就不會刪。',
-                    style: ts(F.foot, c: p.sec),
-                  ),
+                  Text(WordQuota.overMessage, style: ts(F.foot, c: p.sec)),
                 ],
               ),
             ),
@@ -445,7 +292,7 @@ class QuotaBanner extends StatelessWidget {
   }
 }
 
-/// 會被刪掉哪些字，和三個選擇：訂閱 Pro、自己刪字、先匯出
+/// 超過上限的說明和兩個選擇：訂閱 Pro、自己刪字
 class QuotaOverPage extends StatefulWidget {
   const QuotaOverPage({super.key});
   @override
@@ -453,15 +300,10 @@ class QuotaOverPage extends StatefulWidget {
 }
 
 class _QuotaOverPageState extends State<QuotaOverPage> {
-  var _all = false;
-
   @override
   Widget build(BuildContext context) {
     final p = Palette.of(context);
-    final doomed = QuotaCountdown.doomed();
     final used = WordQuota.used();
-    final date = QuotaCountdown.deleteDate;
-    final shown = _all ? doomed : doomed.take(20).toList();
     return NavPage(
       title: '單字超過上限',
       safeTop: false,
@@ -470,21 +312,9 @@ class _QuotaOverPageState extends State<QuotaOverPage> {
           children: [
             Padding(
               padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '免費版的「我的單字」最多 ${WordQuota.limit} 個（大考詞彙和考古題加入的字不算）。你現在有 $used 個，超過 ${doomed.length} 個。',
-                    style: ts(F.sub, c: p.ink),
-                  ),
-                  if (date != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      '如果 ${monthDay(date)} 前沒有處理，會刪掉最早加入的 ${doomed.length} 個字和它們的複習紀錄。自訂清單會留著，只是少了這些字。',
-                      style: ts(F.sub, c: p.sec),
-                    ),
-                  ],
-                ],
+              child: Text(
+                '免費版的「我的單字」最多 ${WordQuota.limit} 個（大考詞彙和考古題加入的字不算）。你現在有 $used 個，超過 ${WordQuota.over(used)} 個。\n\n${WordQuota.overMessage}',
+                style: ts(F.sub, c: p.ink),
               ),
             ),
           ],
@@ -492,52 +322,17 @@ class _QuotaOverPageState extends State<QuotaOverPage> {
         Sec(
           header: '你可以',
           footer:
-              '也可以到「字庫 › 我的單字」自己刪掉一些字，刪到 ${WordQuota.limit} 個以下就取消。完整備份在「我的 › 備份」。',
+              '也可以到「字庫 › 我的單字」自己刪掉一些字，刪到 ${WordQuota.limit} 個以內就能再新增。',
           children: [
             RowTile(
               leading: Icon(Icons.workspace_premium_rounded, color: p.accent),
-              title: '訂閱 Pro，字全部保留',
+              title: '訂閱 Pro，不限個數',
               titleColor: p.accent,
               onTap: () async {
                 await presentFull(context, const ProPaywall());
                 if (mounted) setState(() {});
               },
             ),
-            RowTile(
-              leading: Icon(Icons.ios_share_rounded, color: p.accent),
-              title: '匯出要被刪的字（CSV）',
-              titleColor: p.accent,
-              onTap: QuotaCountdown.shareCsv,
-            ),
-          ],
-        ),
-        Sec(
-          header: '會被刪的字（最早加入的在前）',
-          children: [
-            for (final w in shown)
-              RowTile(
-                titleWidget: Row(
-                  children: [
-                    Text(w.term, style: ts(F.headline, w: w6)),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        w.primaryMeaning,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: ts(F.body, c: p.sec),
-                      ),
-                    ),
-                  ],
-                ),
-                trailing: Text(monthDay(w.addedAt), style: ts(F.cap, c: p.sec)),
-              ),
-            if (doomed.length > 20 && !_all)
-              RowTile(
-                title: '看完整清單（${doomed.length} 個）',
-                titleColor: p.accent,
-                onTap: () => setState(() => _all = true),
-              ),
           ],
         ),
       ],

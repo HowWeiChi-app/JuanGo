@@ -16,7 +16,9 @@ class AccountPage extends StatefulWidget {
 
 class _AccountPageState extends State<AccountPage> {
   final _email = TextEditingController();
+  final _code = TextEditingController();
   bool _sending = false;
+  bool _verifying = false;
   bool _deleting = false;
   String? _sentTo;
 
@@ -64,8 +66,17 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _code.addListener(() {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
   void dispose() {
     _email.dispose();
+    _code.dispose();
     super.dispose();
   }
 
@@ -79,12 +90,35 @@ class _AccountPageState extends State<AccountPage> {
     final email = _email.text.trim();
     setState(() => _sending = true);
     try {
-      await _cloud.sendLink(email);
-      if (mounted) setState(() => _sentTo = email);
+      await _cloud.sendCode(email);
+      if (mounted) {
+        setState(() {
+          _sentTo = email;
+          _code.clear();
+        });
+      }
     } catch (e) {
       if (mounted) showAlert(context, '$e');
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> _verify() async {
+    final email = _sentTo;
+    if (email == null || _code.text.length != 6 || _verifying) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() => _verifying = true);
+    try {
+      final msg = await _cloud.verify(email, _code.text);
+      _sentTo = null;
+      _code.clear();
+      if (mounted) showAlert(context, msg);
+    } catch (e) {
+      _code.clear();
+      if (mounted) showAlert(context, '$e');
+    } finally {
+      if (mounted) setState(() => _verifying = false);
     }
   }
 
@@ -178,17 +212,17 @@ class _AccountPageState extends State<AccountPage> {
 
   List<Widget> _signedOut(Palette p) {
     final canSend = !_sending && _validEmail;
+    final sent = _sentTo;
     return [
       Sec(
         header: '登入',
-        footer: _sentTo == null
-            ? '用 Email 連結登入，資料會同步到雲端，也能參加單字對戰。iPhone 和 Android 用同一個帳號。'
-            : '已寄到 $_sentTo。請在這支手機打開信件，點「Sign in」就會回到捲字完成登入。沒收到請查看垃圾郵件。',
+        footer: '用 Email 收 6 位數驗證碼登入，資料會同步到雲端，也能參加單字對戰。iPhone 和 Android 用同一個帳號。',
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: TextField(
               controller: _email,
+              enabled: sent == null,
               keyboardType: TextInputType.emailAddress,
               textInputAction: TextInputAction.send,
               autocorrect: false,
@@ -196,7 +230,7 @@ class _AccountPageState extends State<AccountPage> {
               autofillHints: const [AutofillHints.email],
               onChanged: (_) => setState(() {}),
               onSubmitted: (_) {
-                if (canSend || (!_sending && _validEmail)) _send();
+                if (canSend) _send();
               },
               style: ts(F.body, c: p.ink),
               decoration: InputDecoration(
@@ -206,13 +240,45 @@ class _AccountPageState extends State<AccountPage> {
               ),
             ),
           ),
-          RowTile(
-            title: _sending ? '寄送中…' : '寄登入連結',
-            titleColor: canSend ? p.accent : p.sec,
-            onTap: canSend ? _send : null,
-          ),
+          if (sent == null)
+            RowTile(
+              title: _sending ? '寄送中…' : '寄驗證碼',
+              titleColor: canSend ? p.accent : p.sec,
+              onTap: canSend ? _send : null,
+            ),
         ],
       ),
+      if (sent != null)
+        Sec(
+          header: '輸入驗證碼',
+          footer: '已寄到 $sent，在任何裝置上看信都可以。沒收到請查看垃圾郵件。',
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+              child: CodeBoxes(controller: _code, onDone: _verify),
+            ),
+            RowTile(
+              title: _verifying ? '登入中…' : '登入',
+              titleColor: !_verifying && _code.text.length == 6
+                  ? p.accent
+                  : p.sec,
+              onTap: !_verifying && _code.text.length == 6 ? _verify : null,
+            ),
+            RowTile(
+              title: '重新寄驗證碼',
+              titleColor: _sending ? p.sec : p.accent,
+              onTap: _sending ? null : _send,
+            ),
+            RowTile(
+              title: '換一個 Email',
+              titleColor: p.accent,
+              onTap: () => setState(() {
+                _sentTo = null;
+                _code.clear();
+              }),
+            ),
+          ],
+        ),
     ];
   }
 
@@ -233,6 +299,108 @@ class _AccountPageState extends State<AccountPage> {
           slivers: s == null ? _signedOut(p) : _signedIn(p, s),
         );
       },
+    );
+  }
+}
+
+/// 6 格驗證碼：一個看不到的輸入框接收打字（和鍵盤建議的簡訊／信件驗證碼），上面畫 6 格
+class CodeBoxes extends StatefulWidget {
+  const CodeBoxes({super.key, required this.controller, required this.onDone});
+  final TextEditingController controller;
+  final VoidCallback onDone;
+  @override
+  State<CodeBoxes> createState() => _CodeBoxesState();
+}
+
+class _CodeBoxesState extends State<CodeBoxes> {
+  final _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_changed);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focus.requestFocus();
+    });
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_changed);
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Palette.of(context);
+    final code = widget.controller.text;
+    return Semantics(
+      label: '6 位數驗證碼',
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _focus.requestFocus,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Opacity(
+                opacity: 0,
+                child: TextField(
+                  controller: widget.controller,
+                  focusNode: _focus,
+                  keyboardType: TextInputType.number,
+                  autofillHints: const [AutofillHints.oneTimeCode],
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
+                  ],
+                  showCursor: false,
+                  onChanged: (v) {
+                    if (v.length == 6) widget.onDone();
+                  },
+                ),
+              ),
+            ),
+            IgnorePointer(
+              child: ListenableBuilder(
+                listenable: _focus,
+                builder: (context, _) => Row(
+                  children: [
+                    for (var i = 0; i < 6; i++) ...[
+                      if (i > 0) const SizedBox(width: 8),
+                      Expanded(
+                        child: Container(
+                          height: 48,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: p.fill,
+                            borderRadius: BorderRadius.circular(Radii.md),
+                            border: Border.all(
+                              color: _focus.hasFocus &&
+                                      i == (code.length < 6 ? code.length : 5)
+                                  ? p.accent
+                                  : Colors.transparent,
+                              width: 2,
+                            ),
+                          ),
+                          child: Text(
+                            i < code.length ? code[i] : '',
+                            style: ts(24, w: w7, c: p.ink),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -86,18 +86,62 @@ void main() {
     return Cloud.shared;
   }
 
-  test('登入連結要帶 iOS 用的回呼網址', () async {
+  test('寄驗證碼：不帶回呼網址', () async {
     late http.Request sent;
     await cloud((r) async {
       sent = r;
       return http.Response('{}', 200);
-    }).sendLink(' a@example.com ');
+    }).sendCode(' A@example.com ');
     expect(sent.url.path, '/auth/v1/otp');
-    expect(sent.url.queryParameters['redirect_to'], 'juango://login-callback');
+    expect(sent.url.queryParameters.containsKey('redirect_to'), isFalse);
     expect(jsonDecode(sent.body), {
       'email': 'a@example.com',
       'create_user': true,
     });
+  });
+
+  test('輸入 6 位數驗證碼登入', () async {
+    final vault = _MemoryVault();
+    Map<String, dynamic>? verifyBody;
+    final c = cloud((r) async {
+      if (r.url.path == '/auth/v1/verify') {
+        verifyBody = jsonDecode(r.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            'access_token': _jwt({'sub': 'user-1', 'email': 'a@example.com'}),
+            'refresh_token': 'r1',
+            'expires_in': 3600,
+          }),
+          200,
+        );
+      }
+      return http.Response('[]', 200);
+    }, vault);
+    final msg = await c.verify('a@example.com', '12 34 56');
+    expect(verifyBody, {
+      'type': 'email',
+      'email': 'a@example.com',
+      'token': '123456',
+    });
+    expect(c.session?.userId, 'user-1');
+    expect(msg, startsWith('已登入 a@example.com'));
+  });
+
+  test('驗證碼錯誤', () async {
+    final c = cloud(
+      (_) async => http.Response('{"msg":"Token has expired or is invalid"}', 403),
+    );
+    await expectLater(
+      c.verify('a@example.com', '000000'),
+      throwsA(
+        isA<CloudFailure>().having(
+          (e) => e.message,
+          'message',
+          '驗證碼錯誤或已過期，請重新寄一次',
+        ),
+      ),
+    );
+    expect(c.session, isNull);
   });
 
   test('讀得懂登入連結，並存進安全儲存', () async {

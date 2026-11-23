@@ -124,7 +124,7 @@ nonisolated struct TBCorrection: Codable, Hashable, Identifiable {
     var id: String { "\(p)-\(s)-\(w)" }
     var pos: TBPos { TBPos(p: p, s: s, w: w) }
     var isPending: Bool { status == "pending" }
-    var sourceName: String { source == "ai" ? "Apple Intelligence" : source == "manual" ? "手動修改" : "字典比對" }
+    var sourceName: String { source == "ai" ? "Apple Intelligence" : source == "cloud_ai" ? "捲字雲端 AI" : source == "manual" ? "手動修改" : "字典比對" }
 }
 
 nonisolated enum TBText {

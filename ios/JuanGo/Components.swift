@@ -118,26 +118,6 @@ struct Chip: View {
     }
 }
 
-struct Toast: View {
-    let text: String
-    var action: (() -> Void)?
-    var onClose: () -> Void
-    var body: some View {
-        HStack {
-            LIcon("checkmark.circle.fill").foregroundStyle(Color.knowInk).font(.app(.title3)).accessibilityHidden(true)
-            Button { action?() } label: {
-                HStack(spacing: 4) { Text(text); if action != nil { LIcon("chevron.right") } }
-                    .font(.app(.subheadline, .bold)).foregroundStyle(.tint)
-            }.buttonStyle(.plain)
-            Spacer()
-            Button(action: onClose) { LIcon("xmark").font(.app(.subheadline, .bold)) }.buttonStyle(.plain).accessibilityLabel("關閉")
-        }
-        .padding(.horizontal, 16).padding(.vertical, 12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
-        .transition(.move(edge: .bottom).combined(with: .opacity))
-    }
-}
-
 /// Identifiable wrapper so a looked-up term can drive `.sheet(item:)`.
 struct LookupTerm: Identifiable { let term: String; var id: String { term } }
 

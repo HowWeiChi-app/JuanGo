@@ -78,6 +78,10 @@ class Cloud extends ChangeNotifier {
   Cloud._(this._client, this._vault);
   static Cloud shared = Cloud._(http.Client(), _SecureVault());
 
+  /// 好友和房間的連結（juango://friend/…、juango://room/…）交給畫面處理；畫面還沒準備好就先記著
+  static void Function(Uri)? onShareLink;
+  static Uri? pendingShareLink;
+
   @visibleForTesting
   static void resetForTest(http.Client client, CloudVault vault) =>
       shared = Cloud._(client, vault);
@@ -131,14 +135,62 @@ class Cloud extends ChangeNotifier {
 
   // MARK: 登入
 
-  Future<void> sendLink(String email) async {
+  /// 寄 6 位數驗證碼到 Email（Supabase 信件範本顯示 {{ .Token }}）。
+  /// 驗證碼在哪台裝置看信都能用，不用像連結一樣跳回 App
+  Future<void> sendCode(String email) async {
     await _send(
-      Uri.parse('${CloudConfig.url}/auth/v1/otp')
-          .replace(queryParameters: {'redirect_to': CloudConfig.redirect}),
+      Uri.parse('${CloudConfig.url}/auth/v1/otp'),
       'POST',
-      json: {'email': email.trim(), 'create_user': true},
+      json: {'email': email.trim().toLowerCase(), 'create_user': true},
       auth: false,
     );
+  }
+
+  /// 用信裡的驗證碼登入，登入後同步一次，回傳要顯示的話
+  Future<String> verify(String email, String code) async {
+    final String body;
+    try {
+      body = await _send(
+        Uri.parse('${CloudConfig.url}/auth/v1/verify'),
+        'POST',
+        json: {
+          'type': 'email',
+          'email': email.trim().toLowerCase(),
+          'token': code.replaceAll(RegExp(r'\D'), ''),
+        },
+        auth: false,
+      );
+    } on _HttpFailure catch (e) {
+      if (e.status == 400 || e.status == 401 || e.status == 403) {
+        throw const CloudFailure('驗證碼錯誤或已過期，請重新寄一次');
+      }
+      rethrow;
+    }
+    final j = jsonDecode(body);
+    final access = j is Map ? j['access_token'] : null;
+    final refresh = j is Map ? j['refresh_token'] : null;
+    Map<String, dynamic>? claims;
+    if (access is String) claims = _claims(access);
+    final sub = claims == null ? null : claims['sub'];
+    if (access is! String || refresh is! String || sub is! String) {
+      throw const CloudFailure('登入失敗：看不懂登入資料');
+    }
+    _store(
+      CloudSession(
+        accessToken: access,
+        refreshToken: refresh,
+        expiresAt: _expiry(j['expires_in'] as num? ?? 3600),
+        userId: sub,
+        email: claims?['email'] as String? ?? email.trim(),
+      ),
+    );
+    notifyListeners();
+    try {
+      final r = await sync();
+      return '已登入 ${session?.email ?? ''}（$r）';
+    } catch (e) {
+      return '已登入 ${session?.email ?? ''}，但同步失敗：$e';
+    }
   }
 
   /// 收到 juango://login-callback：登入成功就同步一次
@@ -146,6 +198,16 @@ class Cloud extends ChangeNotifier {
     final raw = uri.toString();
     if (raw == _lastLink) return; // 畫面重建時系統可能再給一次同一個連結
     _lastLink = raw;
+    if (uri.scheme == 'juango' &&
+        (uri.host == 'friend' || uri.host == 'room')) {
+      final h = onShareLink;
+      if (h != null) {
+        h(uri);
+      } else {
+        pendingShareLink = uri;
+      }
+      return;
+    }
     if (!handle(uri)) {
       notifyListeners();
       return;

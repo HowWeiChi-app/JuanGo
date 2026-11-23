@@ -25,18 +25,6 @@ for c in cases["usage"]! {
     let got = WordQuota.usage(c["used"] as! Int, unlimited: c["unlimited"] as! Bool)
     check(got == c["text"] as? String, "usage \(c["used"]!): got \(got ?? "nil")")
 }
-func countdown(_ j: [String: Any]) -> WordQuota.Countdown {
-    WordQuota.Countdown(overSince: j["overSince"] as? Int, deleteOn: j["deleteOn"] as? Int, lastStart: j["lastStart"] as? Int,
-                        shown7: j["shown7"] as? Bool ?? false, shown1: j["shown1"] as? Bool ?? false)
-}
-for c in cases["countdown"]! {
-    let note = c["note"] as! String, today = c["today"] as! Int
-    let got = WordQuota.countdown(countdown(c["before"] as! [String: Any]), used: c["used"] as! Int,
-                                  unlimited: c["unlimited"] as! Bool, today: today)
-    check(got == countdown(c["after"] as! [String: Any]), "countdown: \(note) got \(got)")
-    check(WordQuota.reminder(got, today: today) == c["reminder"] as? Int, "reminder: \(note)")
-    check(WordQuota.due(got, today: today) == c["due"] as! Bool, "due: \(note)")
-}
 let total = cases.values.map(\.count).reduce(0, +)
 print(failed == 0 ? "WordQuota: \(total) 個案例都通過" : "WordQuota: \(failed) 個失敗")
 exit(failed == 0 ? 0 : 1)

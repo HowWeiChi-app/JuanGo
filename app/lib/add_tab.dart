@@ -28,8 +28,6 @@ class _AddTabState extends State<AddTab> {
   final _search = TextEditingController();
   final _focus = FocusNode();
   WordList? _destination;
-  String? _toast;
-  Timer? _toastTimer;
 
   String get _query => _search.text.trim();
 
@@ -37,16 +35,12 @@ class _AddTabState extends State<AddTab> {
   void dispose() {
     _search.dispose();
     _focus.dispose();
-    _toastTimer?.cancel();
     super.dispose();
   }
 
-  void _showToast(String text) {
-    _toastTimer?.cancel();
-    setState(() => _toast = text);
-    _toastTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted) setState(() => _toast = null);
-    });
+  /// 加入結果、錯誤一律用 alert（以前是畫面下方自己跳出來、3 秒後消失的提示）
+  void _notice(String text) {
+    if (mounted) unawaited(showAlert(context, text));
   }
 
   void _lookup(String term) {
@@ -57,7 +51,7 @@ class _AddTabState extends State<AddTab> {
       onAdded: (_) {
         _search.clear();
         _focus.unfocus();
-        _showToast(
+        _notice(
           _destination != null ? '已加入「${_destination!.name}」' : '已加入我的單字',
         );
       },
@@ -83,9 +77,9 @@ class _AddTabState extends State<AddTab> {
     onDone: (t) async {
       try {
         final f = await Cloud.shared.fetch(t);
-        if (mounted) await confirmImport(context, f, _showToast);
+        if (mounted) await confirmImport(context, f, _notice);
       } on CloudFailure catch (e) {
-        _showToast(e.message);
+        _notice(e.message);
       }
     },
   );
@@ -96,14 +90,14 @@ class _AddTabState extends State<AddTab> {
       if (file == null || !mounted) return;
       final (name, text) = file;
       if (name.toLowerCase().endsWith('.json')) {
-        await confirmImport(context, AppStore.parseFile(text), _showToast);
+        await confirmImport(context, AppStore.parseFile(text), _notice);
       } else {
         _openCandidates(text);
       }
     } on FormatException catch (e) {
-      _showToast(e.message);
+      _notice(e.message);
     } catch (_) {
-      _showToast('這個檔案讀不出來，請確認是 UTF-8 文字檔');
+      _notice('這個檔案讀不出來，請確認是 UTF-8 文字檔');
     }
   }
 
@@ -112,7 +106,7 @@ class _AddTabState extends State<AddTab> {
     final text = data?.text ?? '';
     if (!mounted) return;
     if (text.trim().isEmpty) {
-      _showToast('剪貼簿裡沒有文字');
+      _notice('剪貼簿裡沒有文字');
     } else {
       _openCandidates(text);
     }
@@ -122,7 +116,7 @@ class _AddTabState extends State<AddTab> {
     context,
     Candidates(text, fromFile: true),
     destination: _destination,
-    onDone: (n) => _showToast('已加入 $n 個單字'),
+    onDone: (n) => _notice('已加入 $n 個單字'),
   );
 
   List<Widget> _suggestionSlivers(Palette p) {
@@ -288,30 +282,16 @@ class _AddTabState extends State<AddTab> {
         if (_destination != null &&
             !_store.lists.any((l) => l.id == _destination!.id))
           _destination = null;
-        return Stack(
-          children: [
-            LargePage(
-              title: '新增',
-              search: SearchBox(
-                controller: _search,
-                focus: _focus,
-                hint: '輸入英文單字或中文意思',
-                onChanged: (_) => setState(() {}),
-                onSubmit: _submit,
-              ),
-              slivers: _query.isEmpty ? _mainSlivers(p) : _suggestionSlivers(p),
-            ),
-            if (_toast != null)
-              Positioned(
-                left: 20,
-                right: 20,
-                bottom: BottomInset.of(context),
-                child: Toast(
-                  text: _toast!,
-                  onClose: () => setState(() => _toast = null),
-                ),
-              ),
-          ],
+        return LargePage(
+          title: '新增',
+          search: SearchBox(
+            controller: _search,
+            focus: _focus,
+            hint: '輸入英文單字或中文意思',
+            onChanged: (_) => setState(() {}),
+            onSubmit: _submit,
+          ),
+          slivers: _query.isEmpty ? _mainSlivers(p) : _suggestionSlivers(p),
         );
       },
     );

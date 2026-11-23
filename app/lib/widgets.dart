@@ -1316,7 +1316,7 @@ class _AlertBox extends StatelessWidget {
   }
 }
 
-/// 確認動作：底部的確認面板（iOS 的 confirmationDialog）
+/// 確認動作：置中的確認 alert（和 iPhone 版的 .alert 相同），左邊「取消」、右邊確認
 Future<void> confirmAction(
   BuildContext c,
   String title, {
@@ -1324,6 +1324,29 @@ Future<void> confirmAction(
   required String label,
   required VoidCallback onConfirm,
   bool destructive = true,
+}) {
+  return showAlert(
+    c,
+    title,
+    message: message,
+    actions: [
+      const AlertAction('取消'),
+      AlertAction(
+        label,
+        onTap: onConfirm,
+        destructive: destructive,
+        bold: !destructive,
+      ),
+    ],
+  );
+}
+
+/// 選一個動作：底部面板列出幾個選項加「取消」（iOS 有多個按鈕的 confirmationDialog）
+Future<void> chooseAction(
+  BuildContext c,
+  String title, {
+  String? message,
+  required List<AlertAction> actions,
 }) {
   final p = Palette.of(c);
   return showModalBottomSheet(
@@ -1355,16 +1378,20 @@ Future<void> confirmAction(
               ),
             ],
             const SizedBox(height: 16),
-            PillButton(
-              label: label,
-              fg: destructive ? Colors.white : p.onAccent,
-              fill: destructive ? p.destructive : p.accent,
-              onTap: () {
-                Navigator.of(ctx).pop();
-                onConfirm();
-              },
-            ),
-            const SizedBox(height: 8),
+            for (final a in actions) ...[
+              PillButton(
+                label: a.label,
+                fg: a.destructive
+                    ? p.destructive
+                    : (a.bold ? p.onAccent : p.accent),
+                fill: a.bold ? p.accent : null,
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  a.onTap?.call();
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
             PillButton(label: '取消', onTap: () => Navigator.of(ctx).pop()),
           ],
         ),
@@ -1679,47 +1706,6 @@ class QuoteBlock extends StatelessWidget {
           child: ColoredBox(color: c),
         ),
       ],
-    );
-  }
-}
-
-class Toast extends StatelessWidget {
-  const Toast({super.key, required this.text, required this.onClose});
-  final String text;
-  final VoidCallback onClose;
-  @override
-  Widget build(BuildContext context) {
-    final p = Palette.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: menuSurface(p),
-        borderRadius: BorderRadius.circular(Radii.lg),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x33000000),
-            blurRadius: 18,
-            offset: Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.check_circle_rounded, size: 21, color: p.knowInk),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              text,
-              style: ts(F.sub, w: w7, c: p.accent),
-            ),
-          ),
-          Tap(
-            label: '關閉',
-            onTap: onClose,
-            child: Icon(Icons.close_rounded, size: 19, color: p.ink),
-          ),
-        ],
-      ),
     );
   }
 }

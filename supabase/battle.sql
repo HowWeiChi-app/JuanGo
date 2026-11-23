@@ -1,3 +1,5 @@
+-- ⚠️ 已經在用的資料庫不要單獨重跑這個檔：它會把 battle_join、battle_quit 等換回最早的版本。
+--    真的重跑了，要依序再跑：battle_words.sql → battle_ranked.sql → battle_social.sql → battle_lobby.sql → subscriptions.sql → battle_grants.sql。
 -- JuanGo live battles: 5 rounds, same questions, faster right answers score more, the last round counts 1.5x.
 -- Run once in Supabase → SQL Editor, then run battle_words.sql.
 --
@@ -636,3 +638,22 @@ end $$;
 grant execute on function public.battle_me(int), public.battle_set_name(text, int), public.battle_find(int), public.battle_cancel_find(),
   public.battle_create_room(int), public.battle_join(text, int), public.battle_state(uuid),
   public.battle_answer(uuid, int, int, int), public.battle_quit(uuid) to authenticated;
+
+-- 上面的迴圈也會收回後面幾個檔（battle_ranked／battle_social／battle_lobby）的函式，
+-- 重跑這個檔時把 App 會呼叫的還回去（和 battle_grants.sql 同一份清單；還沒建立的函式自動跳過）
+do $$
+declare f text;
+begin
+  for f in select p.oid::regprocedure::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+           where n.nspname = 'public' and p.proname = any (array[
+             'battle_rematch', 'battle_board', 'battle_report', 'battle_block', 'battle_blocked', 'battle_unblock',
+             'battle_set_hidden', 'battle_dev_limit', 'battle_retest_done',
+             'battle_room_add_bot', 'battle_room_set_public', 'battle_public_rooms', 'battle_join_public',
+             'battle_add_friend', 'battle_remove_friend', 'battle_friend_list', 'battle_tier_detail',
+             'battle_room_state', 'battle_room_ready', 'battle_room_start', 'battle_room_kick',
+             'battle_room_invite', 'battle_my_invites', 'battle_invite_dismiss', 'battle_room_invited'])
+  loop
+    execute format('revoke all on function %s from public, anon', f);
+    execute format('grant execute on function %s to authenticated', f);
+  end loop;
+end $$;

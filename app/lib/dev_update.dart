@@ -13,7 +13,7 @@ import 'pro.dart';
 import 'widgets.dart';
 
 /// 這支 App 的開發版編號，和 pubspec.yaml 版本號 + 後面的數字相同
-const devBuild = 7;
+const devBuild = 10;
 
 class DevUpdate {
   /// 一次開啟只問一次

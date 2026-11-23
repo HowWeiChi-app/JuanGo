@@ -2,6 +2,7 @@
 
 import 'package:material_ui/material_ui.dart';
 
+import 'cloud_ai.dart';
 import 'demo.dart';
 import 'dictionary.dart';
 import 'exam.dart';
@@ -386,6 +387,8 @@ class _ExploreCardState extends State<ExploreCard> {
               style: ts(F.sub),
               onTap: widget.onLookup,
             ),
+          if (e.ex.isEmpty && CloudAI.available)
+            _CloudExample(entry: e, onLookup: widget.onLookup),
           if (e.alt.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text('也寫作：${e.alt.join(', ')}', style: ts(F.cap, c: p.sec)),
@@ -593,6 +596,89 @@ class _ExploreCardState extends State<ExploreCard> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Pro：字典沒有例句的字，請雲端 AI 寫一句（按了才問，不會在背景用掉每月次數）
+class _CloudExample extends StatefulWidget {
+  const _CloudExample({required this.entry, required this.onLookup});
+  final DictEntry entry;
+  final ValueChanged<String> onLookup;
+  @override
+  State<_CloudExample> createState() => _CloudExampleState();
+}
+
+class _CloudExampleState extends State<_CloudExample> {
+  ({String en, String zh})? _ex;
+  bool _busy = false;
+  String? _error;
+
+  Future<void> _ask() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final r = await CloudAI.example(widget.entry);
+      if (mounted) setState(() => r == null ? _error = 'AI 這次沒寫出合適的句子，再試一次' : _ex = r);
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Palette.of(context);
+    final ex = _ex;
+    if (ex != null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TappableSentence(
+              sentence: ex.en,
+              highlight: widget.entry.w,
+              style: ts(F.body, w: w5),
+              onTap: widget.onLookup,
+            ),
+            if (AppSettings.shared.showTranslation) ...[
+              const SizedBox(height: 6),
+              Text(ex.zh, style: ts(F.sub, c: p.sec)),
+            ],
+            const SizedBox(height: 4),
+            Text('AI 例句', style: ts(F.cap, c: p.ter)),
+          ],
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Tap(
+            onTap: _busy ? null : _ask,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.auto_awesome_rounded, size: 18, color: p.accent),
+                const SizedBox(width: 6),
+                Text(
+                  _busy ? 'AI 寫例句中…' : 'AI 寫一句例句',
+                  style: ts(F.sub, w: w6, c: p.accent),
+                ),
+              ],
+            ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 4),
+            Text(_error!, style: ts(F.cap, c: p.sec)),
+          ],
+        ],
       ),
     );
   }

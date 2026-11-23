@@ -69,8 +69,9 @@ struct WordsTab: View {
                 }
             }
             .navigationDestination(for: Word.self) { WordDetailView(word: $0) }
-            .confirmationDialog("刪除 \(selection.count) 個單字？", isPresented: $confirmBulkDelete, titleVisibility: .visible) {
+            .alert("刪除 \(selection.count) 個單字？", isPresented: $confirmBulkDelete) {
                 Button("刪除", role: .destructive) { deleteSelected() }
+                Button("取消", role: .cancel) {}
             } message: { Text("這些字的學習進度會一起刪除；每天的練習紀錄會保留。") }
             .navigationDestination(item: $debugWord) { WordDetailView(word: $0) }
             .task {   // simulator testing: SIMCTL_CHILD_JUANGO_WORD=reduce opens that word's page
@@ -203,7 +204,7 @@ struct WordsTab: View {
                 Button("合併到正確的字") { confirmMerge = true }
                     .buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, height: 44, glass: true))
                     // on the button, so the confirmation points at it rather than at the top of the screen
-                    .confirmationDialog("合併 \(dups.count) 個重複字？", isPresented: $confirmMerge, titleVisibility: .visible) {
+                    .alert("合併 \(dups.count) 個重複字？", isPresented: $confirmMerge) {
                         Button("合併並刪除重複的 \(dups.count) 筆", role: .destructive) { merge(dups) }
                         Button("取消", role: .cancel) {}
                     } message: {
@@ -627,16 +628,19 @@ struct WordDetailView: View {
                 try? ctx.save()
             }
         }
-        .confirmationDialog("刪除「\(word.term)」？", isPresented: $confirmDelete, titleVisibility: .visible) {
+        .alert("刪除「\(word.term)」？", isPresented: $confirmDelete) {
             Button("刪除", role: .destructive) { dismiss(); Library.remove(word, in: ctx) }
+            Button("取消", role: .cancel) {}
         } message: { Text("這個字的學習進度會一起刪除；每天的練習紀錄會保留。") }
-        .confirmationDialog("改用字典的解釋？", isPresented: $confirmDictMeaning, titleVisibility: .visible) {
+        .alert("改用字典的解釋？", isPresented: $confirmDictMeaning) {
             Button("改用") { if let d = dictMeanings { word.meanings = d; try? ctx.save() } }
+            Button("取消", role: .cancel) {}
         } message: {
             Text("目前：\(word.meanings.joined(separator: "、"))\n字典：\((dictMeanings ?? []).joined(separator: "、"))")
         }
-        .confirmationDialog("重設「\(word.term)」的學習進度？", isPresented: $confirmReset, titleVisibility: .visible) {
+        .alert("重設「\(word.term)」的學習進度？", isPresented: $confirmReset) {
             Button("重設", role: .destructive) { word.srsLevel = 0; word.dueDate = nil; word.reviewCount = 0; try? ctx.save() }
+            Button("取消", role: .cancel) {}
         } message: { Text("這個字會回到「未學」，之後當作新字重新練習。") }
     }
 
