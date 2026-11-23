@@ -892,7 +892,9 @@ begin
       select r.answer, case when side = 1 then r.p1_pick else r.p2_pick end as pick,
              case when side = 1 then r.p1_ms else r.p2_ms end as ms_
       from battle_rounds r where r.match_id = p_match and r.closed_at is not null) x;
-    insert into battle_tier_stats (tier, games, avg_correct, avg_ms) values (v_tier, 1, c, ms)
+    -- a tier's first game is blended into the defaults (7 correct, 4.5 s) like every later one,
+    -- so one odd game (an auto-play test answering in 0.7 s) can't become the whole tier's normal
+    insert into battle_tier_stats (tier, games, avg_correct, avg_ms) values (v_tier, 1, 7 * 0.95 + c * 0.05, 4500 * 0.95 + ms * 0.05)
     on conflict (tier) do update set games = battle_tier_stats.games + 1,
       avg_correct = battle_tier_stats.avg_correct * 0.95 + excluded.avg_correct * 0.05,
       avg_ms = battle_tier_stats.avg_ms * 0.95 + excluded.avg_ms * 0.05;
