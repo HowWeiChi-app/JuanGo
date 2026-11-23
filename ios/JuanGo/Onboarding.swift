@@ -2,11 +2,20 @@ import SwiftUI
 
 struct OnboardingView: View {
     @Environment(AppSettings.self) private var settings
-    @State private var page = 0
+    /// Only the level test and its result, for battles: no skipping, and the result page hands the level back.
+    var testOnly = false
+    var onTested: (String) -> Void = { _ in }
+    @State private var page: Int
     @State private var test = LevelTest()
     /// the option just tapped (-1: 不知道), shown in colour for a moment before the next question
     @State private var shown: Int?
     @State private var unsupportedLanguage = false
+
+    init(testOnly: Bool = false, onTested: @escaping (String) -> Void = { _ in }) {
+        self.testOnly = testOnly
+        self.onTested = onTested
+        _page = State(initialValue: testOnly ? 1 : 0)
+    }
 
     var body: some View {
         @Bindable var settings = settings
@@ -24,7 +33,7 @@ struct OnboardingView: View {
             .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
                                     removal: .move(edge: .leading).combined(with: .opacity)))
             bottomBar.padding(.horizontal, 20)
-            PageDots(count: 5, index: page).padding(.vertical, 14)
+            if testOnly { Color.clear.frame(height: 14) } else { PageDots(count: 5, index: page).padding(.vertical, 14) }
         }
         .animation(.spring(duration: 0.45), value: page)
         #if DEBUG
@@ -305,7 +314,7 @@ struct OnboardingView: View {
 
     @ViewBuilder private var bottomBar: some View {
         HStack(spacing: 10) {
-            if page > 0 {
+            if page > 0 && !testOnly {
                 Button { back() } label: { LIcon("chevron.left").font(.app(.headline)) }.accessibilityLabel("上一步")
                     .buttonStyle(PillButtonStyle()).frame(width: 64)
             }
@@ -316,7 +325,9 @@ struct OnboardingView: View {
                     .buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
             case 1:
                 Button("撤銷") { test.undo() }.buttonStyle(PillButtonStyle(foreground: .secondary)).disabled(test.picks.isEmpty || shown != nil)
-                Button("略過") { finishTest() }.buttonStyle(PillButtonStyle()).frame(width: 88)
+                if !testOnly { Button("略過") { finishTest() }.buttonStyle(PillButtonStyle()).frame(width: 88) }
+            case 2 where testOnly:
+                Button("開始對戰") { onTested(test.estimate) }.buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
             case 2:
                 Button("設定學習目標") { page = 3 }.buttonStyle(PillButtonStyle(fill: .themeAccent, foreground: .onAccent, glass: true))
             case 3:
@@ -334,6 +345,8 @@ struct OnboardingView: View {
     }
 
     private func finishTest() {
+        // only a test answered to the end counts for battles; 不知道 is an answer, 略過 is not
+        if test.isDone { settings.levelTested = true }
         if !test.picks.isEmpty { settings.level = test.estimate; page = 2 } else { page = 3 }
     }
 }

@@ -41,6 +41,17 @@ struct ScanResult: Identifiable {
     var glossary: [GlossaryEntry] = []
 }
 
+/// The one Vision text-recognition setup, shared by the word scanner and the textbook shelf (課文書架).
+nonisolated enum TextRecognition {
+    static func request(languages: [String]) -> VNRecognizeTextRequest {
+        let req = VNRecognizeTextRequest()
+        req.recognitionLevel = .accurate
+        req.recognitionLanguages = languages
+        req.usesLanguageCorrection = true
+        return req
+    }
+}
+
 enum PhotoScanner {
     /// Redraws the photo upright (so Vision boxes map straight onto it) and caps its size.
     static func upright(_ image: UIImage, maxSide: CGFloat = 2400) -> UIImage {
@@ -83,19 +94,23 @@ enum PhotoScanner {
     nonisolated private static func recognizeWords(_ cg: CGImage) async -> ([(text: String, rect: CGRect, loc: Int)], String, [(text: String, box: CGRect)]) {
         await withCheckedContinuation { cont in
             DispatchQueue.global(qos: .userInitiated).async {
-                let req = VNRecognizeTextRequest()
-                req.recognitionLevel = .accurate
                 // Chinese too: word lists print 中文意思 next to each word, and an English-only
                 // recogniser turns those characters into junk "words" (FA, EA…).
-                req.recognitionLanguages = ["zh-Hant", "en-US"]
-                req.usesLanguageCorrection = true
+                let req = TextRecognition.request(languages: ["zh-Hant", "en-US"])
                 try? VNImageRequestHandler(cgImage: cg, orientation: .up).perform([req])
                 let ink = InkMap(cg)
+                // lines cut off at the photo's edge and text printed on pictures (map labels, speech bubbles) aren't offered
+                let results = (req.results ?? []).filter { $0.topCandidates(1).first != nil }
+                let boxes = results.map { o in
+                    PageReader.Line(words: [TBWord(t: o.topCandidates(1)[0].string)],
+                                    box: CGRect(x: o.boundingBox.minX, y: 1 - o.boundingBox.maxY, width: o.boundingBox.width, height: o.boundingBox.height))
+                }
+                let keep = PageCleaner.regions(boxes, picture: PictureMap(cg), mode: .list).keep
                 var out: [(text: String, rect: CGRect, loc: Int)] = []
                 var full = ""
                 var lines: [(text: String, box: CGRect)] = []
                 var hyphenated: Int?          // index of a word broken across lines ("trans-")
-                for obs in req.results ?? [] {
+                for (k, obs) in results.enumerated() where keep[k] {
                     guard let cand = obs.topCandidates(1).first else { continue }
                     let s = cand.string
                     lines.append((s, obs.boundingBox))

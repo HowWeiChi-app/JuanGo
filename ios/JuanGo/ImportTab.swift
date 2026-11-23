@@ -25,6 +25,7 @@ struct ImportTab: View {
     @State private var candidates: OCRCandidates?
     @State private var scan: ScanResult?
     @State private var busy = false
+    @State private var showShelf = false
 
     private var suggestions: [DictEntry] { Dictionary_.suggestions(for: query) }
 
@@ -45,6 +46,21 @@ struct ImportTab: View {
                         }
                     } footer: {
                         Text("查過的字會存在這裡。")
+                    }
+                    Section {
+                        Button { showShelf = true } label: {
+                            HStack {
+                                Label { Text("課文書架").foregroundStyle(.primary) } icon: { LIcon("books.vertical").foregroundStyle(.tint) }
+                                Spacer()
+                                if !ProStore.shared.has(.textbook) {
+                                    Label("Pro", pulso: "lock.fill").labelStyle(.titleAndIcon)
+                                        .font(.app(.caption, .semibold)).foregroundStyle(.secondary)
+                                }
+                                LIcon("chevron.right").font(.app(.footnote, .semibold)).foregroundStyle(.tertiary)
+                            }
+                        }
+                    } footer: {
+                        Text("掃描整篇課文，變成可以點字查詢的電子書。")
                     }
                     Section("其他加入方式") {
                         sourceRow("拍照掃描", "camera.viewfinder") { showCamera = true }
@@ -68,14 +84,21 @@ struct ImportTab: View {
             }.listRowBackground(Color.cardFill) }.themedBackground()
             .listStyle(.insetGrouped)
             .scrollDismissesKeyboard(.immediately)
-            .safeAreaInset(edge: .bottom) {
-                if let toast {
-                    Toast(text: toast, action: nil) { withAnimation { self.toast = nil } }.padding(.horizontal, 20)
-                }
+            // 加入結果、錯誤一律用 alert（以前是畫面下方自己跳出來的提示）
+            .alert(toast ?? "", isPresented: Binding(get: { toast != nil }, set: { if !$0 { toast = nil } })) {
+                Button("好", role: .cancel) {}
             }
             .overlay { if busy { ProgressView("正在辨識文字…").padding(24).background(.regularMaterial, in: .rect(cornerRadius: Radius.lg)) } }
             .navigationTitle("新增")
             .themedBackground()
+            .navigationDestination(isPresented: $showShelf) { BookshelfView() }
+            #if DEBUG
+            .task {   // device testing: JUANGO_TEXTBOOK=1 opens the shelf, JUANGO_TEXTBOOK_DEMO=1 adds a sample lesson
+                let env = ProcessInfo.processInfo.environment
+                if env["JUANGO_TEXTBOOK_DEMO"] == "1" { await Shelf.shared.addDemo() }
+                if env["JUANGO_TEXTBOOK"] != nil { showShelf = true }
+            }
+            #endif
             .sheet(item: $detail) { WordDetailSheet(word: $0) }
             .sheet(item: $lookup) { item in
                 WordConfirmSheet(term: item.term, destination: destination) { w in

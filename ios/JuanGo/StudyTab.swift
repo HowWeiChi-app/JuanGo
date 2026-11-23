@@ -13,6 +13,7 @@ struct StudyTab: View {
     @State private var flow: StudyRequest?
     @State private var showHistory = false
     @State private var exam: Exam?
+    @State private var showBattle = false
     /// Switches to the Explore tab when the daily goal needs more words than are saved.
     var onFindWords: () -> Void = {}
 
@@ -44,6 +45,10 @@ struct StudyTab: View {
                 } header: {
                     Text(Date.now.formatted(.dateTime.month().day().weekday(.wide).locale(.zh)))
                 }
+                // battles get a card of their own, so they don't read as one more row
+                Section { battleCard }
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
                 Section {
                     actionRow("自由練習", "沒學會的字隨機考", icon: { LIcon("infinity", size: 22).fontWeight(.semibold).foregroundStyle(Color.themeAccent) }) {
                         flow = StudyRequest(title: "自由練習", words: h.studyable.filter { !$0.isMastered }.shuffled())
@@ -92,7 +97,11 @@ struct StudyTab: View {
             .themedBackground()
             .fullScreenCover(item: $flow) { StudyFlow(request: $0) }
             .fullScreenCover(item: $exam) { ExamView(exam: $0) }
+            .fullScreenCover(isPresented: $showBattle) { BattleView() }
             #if DEBUG
+            .task {   // JUANGO_BATTLE=<step> opens the battle screen with sample data
+                if ProcessInfo.processInfo.environment["JUANGO_BATTLE"] != nil || BattleModel.autoDelay != nil { showBattle = true }
+            }
             .task {   // simulator testing: SIMCTL_CHILD_JUANGO_STUDY=setup | q:英翻中 | summary | streak
                 if ProcessInfo.processInfo.environment["JUANGO_STUDY"] != nil, flow == nil {
                     flow = StudyRequest(title: "我的單字", words: words.filter(\.inMyWords).shuffled())
@@ -244,6 +253,39 @@ struct StudyTab: View {
     }
 
     /// A tappable list row: icon, title over subtitle, chevron.
+    /// The way into 單字對戰: a theme-coloured card with what a match is like at a glance.
+    private var battleCard: some View {
+        Button { showBattle = true } label: {
+            HStack(alignment: .center, spacing: 14) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("單字對戰").font(.app(.title2, .bold))
+                    Text("即時配對，比準也比快").font(.app(.subheadline)).opacity(0.85)
+                    HStack(spacing: 6) {
+                        ForEach(["10 回合", "每題 10 秒", "積分配對"], id: \.self) { t in
+                            Text(t).font(.app(.caption, .semibold))
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                                .background(Capsule().fill(Color.onAccent.opacity(0.18)))
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+                Spacer(minLength: 0)
+                LIcon("bolt.fill").font(.app(size: 30, .bold))
+                    .frame(width: 64, height: 64)
+                    .background(Circle().fill(Color.onAccent.opacity(0.18)))
+            }
+            .foregroundStyle(Color.onAccent)
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                LinearGradient(colors: [Color.themeAccent, Color.themeAccent.opacity(0.82)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                in: RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("單字對戰，十回合即時對戰，比準也比快")
+    }
+
     private func actionRow<I: View>(_ title: String, _ sub: String, @ViewBuilder icon: () -> I, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 14) {

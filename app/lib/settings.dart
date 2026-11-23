@@ -16,7 +16,14 @@ class ExamPlan {
   static const reviewDays = 14;
   static const names = ['學測', '分科測驗', '會考', '英檢', '多益'];
 
-  ExamPlan._(this.name, this.top, this.daysLeft, this.remaining, this.perDay, this.capped);
+  ExamPlan._(
+    this.name,
+    this.top,
+    this.daysLeft,
+    this.remaining,
+    this.perDay,
+    this.capped,
+  );
   final String name;
   final int top, daysLeft;
 
@@ -33,31 +40,50 @@ class ExamPlan {
   /// 沒開倒數或考試日已過時回傳 null
   static ExamPlan? of(AppSettings s, Iterable<Word> words, int newToday) {
     if (!s.examOn) return null;
-    final days = startOfDay(s.examDate).difference(startOfDay(DateTime.now())).inHours ~/ 24;
+    final days =
+        startOfDay(s.examDate).difference(startOfDay(DateTime.now())).inHours ~/
+        24;
     if (days < 0) return null;
     final t = targets(s.examTop);
-    final learned = words.where((w) => !w.isNew && t.contains(w.term.toLowerCase())).length;
+    final learned = words
+        .where((w) => !w.isNew && t.contains(w.term.toLowerCase()))
+        .length;
     final remaining = max(0, t.length - learned);
     // 今天學的新字加回去，數字才不會越學越少
     final studyDays = days - reviewDays;
-    final needed = studyDays > 0 ? ((remaining + newToday) / studyDays).ceil() : 0;
-    return ExamPlan._(s.examName, s.examTop, days, remaining, min(100, needed), needed > 100);
+    final needed = studyDays > 0
+        ? ((remaining + newToday) / studyDays).ceil()
+        : 0;
+    return ExamPlan._(
+      s.examName,
+      s.examTop,
+      days,
+      remaining,
+      min(100, needed),
+      needed > 100,
+    );
   }
 
   static (int, Set<String>)? _cache;
   static Set<String> targets(int top) {
     final c = _cache;
     if (c != null && c.$1 == top) return c.$2;
-    final t = {for (var lv = 1; lv <= max(1, top); lv++) for (final e in Dict.entriesOfLevel('$lv')) e.w.toLowerCase()};
+    final t = {
+      for (var lv = 1; lv <= max(1, top); lv++)
+        for (final e in Dict.entriesOfLevel('$lv')) e.w.toLowerCase(),
+    };
     _cache = (top, t);
     return t;
   }
 
   /// 還沒加入的目標字：先簡單的級數，同一級裡打亂
   List<DictEntry> pool(Set<String> have) => [
-        for (var lv = 1; lv <= max(1, top); lv++)
-          ...(Dict.entriesOfLevel('$lv').where((e) => !have.contains(e.w.toLowerCase())).toList()..shuffle()),
-      ];
+    for (var lv = 1; lv <= max(1, top); lv++)
+      ...(Dict.entriesOfLevel('$lv')
+          .where((e) => !have.contains(e.w.toLowerCase()))
+          .toList()
+        ..shuffle()),
+  ];
 
   /// 還沒選日期前先用明年 1 月 20 日，大約是學測的時間
   static DateTime defaultDate() {
@@ -73,11 +99,27 @@ class AppSettings extends ChangeNotifier {
 
   SharedPreferences? _p;
 
-  bool onboarded = false, reminderOn = false, reminderAsked = false, muted = false;
-  bool showTranslation = true, haptics = true, exploreTipsDone = false, studyRulesSeen = false;
+  bool onboarded = false,
+      reminderOn = false,
+      reminderAsked = false,
+      muted = false;
+  bool showTranslation = true,
+      haptics = true,
+      exploreTipsDone = false,
+      studyRulesSeen = false;
   bool listShowMeaning = true, detailAutoSpeak = false, exploreShowIPA = true;
+
+  /// 18 題程度測驗有做完才是 true；線上對戰要先做完
+  bool levelTested = false;
+
+  /// 伺服器要這個人重新做程度測驗（排位賽）；新的程度送出後清掉
+  bool levelRetest = false;
   String language = 'zh-Hant', level = '3', themeID = 'phoenix';
-  int dailyGoal = 10, reminderMinutes = 20 * 60, appearance = 0, fontStyle = 0, practiceLimit = 20;
+  int dailyGoal = 10,
+      reminderMinutes = 20 * 60,
+      appearance = 0,
+      fontStyle = 0,
+      practiceLimit = 20;
   double speechRate = 0.45;
 
   // 考前倒數：開著的時候，每天的新字數由考試日期算出來（ExamPlan），不看 dailyGoal
@@ -95,6 +137,8 @@ class AppSettings extends ChangeNotifier {
   Future<void> load() async {
     final p = _p = await SharedPreferences.getInstance();
     onboarded = p.getBool('onboarded') ?? false;
+    levelTested = p.getBool('levelTested') ?? false;
+    levelRetest = p.getBool('levelRetest') ?? false;
     reminderOn = p.getBool('reminderOn') ?? false;
     reminderAsked = p.getBool('reminderAsked') ?? false;
     muted = p.getBool('muted') ?? false;
@@ -117,7 +161,9 @@ class AppSettings extends ChangeNotifier {
     examOn = p.getBool('examOn') ?? false;
     examName = p.getString('examName') ?? '學測';
     final stamp = p.getDouble('examDate') ?? 0;
-    examDate = stamp > 0 ? DateTime.fromMillisecondsSinceEpoch((stamp * 1000).round()) : ExamPlan.defaultDate();
+    examDate = stamp > 0
+        ? DateTime.fromMillisecondsSinceEpoch((stamp * 1000).round())
+        : ExamPlan.defaultDate();
     examTop = p.getInt('examTop') ?? 6;
     if (demoOn) {
       onboarded = true;
@@ -140,6 +186,8 @@ class AppSettings extends ChangeNotifier {
     final p = _p;
     if (p == null) return;
     p.setBool('onboarded', onboarded);
+    p.setBool('levelTested', levelTested);
+    p.setBool('levelRetest', levelRetest);
     p.setBool('reminderOn', reminderOn);
     p.setBool('reminderAsked', reminderAsked);
     p.setBool('muted', muted);
@@ -168,57 +216,70 @@ class AppSettings extends ChangeNotifier {
   /// 「自動唸單字」：設定頁和探索頁的喇叭是同一個開關
   bool get autoSpeak => !muted;
 
-  AppTheme get theme => AppTheme.all.firstWhere((t) => t.id == themeID, orElse: () => AppTheme.all.first);
+  AppTheme get theme => AppTheme.all.firstWhere(
+    (t) => t.id == themeID,
+    orElse: () => AppTheme.all.first,
+  );
 
-  ThemeMode get themeMode => const [ThemeMode.system, ThemeMode.light, ThemeMode.dark][appearance.clamp(0, 2)];
+  ThemeMode get themeMode => const [
+    ThemeMode.system,
+    ThemeMode.light,
+    ThemeMode.dark,
+  ][appearance.clamp(0, 2)];
 
   /// Android 沒有內建圓體，所以字體選項是 系統、襯線、等寬。編號和 iOS 相同，備份才能互通
-  String? get fontFamily => switch (fontStyle) { 2 => 'serif', 3 => 'monospace', _ => null };
+  String? get fontFamily => switch (fontStyle) {
+    2 => 'serif',
+    3 => 'monospace',
+    _ => null,
+  };
 
-  String get reminderText => '${reminderMinutes ~/ 60}:${(reminderMinutes % 60).toString().padLeft(2, '0')}';
+  String get reminderText =>
+      '${reminderMinutes ~/ 60}:${(reminderMinutes % 60).toString().padLeft(2, '0')}';
 
   // 備份檔裡的設定（欄位和 iOS 版相同）
   Map<String, Object> get backupValues => {
-        'level': level,
-        'dailyGoal': dailyGoal,
-        'reminderOn': reminderOn,
-        'reminderMinutes': reminderMinutes,
-        'appearance': appearance,
-        'fontStyle': fontStyle,
-        'themeID': themeID,
-        'muted': muted,
-        'showTranslation': showTranslation,
-        'haptics': haptics,
-        'speechRate': speechRate,
-        'listShowMeaning': listShowMeaning,
-        'detailAutoSpeak': detailAutoSpeak,
-        'exploreShowIPA': exploreShowIPA,
-        'examOn': examOn,
-        'examName': examName,
-        'examDate': examDate.millisecondsSinceEpoch / 1000,
-        'examTop': examTop,
-      };
+    'level': level,
+    'dailyGoal': dailyGoal,
+    'reminderOn': reminderOn,
+    'reminderMinutes': reminderMinutes,
+    'appearance': appearance,
+    'fontStyle': fontStyle,
+    'themeID': themeID,
+    'muted': muted,
+    'showTranslation': showTranslation,
+    'haptics': haptics,
+    'speechRate': speechRate,
+    'listShowMeaning': listShowMeaning,
+    'detailAutoSpeak': detailAutoSpeak,
+    'exploreShowIPA': exploreShowIPA,
+    'examOn': examOn,
+    'examName': examName,
+    'examDate': examDate.millisecondsSinceEpoch / 1000,
+    'examTop': examTop,
+  };
 
   void applyBackup(Map<String, dynamic> m) => update((s) {
-        T? v<T>(String k) => m[k] is T ? m[k] as T : null;
-        s.level = v<String>('level') ?? s.level;
-        s.dailyGoal = v<int>('dailyGoal') ?? s.dailyGoal;
-        s.reminderMinutes = v<int>('reminderMinutes') ?? s.reminderMinutes;
-        s.reminderOn = v<bool>('reminderOn') ?? s.reminderOn;
-        s.appearance = v<int>('appearance') ?? s.appearance;
-        s.fontStyle = v<int>('fontStyle') ?? s.fontStyle;
-        s.themeID = v<String>('themeID') ?? s.themeID;
-        s.muted = v<bool>('muted') ?? s.muted;
-        s.showTranslation = v<bool>('showTranslation') ?? s.showTranslation;
-        s.haptics = v<bool>('haptics') ?? s.haptics;
-        s.speechRate = v<num>('speechRate')?.toDouble() ?? s.speechRate;
-        s.listShowMeaning = v<bool>('listShowMeaning') ?? s.listShowMeaning;
-        s.detailAutoSpeak = v<bool>('detailAutoSpeak') ?? s.detailAutoSpeak;
-        s.exploreShowIPA = v<bool>('exploreShowIPA') ?? s.exploreShowIPA;
-        s.examOn = v<bool>('examOn') ?? s.examOn;
-        s.examName = v<String>('examName') ?? s.examName;
-        final stamp = v<num>('examDate');
-        if (stamp != null && stamp > 0) s.examDate = DateTime.fromMillisecondsSinceEpoch((stamp * 1000).round());
-        s.examTop = v<int>('examTop') ?? s.examTop;
-      });
+    T? v<T>(String k) => m[k] is T ? m[k] as T : null;
+    s.level = v<String>('level') ?? s.level;
+    s.dailyGoal = v<int>('dailyGoal') ?? s.dailyGoal;
+    s.reminderMinutes = v<int>('reminderMinutes') ?? s.reminderMinutes;
+    s.reminderOn = v<bool>('reminderOn') ?? s.reminderOn;
+    s.appearance = v<int>('appearance') ?? s.appearance;
+    s.fontStyle = v<int>('fontStyle') ?? s.fontStyle;
+    s.themeID = v<String>('themeID') ?? s.themeID;
+    s.muted = v<bool>('muted') ?? s.muted;
+    s.showTranslation = v<bool>('showTranslation') ?? s.showTranslation;
+    s.haptics = v<bool>('haptics') ?? s.haptics;
+    s.speechRate = v<num>('speechRate')?.toDouble() ?? s.speechRate;
+    s.listShowMeaning = v<bool>('listShowMeaning') ?? s.listShowMeaning;
+    s.detailAutoSpeak = v<bool>('detailAutoSpeak') ?? s.detailAutoSpeak;
+    s.exploreShowIPA = v<bool>('exploreShowIPA') ?? s.exploreShowIPA;
+    s.examOn = v<bool>('examOn') ?? s.examOn;
+    s.examName = v<String>('examName') ?? s.examName;
+    final stamp = v<num>('examDate');
+    if (stamp != null && stamp > 0)
+      s.examDate = DateTime.fromMillisecondsSinceEpoch((stamp * 1000).round());
+    s.examTop = v<int>('examTop') ?? s.examTop;
+  });
 }

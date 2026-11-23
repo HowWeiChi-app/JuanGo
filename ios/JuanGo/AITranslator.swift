@@ -27,7 +27,7 @@ struct AIWordInfo: Codable, Hashable {
 final class WordTranslator {
     static let shared = WordTranslator()
 
-    enum Provider: Equatable { case api, onDevice, none }
+    enum Provider: Equatable { case api, onDevice, cloud, none }
 
     private(set) var cache: [String: AIWordInfo]
     private(set) var working: Set<String> = []
@@ -49,6 +49,8 @@ final class WordTranslator {
         #if canImport(FoundationModels)
         if case .available = SystemLanguageModel.default.availability { return .onDevice }
         #endif
+        // Pro on an iPhone without Apple Intelligence: JuanGo's cloud AI (Agnes, within the monthly quota)
+        if CloudAI.available { return .cloud }
         return .none
     }
 
@@ -56,6 +58,7 @@ final class WordTranslator {
         switch provider {
         case .api: AppSettings.shared.apiModel
         case .onDevice: "Apple Intelligence（裝置端）"
+        case .cloud: "捲字雲端 AI（Pro）"
         case .none: AppSettings.shared.aiTranslate ? "Apple 翻譯（這台裝置不支援 AI）" : "關閉"
         }
     }
@@ -80,11 +83,16 @@ final class WordTranslator {
 
         var got: [String: AIWordInfo] = [:]
         let provider = provider
-        if provider == .api {
-            let s = AppSettings.shared, key = APIKey.value
+        if provider == .api || provider == .cloud {
+            let s = AppSettings.shared
             for chunk in stride(from: 0, to: todo.count, by: 25).map({ Array(todo[$0..<min($0 + 25, todo.count)]) }) {
-                do { got.merge(try await ChatAPI.translate(chunk, baseURL: s.apiBaseURL, model: s.apiModel, key: key)) { a, _ in a } }
-                catch { lastError = error.localizedDescription; break }
+                do {
+                    let r = provider == .api
+                        ? try await ChatAPI.translate(chunk, baseURL: s.apiBaseURL, model: s.apiModel, key: APIKey.value)
+                        : try await ChatAPI.translate(chunk, baseURL: CloudAI.baseURL, model: CloudAI.model,
+                                                      key: try await Cloud.shared.bearer(), cloud: true)
+                    got.merge(r) { a, _ in a }
+                } catch { lastError = error.localizedDescription; break }
             }
         }
         // Apple Intelligence for whatever the API didn't answer (or when there is no key)
@@ -143,12 +151,17 @@ nonisolated enum ChatAPI {
         return URL(string: b)
     }
 
-    static func translate(_ words: [String], baseURL: String, model: String, key: String) async throws -> [String: AIWordInfo] {
-        guard let url = endpoint(baseURL), url.scheme == "https" else { throw Failure(message: "API 網址要用 https://") }
+    static func translate(_ words: [String], baseURL: String, model: String, key: String, cloud: Bool = false) async throws -> [String: AIWordInfo] {
         let prompt = """
             Words: \(words.joined(separator: ", "))
             JSON only: {"word": {"pos": "n./v./adj.…", "meanings": ["1–3 common meanings"], "def": "short English definition", "ipa": ""}}
             """
+        return parse(try await complete(prompt, baseURL: baseURL, model: model, key: key, cloud: cloud), words: words)
+    }
+
+    /// One chat request; returns the reply's text.
+    static func complete(_ prompt: String, baseURL: String, model: String, key: String, cloud: Bool = false) async throws -> String {
+        guard let url = endpoint(baseURL), url.scheme == "https" else { throw Failure(message: "API 網址要用 https://") }
         let body: [String: Any] = [
             "model": model,
             "temperature": 0.2,
@@ -164,12 +177,13 @@ nonisolated enum ChatAPI {
         guard status == 200 else {
             let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
                 .flatMap { ($0["error"] as? [String: Any])?["message"] as? String }
-            throw Failure(message: status == 401 ? "API key 無效" : status == 429 ? "請求太頻繁，稍後再試" : (msg ?? "HTTP \(status)"))
+            throw Failure(message: cloud ? (msg ?? "雲端 AI 暫時不能用（HTTP \(status)）")
+                          : status == 401 ? "API key 無效" : status == 429 ? "請求太頻繁，稍後再試" : (msg ?? "HTTP \(status)"))
         }
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let content = ((root["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])?["content"] as? String
         else { throw Failure(message: "回應格式不對") }
-        return parse(content, words: words)
+        return content
     }
 
     /// The model's text → infos; tolerant of ```json fences and of extra text around the object.

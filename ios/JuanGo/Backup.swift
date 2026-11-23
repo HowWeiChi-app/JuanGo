@@ -424,8 +424,8 @@ private struct BackupImportConfirm: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        content.confirmationDialog(file?.title ?? "", isPresented: Binding(get: { file != nil }, set: { if !$0 { file = nil } }),
-                                   titleVisibility: .visible, presenting: file) { f in
+        content.alert(file?.title ?? "", isPresented: Binding(get: { file != nil }, set: { if !$0 { file = nil } }),
+                                   presenting: file) { f in
             let fits = fitting(f)
             Button(f.kind == .backup ? "合併還原" : fits.map { "加入前 \($0.count) 個" } ?? "加入清單") {
                 if let fits, fits.isEmpty { QuotaGate.shared.stopped() } else { done(Backup.restore(f, into: ctx, only: fits)) }

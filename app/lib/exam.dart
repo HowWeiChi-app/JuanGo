@@ -18,10 +18,10 @@ import 'widgets.dart';
 
 class ExamQuestion {
   ExamQuestion.fromJson(Map<String, dynamic> j)
-      : n = j['n'] as int,
-        stem = j['stem'] as String? ?? '',
-        options = List<String>.from(j['options'] as List? ?? const []),
-        answer = j['answer'] as int;
+    : n = j['n'] as int,
+      stem = j['stem'] as String? ?? '',
+      options = List<String>.from(j['options'] as List? ?? const []),
+      answer = j['answer'] as int;
   final int n, answer;
   final String stem;
   final List<String> options;
@@ -29,11 +29,13 @@ class ExamQuestion {
 
 class ExamGroup {
   ExamGroup.fromJson(Map<String, dynamic> j)
-      : section = j['section'] as String,
-        kind = j['kind'] as String,
-        passage = j['passage'] as String?,
-        shared = (j['shared'] as List?)?.cast<String>(),
-        questions = (j['questions'] as List).map((q) => ExamQuestion.fromJson(q as Map<String, dynamic>)).toList();
+    : section = j['section'] as String,
+      kind = j['kind'] as String,
+      passage = j['passage'] as String?,
+      shared = (j['shared'] as List?)?.cast<String>(),
+      questions = (j['questions'] as List)
+          .map((q) => ExamQuestion.fromJson(q as Map<String, dynamic>))
+          .toList();
   final String section;
 
   /// vocab、cloze、fill、structure、reading
@@ -51,9 +53,11 @@ class ExamGroup {
 
 class Exam {
   Exam.fromJson(Map<String, dynamic> j)
-      : year = j['year'] as int,
-        title = j['title'] as String,
-        groups = (j['groups'] as List).map((g) => ExamGroup.fromJson(g as Map<String, dynamic>)).toList();
+    : year = j['year'] as int,
+      title = j['title'] as String,
+      groups = (j['groups'] as List)
+          .map((g) => ExamGroup.fromJson(g as Map<String, dynamic>))
+          .toList();
   final int year;
   final String title;
   final List<ExamGroup> groups;
@@ -72,11 +76,14 @@ class ExamStore {
   static Future<void> load() async {
     loadFromJson(await rootBundle.loadString('assets/exams.json'));
     final saved = (await SharedPreferences.getInstance()).getString(_key);
-    if (saved != null) _scores = Map<String, String>.from(jsonDecode(saved) as Map);
+    if (saved != null)
+      _scores = Map<String, String>.from(jsonDecode(saved) as Map);
   }
 
   static void loadFromJson(String json) {
-    all = (jsonDecode(json) as List).map((e) => Exam.fromJson(e as Map<String, dynamic>)).toList();
+    all = (jsonDecode(json) as List)
+        .map((e) => Exam.fromJson(e as Map<String, dynamic>))
+        .toList();
     _years = null;
   }
 
@@ -86,7 +93,10 @@ class ExamStore {
       final m = <String, Set<int>>{};
       for (final e in all) {
         for (final g in e.groups.where((g) => _vocabKinds.contains(g.kind))) {
-          for (final o in [...?g.shared, for (final q in g.questions) ...q.options]) {
+          for (final o in [
+            ...?g.shared,
+            for (final q in g.questions) ...q.options,
+          ]) {
             if (o.contains(' ')) continue;
             final d = Dict.lookup(o);
             if (d != null) (m[d.w.toLowerCase()] ??= {}).add(e.year);
@@ -100,9 +110,17 @@ class ExamStore {
 
   static String? score(int year, String section) => _scores['$year-$section'];
 
-  static Future<void> save(int year, String section, int right, int total) async {
+  static Future<void> save(
+    int year,
+    String section,
+    int right,
+    int total,
+  ) async {
     _scores['$year-$section'] = '$right/$total';
-    (await SharedPreferences.getInstance()).setString(_key, jsonEncode(_scores));
+    (await SharedPreferences.getInstance()).setString(
+      _key,
+      jsonEncode(_scores),
+    );
   }
 }
 
@@ -117,8 +135,14 @@ class ExamYearsTag extends StatelessWidget {
     final p = Palette.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(color: p.hsnuMagentaFill, borderRadius: BorderRadius.circular(Radii.sm)),
-      child: Text('考過 ${ys.join('・')} 學測', style: ts(F.cap, w: w7, c: p.hsnuMagenta)),
+      decoration: BoxDecoration(
+        color: p.hsnuMagentaFill,
+        borderRadius: BorderRadius.circular(Radii.sm),
+      ),
+      child: Text(
+        '考過 ${ys.join('・')} 學測',
+        style: ts(F.cap, w: w7, c: p.hsnuMagenta),
+      ),
     );
   }
 }
@@ -150,7 +174,8 @@ class _ExamViewState extends State<ExamView> {
   _Item? get _current => _index < _run.length ? _run[_index] : null;
   bool _right(_Item i) => _picks[i.q.n] == i.q.answer;
   int _rightIn(Iterable<_Item> items) => items.where(_right).length;
-  Iterable<_Item> _part(String s) => _run.where((i) => exam.groups[i.group].section == s);
+  Iterable<_Item> _part(String s) =>
+      _run.where((i) => exam.groups[i.group].section == s);
 
   @override
   void dispose() {
@@ -159,16 +184,16 @@ class _ExamViewState extends State<ExamView> {
   }
 
   void _start(String? s) => setState(() {
-        _section = s ?? '整份';
-        _run = [
-          for (final (i, g) in exam.groups.indexed)
-            if (s == null || g.section == s)
-              for (final q in g.questions) _Item(i, q),
-        ];
-        _index = 0;
-        _picks.clear();
-        _finished = _added = false;
-      });
+    _section = s ?? '整份';
+    _run = [
+      for (final (i, g) in exam.groups.indexed)
+        if (s == null || g.section == s)
+          for (final q in g.questions) _Item(i, q),
+    ];
+    _index = 0;
+    _picks.clear();
+    _finished = _added = false;
+  });
 
   void _toMenu() {
     _auto?.cancel();
@@ -201,7 +226,8 @@ class _ExamViewState extends State<ExamView> {
     if (_section == '整份') {
       for (final s in ExamStore.sections) {
         final part = _part(s).toList();
-        if (part.isNotEmpty) ExamStore.save(exam.year, s, _rightIn(part), part.length);
+        if (part.isNotEmpty)
+          ExamStore.save(exam.year, s, _rightIn(part), part.length);
       }
     }
     setState(() => _finished = true);
@@ -228,83 +254,137 @@ class _ExamViewState extends State<ExamView> {
     final top = _run.isEmpty || _finished;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      child: Row(children: [
-        CircleBtn(
-          icon: top ? Icons.close_rounded : Icons.chevron_left_rounded,
-          label: top ? '關閉' : '回到題型',
-          onTap: top ? () => Navigator.of(context).pop() : _toMenu,
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(exam.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: ts(F.headline, w: w6)),
-            if (!top) Text('$_section・第 ${_index + 1 > _run.length ? _run.length : _index + 1} / ${_run.length} 題', style: ts(F.cap, c: p.sec)),
-          ]),
-        ),
-      ]),
+      child: Row(
+        children: [
+          CircleBtn(
+            icon: top ? Icons.close_rounded : Icons.chevron_left_rounded,
+            label: top ? '關閉' : '回到題型',
+            onTap: top ? () => Navigator.of(context).pop() : _toMenu,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  exam.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: ts(F.headline, w: w6),
+                ),
+                if (!top)
+                  Text(
+                    '$_section・第 ${_index + 1 > _run.length ? _run.length : _index + 1} / ${_run.length} 題',
+                    style: ts(F.cap, c: p.sec),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _menu(Palette p, double bottom) => CustomScrollView(slivers: [
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
-          sliver: SliverToBoxAdapter(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              PrimaryButton(label: '整份作答・${exam.questionCount} 題', icon: Icons.description_rounded, onTap: () => _start(null)),
+  Widget _menu(Palette p, double bottom) => CustomScrollView(
+    slivers: [
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
+        sliver: SliverToBoxAdapter(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              PrimaryButton(
+                label: '整份作答・${exam.questionCount} 題',
+                icon: Icons.description_rounded,
+                onTap: () => _start(null),
+              ),
               const SizedBox(height: 8),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Text('選擇題部分，題目與答案取自大考中心公布的試題。選項是圖片的題目、混合題與非選擇題不收錄。', style: ts(F.foot, c: p.sec)),
+                child: Text(
+                  '選擇題部分，題目與答案取自大考中心公布的試題。選項是圖片的題目、混合題與非選擇題不收錄。',
+                  style: ts(F.foot, c: p.sec),
+                ),
               ),
-            ]),
+            ],
           ),
         ),
-        Sec(header: '依題型練習', children: [
+      ),
+      Sec(
+        header: '依題型練習',
+        children: [
           for (final s in ExamStore.sections)
-            if (exam.groups.where((g) => g.section == s).fold<int>(0, (n, g) => n + g.questions.length) case final n when n > 0)
+            if (exam.groups
+                    .where((g) => g.section == s)
+                    .fold<int>(0, (n, g) => n + g.questions.length)
+                case final n when n > 0)
               RowTile(
                 title: s,
-                subtitle: '$n 題${ExamStore.score(exam.year, s) == null ? '' : '・上次答對 ${ExamStore.score(exam.year, s)}'}',
+                subtitle:
+                    '$n 題${ExamStore.score(exam.year, s) == null ? '' : '・上次答對 ${ExamStore.score(exam.year, s)}'}',
                 chevron: true,
                 onTap: () => _start(s),
               ),
-        ]),
-        SliverToBoxAdapter(child: SizedBox(height: bottom + 24)),
-      ]);
+        ],
+      ),
+      SliverToBoxAdapter(child: SizedBox(height: bottom + 24)),
+    ],
+  );
 
   Widget _question(Palette p, double bottom) {
     final item = _current!;
     final g = exam.groups[item.group];
     return LayoutBuilder(
-      builder: (context, box) => Column(children: [
-        if (g.passage != null) ...[
-          SizedBox(
-            height: box.maxHeight * (g.kind == 'reading' ? .5 : .42),
-            child: _Passage(group: g, current: item.q.n, picks: _picks, onWord: (w) => showWordConfirm(context, w)),
-          ),
-          const SizedBox(height: 12),
-        ],
-        Expanded(
-          child: ListView(
-            key: ValueKey(_index),
-            padding: EdgeInsets.fromLTRB(20, 0, 20, bottom + 24),
-            children: [
-              Text('第 ${item.q.n} 題・${g.section}', style: ts(F.cap, w: w7, c: p.hsnuNavy)),
-              const SizedBox(height: 12),
-              if (const {'cloze', 'fill', 'structure'}.contains(g.kind))
-                Text('選出最適合填入空格 (${item.q.n}) 的選項', style: ts(F.headline, w: w6))
-              else
-                PassageText(text: item.q.stem, style: ts(F.title3, w: w6), onWord: (w) => showWordConfirm(context, w)),
-              const SizedBox(height: 12),
-              ..._options(p, item, g),
-              if (_picks[item.q.n] case final picked? when picked != item.q.answer) ...[
-                const SizedBox(height: 18),
-                PrimaryButton(label: _index + 1 < _run.length ? '下一題' : '看結果', onTap: _advance),
+      builder: (context, box) => Column(
+        children: [
+          if (g.passage != null) ...[
+            SizedBox(
+              height: box.maxHeight * (g.kind == 'reading' ? .5 : .42),
+              child: _Passage(
+                group: g,
+                current: item.q.n,
+                picks: _picks,
+                onWord: (w) => showWordConfirm(context, w),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          Expanded(
+            child: ListView(
+              key: ValueKey(_index),
+              padding: EdgeInsets.fromLTRB(20, 0, 20, bottom + 24),
+              children: [
+                Text(
+                  '第 ${item.q.n} 題・${g.section}',
+                  style: ts(F.cap, w: w7, c: p.hsnuNavy),
+                ),
+                const SizedBox(height: 12),
+                if (const {'cloze', 'fill', 'structure'}.contains(g.kind))
+                  Text(
+                    '選出最適合填入空格 (${item.q.n}) 的選項',
+                    style: ts(F.headline, w: w6),
+                  )
+                else
+                  PassageText(
+                    text: item.q.stem,
+                    style: ts(F.title3, w: w6),
+                    onWord: (w) => showWordConfirm(context, w),
+                  ),
+                const SizedBox(height: 12),
+                ..._options(p, item, g),
+                if (_picks[item.q.n] case final picked?
+                    when picked != item.q.answer) ...[
+                  const SizedBox(height: 18),
+                  PrimaryButton(
+                    label: _index + 1 < _run.length ? '下一題' : '看結果',
+                    onTap: _advance,
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
-        ),
-      ]),
+        ],
+      ),
     );
   }
 
@@ -324,10 +404,10 @@ class _ExamViewState extends State<ExamView> {
           state: picked == null
               ? (used.contains(i) ? AnswerState.used : AnswerState.idle)
               : i == item.q.answer
-                  ? AnswerState.right
-                  : picked == i
-                      ? AnswerState.wrong
-                      : AnswerState.idle,
+              ? AnswerState.right
+              : picked == i
+              ? AnswerState.wrong
+              : AnswerState.idle,
           onTap: picked == null ? () => _choose(i, item) : null,
         ),
     ];
@@ -335,11 +415,23 @@ class _ExamViewState extends State<ExamView> {
       if (g.kind == 'fill')
         StackGrid(columns: 2, spacing: 10, children: rows)
       else
-        for (final (i, r) in rows.indexed) Padding(padding: EdgeInsets.only(top: i == 0 ? 0 : 10), child: r),
+        for (final (i, r) in rows.indexed)
+          Padding(
+            padding: EdgeInsets.only(top: i == 0 ? 0 : 10),
+            child: r,
+          ),
       if (picked == null)
         Tap(
           onTap: () => _choose(-1, item),
-          child: SizedBox(height: 44, child: Center(child: Text('不知道', style: ts(F.sub, w: w6, c: p.sec)))),
+          child: SizedBox(
+            height: 44,
+            child: Center(
+              child: Text(
+                '不知道',
+                style: ts(F.sub, w: w6, c: p.sec),
+              ),
+            ),
+          ),
         ),
     ];
   }
@@ -350,41 +442,62 @@ class _ExamViewState extends State<ExamView> {
     return ListView(
       padding: EdgeInsets.fromLTRB(20, 20, 20, bottom + 30),
       children: [
-        Center(child: Text(_section == '整份' ? '整份作答' : _section, style: ts(F.headline, w: w6, c: p.sec))),
+        Center(
+          child: Text(
+            _section == '整份' ? '整份作答' : _section,
+            style: ts(F.headline, w: w6, c: p.sec),
+          ),
+        ),
         const SizedBox(height: 4),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.baseline,
           textBaseline: TextBaseline.alphabetic,
           children: [
-            Text('$right', style: ts(64, w: w6, c: p.hsnuNavy, h: 1.15)),
+            Text(
+              '$right',
+              style: ts(64, w: w6, c: p.hsnuNavy, h: 1.15),
+            ),
             const SizedBox(width: 4),
-            Text('/ ${_run.length} 題', style: ts(F.title3, w: w6, c: p.sec)),
+            Text(
+              '/ ${_run.length} 題',
+              style: ts(F.title3, w: w6, c: p.sec),
+            ),
           ],
         ),
         const SizedBox(height: 18),
         ExcludeSemantics(
-          child: Row(children: [
-            for (final (i, item) in _run.indexed) ...[
-              if (i > 0) const SizedBox(width: 3),
-              Expanded(
-                child: Container(
-                  height: 14,
-                  decoration: BoxDecoration(color: _right(item) ? p.hsnuSky : p.hsnuMagenta, borderRadius: BorderRadius.circular(2)),
+          child: Row(
+            children: [
+              for (final (i, item) in _run.indexed) ...[
+                if (i > 0) const SizedBox(width: 3),
+                Expanded(
+                  child: Container(
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: _right(item) ? p.hsnuSky : p.hsnuMagenta,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ],
-          ]),
+          ),
         ),
         const SizedBox(height: 18),
         for (final s in ExamStore.sections)
           if (_part(s).isNotEmpty) ...[
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 10),
-              child: Row(children: [
-                Expanded(child: Text(s, style: ts(F.body))),
-                Text('${_rightIn(_part(s))} / ${_part(s).length}', style: ts(F.body, c: p.sec)),
-              ]),
+              child: Row(
+                children: [
+                  Expanded(child: Text(s, style: ts(F.body))),
+                  Text(
+                    '${_rightIn(_part(s))} / ${_part(s).length}',
+                    style: ts(F.body, c: p.sec),
+                  ),
+                ],
+              ),
             ),
             Container(height: .5, color: p.separator),
           ],
@@ -392,21 +505,41 @@ class _ExamViewState extends State<ExamView> {
           const SizedBox(height: 18),
           Text('答錯的單字', style: ts(F.sub, w: w7)),
           const SizedBox(height: 8),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final e in missed)
-              Tap(
-                dim: false,
-                onTap: () => showWordConfirm(context, e.w),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(color: p.hsnuMagentaFill, borderRadius: BorderRadius.circular(100)),
-                  child: Text.rich(TextSpan(children: [
-                    TextSpan(text: e.w, style: ts(F.sub, w: w6)),
-                    TextSpan(text: '  ${e.zh.isEmpty ? '' : e.zh.first}', style: ts(F.cap, c: p.sec)),
-                  ])),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final e in missed)
+                Tap(
+                  dim: false,
+                  onTap: () => showWordConfirm(context, e.w),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: p.hsnuMagentaFill,
+                      borderRadius: BorderRadius.circular(100),
+                    ),
+                    child: Text.rich(
+                      TextSpan(
+                        children: [
+                          TextSpan(
+                            text: e.w,
+                            style: ts(F.sub, w: w6),
+                          ),
+                          TextSpan(
+                            text: '  ${e.zh.isEmpty ? '' : e.zh.first}',
+                            style: ts(F.cap, c: p.sec),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-          ]),
+            ],
+          ),
           const SizedBox(height: 12),
           PillButton(
             label: _added ? '已加入我的單字' : '全部加入我的單字',
@@ -421,11 +554,20 @@ class _ExamViewState extends State<ExamView> {
           ),
         ],
         const SizedBox(height: 18),
-        Row(children: [
-          Expanded(child: PillButton(label: '其他題型', onTap: _toMenu)),
-          const SizedBox(width: 10),
-          Expanded(child: PrimaryButton(label: '完成', onTap: () => Navigator.of(context).pop())),
-        ]),
+        Row(
+          children: [
+            Expanded(
+              child: PillButton(label: '其他題型', onTap: _toMenu),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: PrimaryButton(
+                label: '完成',
+                onTap: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ],
+        ),
       ],
     );
   }
@@ -442,16 +584,18 @@ class _ExamViewState extends State<ExamView> {
       },
       child: Padding(
         padding: EdgeInsets.only(top: media.padding.top),
-        child: Column(children: [
-          _header(p),
-          Expanded(
-            child: _run.isEmpty
-                ? _menu(p, bottom)
-                : _finished
-                    ? _results(p, bottom)
-                    : _question(p, bottom),
-          ),
-        ]),
+        child: Column(
+          children: [
+            _header(p),
+            Expanded(
+              child: _run.isEmpty
+                  ? _menu(p, bottom)
+                  : _finished
+                  ? _results(p, bottom)
+                  : _question(p, bottom),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -459,7 +603,12 @@ class _ExamViewState extends State<ExamView> {
 
 /// 文章區：題目換到下一段時，自動捲到那一段
 class _Passage extends StatefulWidget {
-  const _Passage({required this.group, required this.current, required this.picks, required this.onWord});
+  const _Passage({
+    required this.group,
+    required this.current,
+    required this.picks,
+    required this.onWord,
+  });
   final ExamGroup group;
   final int current;
   final Map<int, int> picks;
@@ -480,7 +629,8 @@ class _PassageState extends State<_Passage> {
   void _scroll(Duration d) {
     final i = _paras.indexWhere((p) => p.contains('⟨${widget.current}⟩'));
     final ctx = i < 0 ? null : _keys[i].currentContext;
-    if (ctx != null) Scrollable.ensureVisible(ctx, duration: d, curve: Curves.easeOutCubic);
+    if (ctx != null)
+      Scrollable.ensureVisible(ctx, duration: d, curve: Curves.easeOutCubic);
   }
 
   @override
@@ -512,41 +662,64 @@ class _PassageState extends State<_Passage> {
       final pick = widget.picks[q.n];
       if (pick == null) continue;
       final opts = g.optionsOf(q);
-      filled[q.n] = (q.answer < opts.length ? opts[q.answer] : '', pick == q.answer);
+      filled[q.n] = (
+        q.answer < opts.length ? opts[q.answer] : '',
+        pick == q.answer,
+      );
     }
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20),
       clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(color: p.card, borderRadius: BorderRadius.circular(Radii.lg)),
-      child: Stack(children: [
-        SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: SizedBox(
-            width: double.infinity,
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              for (final (i, para) in _paras.indexed)
-                Padding(
-                  key: _keys[i],
-                  padding: EdgeInsets.only(top: i == 0 ? 0 : 12),
-                  child: PassageText(
-                    text: para,
-                    current: g.kind == 'reading' ? null : widget.current,
-                    filled: filled,
-                    onWord: widget.onWord,
-                  ),
-                ),
-            ]),
+      decoration: BoxDecoration(
+        color: p.card,
+        borderRadius: BorderRadius.circular(Radii.lg),
+      ),
+      child: Stack(
+        children: [
+          SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: SizedBox(
+              width: double.infinity,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final (i, para) in _paras.indexed)
+                    Padding(
+                      key: _keys[i],
+                      padding: EdgeInsets.only(top: i == 0 ? 0 : 12),
+                      child: PassageText(
+                        text: para,
+                        current: g.kind == 'reading' ? null : widget.current,
+                        filled: filled,
+                        onWord: widget.onWord,
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
-        ),
-        Positioned(left: 0, top: 14, bottom: 14, child: Container(width: 3, color: p.hsnuNavy)),
-      ]),
+          Positioned(
+            left: 0,
+            top: 14,
+            bottom: 14,
+            child: Container(width: 3, color: p.hsnuNavy),
+          ),
+        ],
+      ),
     );
   }
 }
 
 /// 試題文字：每個字都能點來查，⟨n⟩ 畫成有編號的空格，答完填入答案
 class PassageText extends StatefulWidget {
-  const PassageText({super.key, required this.text, this.current, this.filled = const {}, this.style, required this.onWord});
+  const PassageText({
+    super.key,
+    required this.text,
+    this.current,
+    this.filled = const {},
+    this.style,
+    required this.onWord,
+  });
   final String text;
   final int? current;
   final Map<int, (String, bool)> filled;
@@ -578,7 +751,8 @@ class _PassageTextState extends State<PassageText> {
     final p = Palette.of(context);
     _clear();
     final spans = <InlineSpan>[];
-    for (final (i, s) in widget.text.split(' ').where((t) => t.isNotEmpty).indexed) {
+    for (final (i, s)
+        in widget.text.split(' ').where((t) => t.isNotEmpty).indexed) {
       if (i > 0) spans.add(const TextSpan(text: ' '));
       final m = _blank.firstMatch(s);
       if (m != null) {
@@ -586,14 +760,20 @@ class _PassageTextState extends State<PassageText> {
         final fill = widget.filled[n];
         spans
           ..add(TextSpan(text: s.substring(0, m.start)))
-          ..add(TextSpan(
-            text: fill != null ? '($n) ${fill.$1}' : ' ($n) ______ ',
-            style: TextStyle(
-              fontWeight: w7,
-              color: fill == null ? p.hsnuNavy : (fill.$2 ? p.hsnuSky : p.hsnuMagenta),
-              backgroundColor: fill == null && n == widget.current ? p.hsnuSkyFill : null,
+          ..add(
+            TextSpan(
+              text: fill != null ? '($n) ${fill.$1}' : ' ($n) ______ ',
+              style: TextStyle(
+                fontWeight: w7,
+                color: fill == null
+                    ? p.hsnuNavy
+                    : (fill.$2 ? p.hsnuSky : p.hsnuMagenta),
+                backgroundColor: fill == null && n == widget.current
+                    ? p.hsnuSkyFill
+                    : null,
+              ),
             ),
-          ))
+          )
           ..add(TextSpan(text: s.substring(m.end)));
         continue;
       }
@@ -609,7 +789,10 @@ class _PassageTextState extends State<PassageText> {
     return Text.rich(
       TextSpan(children: spans),
       style: widget.style ?? ts(F.body, h: 1.5),
-      semanticsLabel: widget.text.replaceAllMapped(_blank, (m) => '第${m[1]}題空格'),
+      semanticsLabel: widget.text.replaceAllMapped(
+        _blank,
+        (m) => '第${m[1]}題空格',
+      ),
     );
   }
 }
@@ -618,7 +801,14 @@ enum AnswerState { idle, used, right, wrong }
 
 /// 答案卡選項：字母方格像鉛筆塗卡，答對塗天藍、答錯塗紫紅
 class AnswerOption extends StatelessWidget {
-  const AnswerOption({super.key, required this.letter, required this.text, required this.state, this.onTap, this.minHeight = 54});
+  const AnswerOption({
+    super.key,
+    required this.letter,
+    required this.text,
+    required this.state,
+    this.onTap,
+    this.minHeight = 54,
+  });
   final String letter, text;
   final AnswerState state;
   final VoidCallback? onTap;
@@ -627,7 +817,8 @@ class AnswerOption extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = Palette.of(context);
-    final right = state == AnswerState.right, wrong = state == AnswerState.wrong;
+    final right = state == AnswerState.right,
+        wrong = state == AnswerState.wrong;
     final marked = right || wrong;
     return Tap(
       dim: false,
@@ -642,27 +833,58 @@ class AnswerOption extends StatelessWidget {
             color: right ? p.hsnuSkyFill : (wrong ? p.hsnuMagentaFill : p.card),
             borderRadius: BorderRadius.circular(Radii.lg),
           ),
-          child: Row(children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              width: 30,
-              height: 34,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: right ? p.hsnuSky : (wrong ? p.hsnuMagenta : Colors.transparent),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: marked ? Colors.transparent : p.hsnuNavy.withValues(alpha: .5), width: 1.5),
+          child: Row(
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 30,
+                height: 34,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: right
+                      ? p.hsnuSky
+                      : (wrong ? p.hsnuMagenta : Colors.transparent),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: marked
+                        ? Colors.transparent
+                        : p.hsnuNavy.withValues(alpha: .5),
+                    width: 1.5,
+                  ),
+                ),
+                child: Text(
+                  letter,
+                  style: ts(
+                    F.sub,
+                    w: w7,
+                    mono: true,
+                    c: marked ? Colors.white : p.hsnuNavy,
+                  ),
+                ),
               ),
-              child: Text(letter, style: ts(F.sub, w: w7, mono: true, c: marked ? Colors.white : p.hsnuNavy)),
-            ),
-            const SizedBox(width: 12),
-            // 單字選項太長就縮小，不要從字中間斷行
-            Expanded(
-              child: text.contains(' ') ? Text(text, style: ts(F.headline, w: w6)) : FitText(text, style: ts(F.headline, w: w6)),
-            ),
-            if (right) Icon(Icons.check_rounded, size: 20, color: p.hsnuSky, semanticLabel: '正確答案'),
-            if (wrong) Icon(Icons.close_rounded, size: 20, color: p.hsnuMagenta, semanticLabel: '答錯'),
-          ]),
+              const SizedBox(width: 12),
+              // 單字選項太長就縮小，不要從字中間斷行
+              Expanded(
+                child: text.contains(' ')
+                    ? Text(text, style: ts(F.headline, w: w6))
+                    : FitText(text, style: ts(F.headline, w: w6)),
+              ),
+              if (right)
+                Icon(
+                  Icons.check_rounded,
+                  size: 20,
+                  color: p.hsnuSky,
+                  semanticLabel: '正確答案',
+                ),
+              if (wrong)
+                Icon(
+                  Icons.close_rounded,
+                  size: 20,
+                  color: p.hsnuMagenta,
+                  semanticLabel: '答錯',
+                ),
+            ],
+          ),
         ),
       ),
     );

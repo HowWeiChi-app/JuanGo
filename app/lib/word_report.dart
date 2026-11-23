@@ -51,26 +51,35 @@ class WordReport {
 
   /// 單字頁現在顯示的內容，跟回報一起送
   static Map<String, dynamic> snapshot(Word w) => {
-        'term': w.term,
-        'meanings': w.meanings,
-        'pos': w.pos,
-        'ipa': w.ipa,
-        'definition': w.definition,
-        'example': w.example,
-        'example_zh': w.exampleZh,
-        'level': w.cefr,
-      };
+    'term': w.term,
+    'meanings': w.meanings,
+    'pos': w.pos,
+    'ipa': w.ipa,
+    'definition': w.definition,
+    'example': w.example,
+    'example_zh': w.exampleZh,
+    'level': w.cefr,
+  };
 
   static Future<List<Map<String, dynamic>>> pending() async {
-    final raw = (await SharedPreferences.getInstance()).getStringList(_queueKey) ?? const [];
+    final raw =
+        (await SharedPreferences.getInstance()).getStringList(_queueKey) ??
+        const [];
     return [for (final s in raw) jsonDecode(s) as Map<String, dynamic>];
   }
 
   static Future<void> _save(List<Map<String, dynamic>> q) async =>
-      (await SharedPreferences.getInstance()).setStringList(_queueKey, [for (final m in q) jsonEncode(m)]);
+      (await SharedPreferences.getInstance()).setStringList(_queueKey, [
+        for (final m in q) jsonEncode(m),
+      ]);
 
   /// 存進佇列並試著送出。現在就送到伺服器時回傳 true
-  static Future<bool> submit({required String word, required String kind, String note = '', required Map<String, dynamic> snapshot}) async {
+  static Future<bool> submit({
+    required String word,
+    required String kind,
+    String note = '',
+    required Map<String, dynamic> snapshot,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final trimmed = note.trim();
     final args = {
@@ -78,7 +87,9 @@ class WordReport {
       'p_word': word,
       'p_exam_ref': null,
       'p_kind': kind,
-      'p_note': trimmed.length > noteLimit ? trimmed.substring(0, noteLimit) : trimmed,
+      'p_note': trimmed.length > noteLimit
+          ? trimmed.substring(0, noteLimit)
+          : trimmed,
       'p_snapshot': snapshot,
       'p_app_version': appVersion,
       'p_platform': 'android',
@@ -86,7 +97,9 @@ class WordReport {
     };
     await _save([...await pending(), args]);
     await flush();
-    return !(await pending()).any((m) => m['p_client_id'] == args['p_client_id']);
+    return !(await pending()).any(
+      (m) => m['p_client_id'] == args['p_client_id'],
+    );
   }
 
   static bool _flushing = false;
@@ -102,7 +115,10 @@ class WordReport {
         } catch (_) {
           return; // 沒網路：下次再送
         }
-        await _save([for (final m in await pending()) if (m['p_client_id'] != args['p_client_id']) m]);
+        await _save([
+          for (final m in await pending())
+            if (m['p_client_id'] != args['p_client_id']) m,
+        ]);
       }
     } finally {
       _flushing = false;
@@ -110,7 +126,8 @@ class WordReport {
   }
 }
 
-Future<void> showWordReport(BuildContext c, Word w) => presentSheet(c, (_) => _ReportSheet(w));
+Future<void> showWordReport(BuildContext c, Word w) =>
+    presentSheet(c, (_) => _ReportSheet(w));
 
 class _ReportSheet extends StatefulWidget {
   const _ReportSheet(this.word);
@@ -135,7 +152,11 @@ class _ReportSheetState extends State<_ReportSheet> {
     if (kind == null) return;
     setState(() => _sending = true);
     final sent = await WordReport.submit(
-        word: widget.word.term, kind: kind, note: _note.text, snapshot: WordReport.snapshot(widget.word));
+      word: widget.word.term,
+      kind: kind,
+      note: _note.text,
+      snapshot: WordReport.snapshot(widget.word),
+    );
     if (!mounted) return;
     final nav = Navigator.of(context);
     await showAlert(context, sent ? '已送出，謝謝你的回報' : '目前沒有網路，連上網路後會自動送出');
@@ -148,19 +169,29 @@ class _ReportSheetState extends State<_ReportSheet> {
     return NavPage(
       title: '回報問題',
       safeTop: false,
-      leading: BarText('取消', bold: false, onTap: () => Navigator.of(context).pop()),
+      leading: BarText(
+        '取消',
+        bold: false,
+        onTap: () => Navigator.of(context).pop(),
+      ),
       actions: [BarText('送出', onTap: _kind == null || _sending ? null : _send)],
       slivers: [
-        Sec(header: '「${widget.word.term}」哪裡有問題？', children: [
-          for (final (id, label) in WordReport.kinds)
-            RowTile(
-              title: label,
-              trailing: _kind == id ? Icon(Icons.check_rounded, color: p.accent) : null,
-              onTap: () => setState(() => _kind = id),
-            ),
-        ]),
         Sec(
-          footer: '會一起送出這個字目前的解釋、例句和音標，以及 App 版本。${_note.text.length} / ${WordReport.noteLimit}',
+          header: '「${widget.word.term}」哪裡有問題？',
+          children: [
+            for (final (id, label) in WordReport.kinds)
+              RowTile(
+                title: label,
+                trailing: _kind == id
+                    ? Icon(Icons.check_rounded, color: p.accent)
+                    : null,
+                onTap: () => setState(() => _kind = id),
+              ),
+          ],
+        ),
+        Sec(
+          footer:
+              '會一起送出這個字目前的解釋、例句和音標，以及 App 版本。${_note.text.length} / ${WordReport.noteLimit}',
           children: [
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
@@ -169,11 +200,20 @@ class _ReportSheetState extends State<_ReportSheet> {
                 minLines: 2,
                 maxLines: 5,
                 maxLength: WordReport.noteLimit,
-                buildCounter: (_, {required currentLength, required isFocused, maxLength}) => null,
+                buildCounter: (
+                  _, {
+                  required currentLength,
+                  required isFocused,
+                  maxLength,
+                }) => null,
                 onChanged: (_) => setState(() {}),
                 style: ts(F.body, c: p.ink),
                 decoration: InputDecoration(
-                    isCollapsed: true, border: InputBorder.none, hintText: '補充說明（選填）', hintStyle: ts(F.body, c: p.ter)),
+                  isCollapsed: true,
+                  border: InputBorder.none,
+                  hintText: '補充說明（選填）',
+                  hintStyle: ts(F.body, c: p.ter),
+                ),
               ),
             ),
           ],

@@ -33,48 +33,11 @@ enum WordQuota {
         unlimited || used < showFrom ? nil : "已用 \(used) / \(limit)"
     }
 
-    // MARK: Over the limit: warn, then delete the words added first
+    // MARK: Over the limit (e.g. after Pro ends): read-only, nothing is deleted
 
-    /// Days of warning before the extra words are deleted, and the shorter one for a second countdown within 90 days.
-    static let grace = 30, repeatGrace = 7, repeatWindow = 90
-
-    /// Where the countdown stands. Days are whole local days counted from 1970-01-01.
-    struct Countdown: Codable, Equatable {
-        var overSince: Int? = nil
-        var deleteOn: Int? = nil
-        /// the day the last countdown started, for the 90-day rule
-        var lastStart: Int? = nil
-        var shown7 = false
-        var shown1 = false
-    }
-
-    /// Starts the countdown on the first day over the limit and cancels it once back under it or on Pro.
-    static func countdown(_ c: Countdown, used: Int, unlimited: Bool, today: Int) -> Countdown {
-        var c = c
-        if unlimited || used <= limit {
-            c.overSince = nil; c.deleteOn = nil; c.shown7 = false; c.shown1 = false
-            return c
-        }
-        guard c.overSince == nil else { return c }
-        let again = c.lastStart.map { today - $0 < repeatWindow } ?? false
-        c.overSince = today
-        c.deleteOn = today + (again ? repeatGrace : grace)
-        c.lastStart = today
-        return c
-    }
-
-    /// Days left when the app should pop up a reminder now (7, then 1), or nil.
-    static func reminder(_ c: Countdown, today: Int) -> Int? {
-        guard let end = c.deleteOn, today < end else { return nil }
-        let left = end - today
-        if left <= 1 { return c.shown1 ? nil : 1 }
-        if left <= 7 { return c.shown7 ? nil : 7 }
-        return nil
-    }
-
-    static func due(_ c: Countdown, today: Int) -> Bool { c.deleteOn.map { today >= $0 } ?? false }
-
-    /// How many of the counted words go: down to exactly the limit.
+    /// How many counted words are over the limit.
     static func over(_ used: Int) -> Int { max(0, used - limit) }
+
+    static let overMessage = "單字都會保留，可以照常瀏覽和複習；只是暫停新增，刪到 1000 個以內或訂閱 Pro 就能再加。"
 }
 

@@ -38,6 +38,10 @@ struct RootView: View {
     @Environment(\.modelContext) private var ctx
     @Environment(\.scenePhase) private var phase
     private var cloud: Cloud { .shared }
+    /// juango://friend/… or juango://room/… opened the app
+    @State private var battleLink: BattleLink?
+    /// a friend's invite to their room (supabase/battle_lobby.sql)
+    @State private var invite: BattleInvite?
     /// Debug hook: `SIMCTL_CHILD_JUANGO_ONBOARD=1` shows the onboarding again without resetting settings.
     static var forceOnboarding: Bool {
         #if DEBUG
@@ -61,11 +65,29 @@ struct RootView: View {
         .modifier(QuotaReminders())
         // the emailed sign-in link comes back as juango://login-callback#access_token=…
         .onOpenURL { url in
+            if let l = BattleLink(url: url) { battleLink = l; return }
             if cloud.handle(url), cloud.signedIn {
                 Task { if let r = try? await cloud.sync(ctx) { cloud.notice = "已登入 \(cloud.session?.email ?? "")，\(r)" } }
             }
         }
+        .fullScreenCover(item: $battleLink) { BattleView(link: $0).environment(settings) }
+        // a friend tapped 邀請 in their room: check every 10 s while the app is open and no battle screen is up
+        .task(id: phase) {
+            while phase == .active, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                if invite == nil, battleLink == nil, let i = await Social.nextInvite() { invite = i }
+            }
+        }
+        .alert("\(invite?.name ?? "") 邀請你對戰", isPresented: Binding(get: { invite != nil }, set: { if !$0 { invite = nil } }),
+               presenting: invite) { i in
+            Button("加入") { battleLink = BattleLink(room: i.code) }
+            Button("不要", role: .cancel) {}
+        } message: { i in
+            Text("房間代碼 \(i.code)")
+        }
+        .task { DevLog.add("app", "launch · \(DevLog.deviceSummary) · \(cloud.signedIn ? "signed in" : "signed out")") }
         .onChange(of: phase) { _, p in
+            if p != .inactive { DevLog.add("app", p == .active ? "foreground" : "background") }
             if p == .background {
                 cloud.backgroundPush(ctx)
                 // skip today's reminder when today's practice is already done
@@ -174,7 +196,7 @@ struct MainTabs: View {
         for w in words {
             let zh = ExampleStore.cleanZh(w.exampleZh)
             if zh != w.exampleZh { w.exampleZh = zh; changed = true }
-            if (ExampleStore.isAvailable && !WordMatch.found(w.term, in: w.example)) || GlossaryParser.cleanTerm(w.term) != w.term {
+            if (ExampleStore.onDevice && !WordMatch.found(w.term, in: w.example)) || GlossaryParser.cleanTerm(w.term) != w.term {
                 w.example = ""; w.exampleZh = ""; changed = true
             }
         }
@@ -205,7 +227,7 @@ extension View { func themedBackground() -> some View { modifier(ThemedBackgroun
 
 
 /// A short dissolve between tabs: a picture of the tab being left, laid under the tab bar, fades out over the new one.
-/// Covers the first screen while the Chinese face picked in 字體 (圓體 or 宋體) loads, so the text doesn't
+/// A plain theme-coloured cover over the first screen while the Chinese face picked in 字體 (圓體 or 宋體) loads, so the text doesn't
 /// draw in 蘋方 and then jump. Gives up after a few seconds (no network on the first download) and fades out.
 struct FontLoadingMask: View {
     @Environment(AppSettings.self) private var settings
@@ -215,19 +237,13 @@ struct FontLoadingMask: View {
     var body: some View {
         ZStack {
             if !gone && !font.ready {
-                ZStack {
-                    settings.theme.background
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text("正在載入字型").font(.system(.footnote)).foregroundStyle(.secondary)
-                    }
-                }
-                .ignoresSafeArea()
+                settings.theme.background
+                    .ignoresSafeArea()
                 .transition(.opacity)
             }
         }
-        .animation(.easeOut(duration: 0.25), value: font.ready)
-        .animation(.easeOut(duration: 0.25), value: gone)
+        .animation(.easeOut(duration: 0.35), value: font.ready)
+        .animation(.easeOut(duration: 0.35), value: gone)
         .allowsHitTesting(!gone && !font.ready)
         .task {
             try? await Task.sleep(for: .seconds(4))

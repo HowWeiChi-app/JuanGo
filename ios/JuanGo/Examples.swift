@@ -130,12 +130,18 @@ final class ExampleStore {
         }
     }
 
-    static var isAvailable: Bool {
+    /// Apple Intelligence on this device (free, offline, no limit).
+    static var onDevice: Bool {
         #if canImport(FoundationModels)
         if case .available = SystemLanguageModel.default.availability { return true }
         #endif
         return false
     }
+
+    /// Sentences can be written: on the device, or for Pro on an iPhone without Apple Intelligence by JuanGo's
+    /// cloud AI (Agnes). The cloud only writes the sentences the student is looking at, never the background
+    /// filling of saved words, so the monthly quota isn't spent behind their back.
+    static var isAvailable: Bool { onDevice || CloudAI.available }
 
     /// The entry's own example, or a generated one if we have it.
     func example(for e: DictEntry) -> Example? {
@@ -205,6 +211,7 @@ final class ExampleStore {
         guard GlossaryParser.cleanTerm(e.w) == e.w else { return }
         guard e.ex.isEmpty, cache[key] == nil, !failed.contains(key), Self.isAvailable, inFlight != key else { return }
         var p = priority ?? (urgent ? .now : .soon)
+        if p == .background && !Self.onDevice { return }
         if let old = queue.first(where: { $0.key == key }) { p = min(p, old.priority) }   // never pushed back
         queue.removeAll { $0.key == key }
         // newest first within the same priority, so the latest card on screen is served first
@@ -247,7 +254,7 @@ final class ExampleStore {
     /// Also called at launch: a cold model took several seconds longer to start the first sentence.
     func warmUp() {
         #if canImport(FoundationModels)
-        guard Self.isAvailable, warm == nil else { return }
+        guard Self.onDevice, warm == nil else { return }
         let s = Self.makeSession()
         s.prewarm()
         warm = s
@@ -258,6 +265,23 @@ final class ExampleStore {
         guard inFlight == nil, !queue.isEmpty else { return }
         let (e, key, priority) = queue.removeFirst()
         inFlight = key
+        if !Self.onDevice {
+            // Pro without Apple Intelligence: the cloud AI writes it
+            Task {
+                let r = await Self.cloudExample(e)
+                inFlight = nil
+                if let r {
+                    cache[key] = r
+                    save()
+                    applyToSavedWord(e.w, key, r, now: priority != .background)
+                } else {
+                    failed.insert(key)
+                }
+                replacing.remove(key)
+                pump()
+            }
+            return
+        }
         #if canImport(FoundationModels)
         let session = warm ?? Self.makeSession()
         warm = nil
@@ -287,6 +311,27 @@ final class ExampleStore {
 
     /// Words saved before their example existed pick it up here.
     var container: ModelContainer?
+
+    /// One sentence from JuanGo's cloud AI; nil when it can't (not signed in, quota used up, offline…).
+    private static func cloudExample(_ e: DictEntry) async -> Example? {
+        guard CloudAI.available, let token = try? await Cloud.shared.bearer() else { return nil }
+        let prompt = """
+            Word: \(e.w)
+            Part of speech: \(e.pos)
+            Meaning: \(e.zh.prefix(3).joined(separator: "、"))\(e.def.isEmpty ? "" : " (\(e.def))")
+            Write one natural, everyday English sentence (6 to 12 words) using the word in this meaning, \
+            and its fluent Traditional Chinese (Taiwan) translation. Never use Simplified Chinese.
+            JSON only: {"en": "…", "zh": "…"}
+            """
+        guard let text = try? await ChatAPI.complete(prompt, baseURL: CloudAI.baseURL, model: CloudAI.model, key: token, cloud: true),
+              let a = text.firstIndex(of: "{"), let b = text.lastIndex(of: "}"),
+              let o = try? JSONSerialization.jsonObject(with: Data(text[a...b].utf8)) as? [String: Any],
+              let en = (o["en"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let zh = (o["zh"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !en.isEmpty, !zh.isEmpty, WordMatch.found(e.w, in: en)
+        else { return nil }
+        return Example(en: en, zh: zh)
+    }
     /// Background sentences wait here and go into the words a batch at a time. Saving each one (every 1–7 s
     /// during backfill) made every tab with a live word query redraw each time, the home screen behind an open
     /// round included.

@@ -10,6 +10,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'dev_log.dart';
 import 'store.dart';
 
 /// 這把 key 本來就要放在 App 裡，能碰到什麼由 supabase/schema.sql 的資料列權限決定
@@ -36,24 +37,24 @@ class CloudSession {
   });
 
   factory CloudSession.fromJson(Map<String, dynamic> j) => CloudSession(
-        accessToken: j['accessToken'] as String,
-        refreshToken: j['refreshToken'] as String,
-        expiresAt: DateTime.parse(j['expiresAt'] as String),
-        userId: j['userId'] as String,
-        email: j['email'] as String? ?? '',
-      );
+    accessToken: j['accessToken'] as String,
+    refreshToken: j['refreshToken'] as String,
+    expiresAt: DateTime.parse(j['expiresAt'] as String),
+    userId: j['userId'] as String,
+    email: j['email'] as String? ?? '',
+  );
 
   String accessToken, refreshToken;
   DateTime expiresAt;
   final String userId, email;
 
   Map<String, dynamic> toJson() => {
-        'accessToken': accessToken,
-        'refreshToken': refreshToken,
-        'expiresAt': expiresAt.toUtc().toIso8601String(),
-        'userId': userId,
-        'email': email,
-      };
+    'accessToken': accessToken,
+    'refreshToken': refreshToken,
+    'expiresAt': expiresAt.toUtc().toIso8601String(),
+    'userId': userId,
+    'email': email,
+  };
 }
 
 /// 登入資料放的地方；App 用系統加密儲存，測試換成記憶體
@@ -68,16 +69,22 @@ class _SecureVault implements CloudVault {
   @override
   Future<String?> read() => _storage.read(key: _key);
   @override
-  Future<void> write(String? value) =>
-      value == null ? _storage.delete(key: _key) : _storage.write(key: _key, value: value);
+  Future<void> write(String? value) => value == null
+      ? _storage.delete(key: _key)
+      : _storage.write(key: _key, value: value);
 }
 
 class Cloud extends ChangeNotifier {
   Cloud._(this._client, this._vault);
   static Cloud shared = Cloud._(http.Client(), _SecureVault());
 
+  /// 好友和房間的連結（juango://friend/…、juango://room/…）交給畫面處理；畫面還沒準備好就先記著
+  static void Function(Uri)? onShareLink;
+  static Uri? pendingShareLink;
+
   @visibleForTesting
-  static void resetForTest(http.Client client, CloudVault vault) => shared = Cloud._(client, vault);
+  static void resetForTest(http.Client client, CloudVault vault) =>
+      shared = Cloud._(client, vault);
 
   static const _lastSyncKey = 'cloud.lastSync';
 
@@ -100,7 +107,10 @@ class Cloud extends ChangeNotifier {
   Future<void> load() async {
     try {
       final saved = await _vault.read();
-      if (saved != null) session = CloudSession.fromJson(jsonDecode(saved) as Map<String, dynamic>);
+      if (saved != null)
+        session = CloudSession.fromJson(
+          jsonDecode(saved) as Map<String, dynamic>,
+        );
       final prefs = await SharedPreferences.getInstance();
       final last = prefs.getString(_lastSyncKey);
       lastSync = last == null ? null : DateTime.tryParse(last)?.toLocal();
@@ -114,7 +124,10 @@ class Cloud extends ChangeNotifier {
   void listenForLinks() {
     if (_links != null) return;
     try {
-      _links = AppLinks().uriLinkStream.listen(open, onError: (Object e) => debugPrint('登入連結讀取失敗：$e'));
+      _links = AppLinks().uriLinkStream.listen(
+        open,
+        onError: (Object e) => debugPrint('登入連結讀取失敗：$e'),
+      );
     } catch (e) {
       debugPrint('登入連結無法使用：$e');
     }
@@ -122,13 +135,62 @@ class Cloud extends ChangeNotifier {
 
   // MARK: 登入
 
-  Future<void> sendLink(String email) async {
+  /// 寄 6 位數驗證碼到 Email（Supabase 信件範本顯示 {{ .Token }}）。
+  /// 驗證碼在哪台裝置看信都能用，不用像連結一樣跳回 App
+  Future<void> sendCode(String email) async {
     await _send(
-      Uri.parse('${CloudConfig.url}/auth/v1/otp').replace(queryParameters: {'redirect_to': CloudConfig.redirect}),
+      Uri.parse('${CloudConfig.url}/auth/v1/otp'),
       'POST',
-      json: {'email': email.trim(), 'create_user': true},
+      json: {'email': email.trim().toLowerCase(), 'create_user': true},
       auth: false,
     );
+  }
+
+  /// 用信裡的驗證碼登入，登入後同步一次，回傳要顯示的話
+  Future<String> verify(String email, String code) async {
+    final String body;
+    try {
+      body = await _send(
+        Uri.parse('${CloudConfig.url}/auth/v1/verify'),
+        'POST',
+        json: {
+          'type': 'email',
+          'email': email.trim().toLowerCase(),
+          'token': code.replaceAll(RegExp(r'\D'), ''),
+        },
+        auth: false,
+      );
+    } on _HttpFailure catch (e) {
+      if (e.status == 400 || e.status == 401 || e.status == 403) {
+        throw const CloudFailure('驗證碼錯誤或已過期，請重新寄一次');
+      }
+      rethrow;
+    }
+    final j = jsonDecode(body);
+    final access = j is Map ? j['access_token'] : null;
+    final refresh = j is Map ? j['refresh_token'] : null;
+    Map<String, dynamic>? claims;
+    if (access is String) claims = _claims(access);
+    final sub = claims == null ? null : claims['sub'];
+    if (access is! String || refresh is! String || sub is! String) {
+      throw const CloudFailure('登入失敗：看不懂登入資料');
+    }
+    _store(
+      CloudSession(
+        accessToken: access,
+        refreshToken: refresh,
+        expiresAt: _expiry(j['expires_in'] as num? ?? 3600),
+        userId: sub,
+        email: claims?['email'] as String? ?? email.trim(),
+      ),
+    );
+    notifyListeners();
+    try {
+      final r = await sync();
+      return '已登入 ${session?.email ?? ''}（$r）';
+    } catch (e) {
+      return '已登入 ${session?.email ?? ''}，但同步失敗：$e';
+    }
   }
 
   /// 收到 juango://login-callback：登入成功就同步一次
@@ -136,6 +198,16 @@ class Cloud extends ChangeNotifier {
     final raw = uri.toString();
     if (raw == _lastLink) return; // 畫面重建時系統可能再給一次同一個連結
     _lastLink = raw;
+    if (uri.scheme == 'juango' &&
+        (uri.host == 'friend' || uri.host == 'room')) {
+      final h = onShareLink;
+      if (h != null) {
+        h(uri);
+      } else {
+        pendingShareLink = uri;
+      }
+      return;
+    }
     if (!handle(uri)) {
       notifyListeners();
       return;
@@ -156,7 +228,9 @@ class Cloud extends ChangeNotifier {
     if (uri.scheme != 'juango') return false;
     final Map<String, String> p;
     try {
-      p = Uri.splitQueryString(uri.fragment.isNotEmpty ? uri.fragment : uri.query);
+      p = Uri.splitQueryString(
+        uri.fragment.isNotEmpty ? uri.fragment : uri.query,
+      );
     } catch (_) {
       notice = '登入失敗：看不懂登入資料';
       return false;
@@ -174,13 +248,15 @@ class Cloud extends ChangeNotifier {
       notice = '登入失敗：看不懂登入資料';
       return false;
     }
-    _store(CloudSession(
-      accessToken: access,
-      refreshToken: refresh,
-      expiresAt: _expiry(num.tryParse(p['expires_in'] ?? '') ?? 3600),
-      userId: sub,
-      email: claims?['email'] as String? ?? '',
-    ));
+    _store(
+      CloudSession(
+        accessToken: access,
+        refreshToken: refresh,
+        expiresAt: _expiry(num.tryParse(p['expires_in'] ?? '') ?? 3600),
+        userId: sub,
+        email: claims?['email'] as String? ?? '',
+      ),
+    );
     return true;
   }
 
@@ -192,10 +268,15 @@ class Cloud extends ChangeNotifier {
     try {
       (await SharedPreferences.getInstance()).remove(_lastSyncKey);
       if (token != null) {
-        await _client.post(Uri.parse('${CloudConfig.url}/auth/v1/logout'), headers: {
-          'apikey': CloudConfig.key,
-          'Authorization': 'Bearer $token',
-        }).timeout(const Duration(seconds: 10));
+        await _client
+            .post(
+              Uri.parse('${CloudConfig.url}/auth/v1/logout'),
+              headers: {
+                'apikey': CloudConfig.key,
+                'Authorization': 'Bearer $token',
+              },
+            )
+            .timeout(const Duration(seconds: 10));
       }
     } catch (e) {
       debugPrint('登出時連不上伺服器：$e');
@@ -213,9 +294,12 @@ class Cloud extends ChangeNotifier {
     } catch (_) {}
   }
 
-  static DateTime _expiry(num seconds) => DateTime.now().add(Duration(seconds: seconds.toInt() - 60));
+  static DateTime _expiry(num seconds) =>
+      DateTime.now().add(Duration(seconds: seconds.toInt() - 60));
 
   void _store(CloudSession? s) {
+    if ((s == null) != (session == null))
+      DevLog.add('cloud', s == null ? '登出' : '登入');
     session = s;
     unawaited(_persist(s));
   }
@@ -232,7 +316,9 @@ class Cloud extends ChangeNotifier {
     final parts = jwt.split('.');
     if (parts.length < 2) return null;
     try {
-      return jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(parts[1])))) as Map<String, dynamic>;
+      return jsonDecode(
+        utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
+      ) as Map<String, dynamic>;
     } catch (_) {
       return null;
     }
@@ -248,11 +334,12 @@ class Cloud extends ChangeNotifier {
 
   Future<String> _refresh(CloudSession s) async {
     Future<String> request() => _send(
-          Uri.parse('${CloudConfig.url}/auth/v1/token').replace(queryParameters: {'grant_type': 'refresh_token'}),
-          'POST',
-          json: {'refresh_token': s.refreshToken},
-          auth: false,
-        );
+      Uri.parse('${CloudConfig.url}/auth/v1/token')
+          .replace(queryParameters: {'grant_type': 'refresh_token'}),
+      'POST',
+      json: {'refresh_token': s.refreshToken},
+      auth: false,
+    );
     try {
       final String body;
       try {
@@ -277,7 +364,8 @@ class Cloud extends ChangeNotifier {
   Future<String> _finishRefresh(CloudSession s, String body) async {
     final j = jsonDecode(body) as Map<String, dynamic>;
     final access = j['access_token'], refresh = j['refresh_token'];
-    if (access is! String || refresh is! String) throw const CloudFailure('登入資料更新失敗');
+    if (access is! String || refresh is! String)
+      throw const CloudFailure('登入資料更新失敗');
     s
       ..accessToken = access
       ..refreshToken = refresh
@@ -297,7 +385,8 @@ class Cloud extends ChangeNotifier {
     try {
       var result = '已上傳';
       final remote = await _download();
-      if (remote != null) result = '已同步（${AppStore.shared.restore(remote, settings: false)}）';
+      if (remote != null)
+        result = '已同步（${AppStore.shared.restore(remote, settings: false)}）';
       await _upload();
       await _markSynced();
       return result;
@@ -331,11 +420,15 @@ class Cloud extends ChangeNotifier {
 
   Future<void> _markSynced() async {
     lastSync = DateTime.now();
-    (await SharedPreferences.getInstance()).setString(_lastSyncKey, lastSync!.toUtc().toIso8601String());
+    (await SharedPreferences.getInstance()).setString(
+      _lastSyncKey,
+      lastSync!.toUtc().toIso8601String(),
+    );
   }
 
   Uri _rest(String path, [Map<String, String>? query]) =>
-      Uri.parse('${CloudConfig.url}/rest/v1/$path').replace(queryParameters: query);
+      Uri.parse('${CloudConfig.url}/rest/v1/$path')
+          .replace(queryParameters: query);
 
   Future<void> _upload() async {
     final s = session;
@@ -353,7 +446,9 @@ class Cloud extends ChangeNotifier {
   }
 
   Future<BackupFile?> _download() async {
-    final rows = jsonDecode(await _send(_rest('user_backups', {'select': 'data'}), 'GET')) as List;
+    final rows = jsonDecode(
+      await _send(_rest('user_backups', {'select': 'data'}), 'GET'),
+    ) as List;
     if (rows.isEmpty) return null;
     final data = (rows.first as Map<String, dynamic>)['data'];
     try {
@@ -365,6 +460,41 @@ class Cloud extends ChangeNotifier {
     }
   }
 
+  // MARK: 對戰
+
+  /// 呼叫 supabase/battle.sql 裡的 battle_* 函式
+  Future<Object?> rpc(
+    String name, [
+    Map<String, dynamic> args = const {},
+    Duration timeout = const Duration(seconds: 30),
+  ]) async {
+    try {
+      final body = await _send(
+        _rest('rpc/$name'),
+        'POST',
+        json: args,
+        timeout: timeout,
+      );
+      return body.isEmpty ? null : jsonDecode(body);
+    } on _HttpFailure catch (e) {
+      if (e.message.contains('Could not find the function'))
+        throw const CloudFailure('對戰伺服器還沒開通');
+      rethrow;
+    }
+  }
+
+  /// 開發版：把私人空間 dev-builds 裡的安裝檔換成 10 分鐘有效的下載網址（只有內測名單的帳號可以）
+  Future<String> signDevBuild(String path) async {
+    final body = jsonDecode(
+      await _send(
+        Uri.parse('${CloudConfig.url}/storage/v1/object/sign/dev-builds/$path'),
+        'POST',
+        json: {'expiresIn': 600},
+      ),
+    ) as Map<String, dynamic>;
+    return '${CloudConfig.url}/storage/v1${body['signedURL']}&download=JuanGo-dev.apk';
+  }
+
   // MARK: 分享代碼
 
   static const _shareCodesKey = 'cloud.shareCodes';
@@ -372,17 +502,39 @@ class Cloud extends ChangeNotifier {
   /// 上傳一個清單，回傳代碼；同一個清單再分享一次會更新同一個代碼，並重新計算 72 小時（由伺服器決定）
   Future<String> share(Map<String, dynamic> listFile, String key) async {
     final lists = listFile['lists'] as List;
-    final raw = lists.isEmpty ? '清單' : (lists.first as Map)['name'] as String? ?? '清單';
+    final raw = lists.isEmpty
+        ? '清單'
+        : (lists.first as Map)['name'] as String? ?? '清單';
     final name = raw.length > 60 ? raw.substring(0, 60) : raw;
-    final body = {'name': name, 'data': listFile, 'word_count': (listFile['words'] as List).length};
+    final body = {
+      'name': name,
+      'data': listFile,
+      'word_count': (listFile['words'] as List).length,
+    };
     final prefs = await SharedPreferences.getInstance();
-    final codes = Map<String, String>.from(jsonDecode(prefs.getString(_shareCodesKey) ?? '{}') as Map);
+    final codes = Map<String, String>.from(
+      jsonDecode(prefs.getString(_shareCodesKey) ?? '{}') as Map,
+    );
     final old = codes[key];
     if (old != null) {
-      final rows = jsonDecode(await _send(_rest('shared_lists', {'code': 'eq.$old'}), 'PATCH', json: body, prefer: 'return=representation')) as List;
+      final rows = jsonDecode(
+        await _send(
+          _rest('shared_lists', {'code': 'eq.$old'}),
+          'PATCH',
+          json: body,
+          prefer: 'return=representation',
+        ),
+      ) as List;
       if (rows.isNotEmpty) return old;
     }
-    final rows = jsonDecode(await _send(_rest('shared_lists'), 'POST', json: body, prefer: 'return=representation')) as List;
+    final rows = jsonDecode(
+      await _send(
+        _rest('shared_lists'),
+        'POST',
+        json: body,
+        prefer: 'return=representation',
+      ),
+    ) as List;
     final code = rows.isEmpty ? null : (rows.first as Map)['code'] as String?;
     if (code == null) throw const CloudFailure('建立分享代碼失敗');
     codes[key] = code;
@@ -392,10 +544,20 @@ class Cloud extends ChangeNotifier {
 
   /// 不用登入也能用代碼拿清單
   Future<BackupFile> fetch(String code) async {
-    final rows = jsonDecode(await _send(_rest('rpc/get_shared_list'), 'POST', json: {'p_code': code}, auth: signedIn)) as List;
-    if (rows.isEmpty) throw CloudFailure('找不到代碼「${pretty(code)}」的清單，可能打錯了，或已經超過 72 小時');
+    final rows = jsonDecode(
+      await _send(
+        _rest('rpc/get_shared_list'),
+        'POST',
+        json: {'p_code': code},
+        auth: signedIn,
+      ),
+    ) as List;
+    if (rows.isEmpty)
+      throw CloudFailure('找不到代碼「${pretty(code)}」的清單，可能打錯了，或已經超過 72 小時');
     try {
-      return AppStore.parseMap((rows.first as Map)['data'] as Map<String, dynamic>?);
+      return AppStore.parseMap(
+        (rows.first as Map)['data'] as Map<String, dynamic>?,
+      );
     } on FormatException catch (e) {
       throw CloudFailure(e.message);
     } on TypeError {
@@ -404,18 +566,26 @@ class Cloud extends ChangeNotifier {
   }
 
   Future<List<SharedList>> myLists() async {
-    final rows = jsonDecode(await _send(
-      _rest('shared_lists', {'select': 'code,name,word_count,expires_at', 'order': 'updated_at.desc'}),
-      'GET',
-    )) as List;
-    return rows.map((r) => SharedList.fromJson(r as Map<String, dynamic>)).toList();
+    final rows = jsonDecode(
+      await _send(
+        _rest('shared_lists', {
+          'select': 'code,name,word_count,expires_at',
+          'order': 'updated_at.desc',
+        }),
+        'GET',
+      ),
+    ) as List;
+    return rows
+        .map((r) => SharedList.fromJson(r as Map<String, dynamic>))
+        .toList();
   }
 
   Future<void> deleteList(String code) async {
     await _send(_rest('shared_lists', {'code': 'eq.$code'}), 'DELETE');
     final prefs = await SharedPreferences.getInstance();
-    final codes = Map<String, String>.from(jsonDecode(prefs.getString(_shareCodesKey) ?? '{}') as Map)
-      ..removeWhere((_, v) => v == code);
+    final codes = Map<String, String>.from(
+      jsonDecode(prefs.getString(_shareCodesKey) ?? '{}') as Map,
+    )..removeWhere((_, v) => v == code);
     await prefs.setString(_shareCodesKey, jsonEncode(codes));
   }
 
@@ -427,38 +597,85 @@ class Cloud extends ChangeNotifier {
 
   /// 回報單字問題：沒登入也能送。回傳 ok 或 duplicate（已經收過，或今天回報過同一件事）
   Future<String> reportWord(Map<String, dynamic> args) async {
-    final body = await _send(_rest('rpc/report_word'), 'POST', json: args, auth: signedIn);
+    final body = await _send(
+      _rest('rpc/report_word'),
+      'POST',
+      json: args,
+      auth: signedIn,
+    );
     final v = jsonDecode(body);
     return v is String ? v : 'ok';
   }
 
   // MARK: 連線
 
-  Future<String> _send(Uri url, String method, {Map<String, dynamic>? json, String? prefer, bool auth = true}) async {
+  Future<String> _send(
+    Uri url,
+    String method, {
+    Map<String, dynamic>? json,
+    String? prefer,
+    bool auth = true,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final res = await sendBytes(
+      url,
+      method,
+      body: json == null ? null : utf8.encode(jsonEncode(json)),
+      prefer: prefer,
+      auth: auth,
+      timeout: timeout,
+    );
+    return utf8.decode(res, allowMalformed: true);
+  }
+
+  /// 任何要登入的請求，body 自己準備好：課文書架的資料表用 JSON 陣列，Storage 用 JPEG 位元組
+  Future<List<int>> sendBytes(
+    Uri url,
+    String method, {
+    List<int>? body,
+    String contentType = 'application/json',
+    String? prefer,
+    Map<String, String> headers = const {},
+    bool auth = true,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
     final bearer = auth ? await _accessToken() : CloudConfig.key;
     final req = http.Request(method, url)
       ..headers.addAll({
         'apikey': CloudConfig.key,
         'Authorization': 'Bearer $bearer',
-        'Content-Type': 'application/json',
+        'Content-Type': contentType,
         if (prefer != null) 'Prefer': prefer,
+        ...headers,
       });
-    if (json != null) req.body = jsonEncode(json);
+    if (body != null) req.bodyBytes = body;
     final http.Response res;
     try {
-      res = await http.Response.fromStream(await _client.send(req).timeout(const Duration(seconds: 30)));
+      res = await http.Response.fromStream(
+        await _client.send(req).timeout(timeout),
+      );
     } catch (_) {
+      DevLog.add('cloud', '$method ${url.path} → 沒有回應');
       throw const CloudFailure('連不上伺服器，請檢查網路');
     }
-    final body = utf8.decode(res.bodyBytes, allowMalformed: true);
-    if (res.statusCode >= 200 && res.statusCode < 300) return body;
+    if (res.statusCode >= 200 && res.statusCode < 300) return res.bodyBytes;
+    final text = utf8.decode(res.bodyBytes, allowMalformed: true);
     if (res.statusCode == 429) throw _HttpFailure(429, '太頻繁了，請稍後再試');
     String? message;
     try {
-      final o = jsonDecode(body) as Map<String, dynamic>;
-      message = (o['msg'] ?? o['message'] ?? o['error_description'] ?? o['error']) as String?;
+      final o = jsonDecode(text) as Map<String, dynamic>;
+      message =
+          (o['msg'] ?? o['message'] ?? o['error_description'] ?? o['error'])
+              as String?;
     } catch (_) {}
-    throw _HttpFailure(res.statusCode, '${message ?? '伺服器錯誤'}（${res.statusCode}）');
+    DevLog.add(
+      'cloud',
+      '$method ${url.path} → ${res.statusCode} ${message ?? ''}',
+    );
+    throw _HttpFailure(
+      res.statusCode,
+      '${message ?? '伺服器錯誤'}（${res.statusCode}）',
+    );
   }
 }
 
@@ -469,13 +686,18 @@ class _HttpFailure extends CloudFailure {
 
 /// 自己分享出去的清單
 class SharedList {
-  SharedList({required this.code, required this.name, required this.wordCount, this.expiresAt});
+  SharedList({
+    required this.code,
+    required this.name,
+    required this.wordCount,
+    this.expiresAt,
+  });
   factory SharedList.fromJson(Map<String, dynamic> j) => SharedList(
-        code: j['code'] as String,
-        name: j['name'] as String? ?? '',
-        wordCount: j['word_count'] as int? ?? 0,
-        expiresAt: DateTime.tryParse(j['expires_at'] as String? ?? ''),
-      );
+    code: j['code'] as String,
+    name: j['name'] as String? ?? '',
+    wordCount: j['word_count'] as int? ?? 0,
+    expiresAt: DateTime.tryParse(j['expires_at'] as String? ?? ''),
+  );
   final String code, name;
   final int wordCount;
   final DateTime? expiresAt;
