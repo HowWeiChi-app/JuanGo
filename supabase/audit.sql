@@ -144,8 +144,8 @@ revoke all on all tables in schema 管理 from public, anon, authenticated;
 comment on table 管理.audit_log is '資料庫異動紀錄（只記哪一列、改了哪些欄位，不存內容），保留 30 天';
 
 -- ------------------------------------------------------------------ Email 通知
--- 每 5 分鐘（pg_cron → Edge Function audit-alert）把上次之後的新異動整理成一封信，寄到 ALERT_EMAIL
--- （沒設就寄到 GMAIL_USER）。有可疑異動時標題會寫「⚠️ 可疑」。沒有新異動就不寄。
+-- 每 8 分鐘（pg_cron → Edge Function audit-alert）檢查一次，有可疑異動才寄信到 ALERT_EMAIL
+-- （沒設就寄到 GMAIL_USER）。一般的異動不寄，到「管理 › 異動紀錄」看。
 create table if not exists 管理.audit_alert_state (
   id        int primary key default 1 check (id = 1),
   last_id   bigint not null default 0,
@@ -154,32 +154,40 @@ create table if not exists 管理.audit_alert_state (
 insert into 管理.audit_alert_state (last_id) select coalesce(max(id), 0) from 管理.audit_log on conflict (id) do nothing;
 revoke all on 管理.audit_alert_state from public, anon, authenticated;
 
--- Edge Function 用 service role 呼叫：拿上次之後的新異動（最多 300 列）並往前移；4 分鐘內叫第二次就回 null。
+-- Edge Function 用 service role 呼叫：看上次之後的所有新異動，只回可疑的（最多 100 列），游標一律往前移。
+-- 3 分鐘內叫第二次就回 null。可疑＝管理.audit_reason 判斷的，加上同一個帳號或 IP 這段時間改超過 200 次。
 create or replace function public.audit_alert_take() returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   s 管理.audit_alert_state;
   top bigint;
   rows jsonb;
+  bursts jsonb;
 begin
   select * into s from 管理.audit_alert_state where id = 1 for update;
-  if s.last_sent > now() - interval '4 minutes' then return null; end if;
-  select max(id) into top from (select id from 管理.audit_log where id > s.last_id order by id limit 300) x;
-  if top is null then return jsonb_build_object('rows', '[]'::jsonb, 'more', false); end if;
-  select jsonb_agg(jsonb_build_object(
-           'at', to_char(a.at at time zone 'Asia/Taipei', 'MM-DD HH24:MI:SS'),
-           'tbl', a.tbl, 'op', a.op, 'id', upper(p.pid), 'name', p.name, 'role', a.role, 'ip', a.ip,
-           'row', a.row_key, 'changed', array_to_string(a.changed, '、'), 'reason', 管理.audit_reason(a)) order by a.id)
-    into rows
-  from 管理.audit_log a left join battle_players p on p.user_id = a.user_id
-  where a.id > s.last_id and a.id <= top;
-  update 管理.audit_alert_state set last_id = top, last_sent = now() where id = 1;
-  return jsonb_build_object('rows', rows, 'more', exists (select 1 from 管理.audit_log where id > top));
+  if s.last_sent > now() - interval '3 minutes' then return null; end if;
+  select max(id) into top from 管理.audit_log where id > s.last_id;
+  update 管理.audit_alert_state set last_id = coalesce(top, s.last_id), last_sent = now() where id = 1;
+  if top is null then return jsonb_build_object('rows', '[]'::jsonb, 'bursts', '[]'::jsonb); end if;
+  select coalesce(jsonb_agg(x order by x->>'at'), '[]') into rows from (
+    select jsonb_build_object(
+             'at', to_char(a.at at time zone 'Asia/Taipei', 'MM-DD HH24:MI:SS'),
+             'tbl', a.tbl, 'op', a.op, 'id', upper(p.pid), 'name', p.name, 'role', a.role, 'ip', a.ip,
+             'row', a.row_key, 'changed', array_to_string(a.changed, '、'), 'reason', 管理.audit_reason(a)) x
+    from 管理.audit_log a left join battle_players p on p.user_id = a.user_id
+    where a.id > s.last_id and a.id <= top and 管理.audit_reason(a) is not null
+    order by a.id limit 100) y;
+  select coalesce(jsonb_agg(jsonb_build_object('id', upper(p.pid), 'name', p.name, 'ip', case when p.user_id is null then b.who end, 'n', b.n)), '[]')
+    into bursts
+  from (select coalesce(user_id::text, ip) who, count(*) n from 管理.audit_log
+        where id > s.last_id and id <= top and coalesce(user_id::text, ip) <> '' group by 1 having count(*) > 200) b
+  left join battle_players p on p.user_id::text = b.who;
+  return jsonb_build_object('rows', rows, 'bursts', bursts);
 end $$;
 revoke all on function public.audit_alert_take() from public, anon, authenticated;
 grant execute on function public.audit_alert_take() to service_role;
 
 create extension if not exists pg_net;
 select cron.unschedule('audit-alert') where exists (select 1 from cron.job where jobname = 'audit-alert');
-select cron.schedule('audit-alert', '*/5 * * * *',
+select cron.schedule('audit-alert', '*/8 * * * *',
   $$select net.http_post('https://zqvxfundqjegjveifqus.supabase.co/functions/v1/audit-alert', '{}'::jsonb)$$);
