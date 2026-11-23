@@ -27,8 +27,10 @@ class AppUpdate {
     try {
       final r = await http.get(manifest).timeout(const Duration(seconds: 10));
       if (r.statusCode != 200) return;
-      final a = jsonDecode(utf8.decode(r.bodyBytes));
-      if (a is! Map) return;
+      final j = jsonDecode(utf8.decode(r.bodyBytes));
+      if (j is! Map) return;
+      // 只發 Android 版時，latest.json 可以多一段 "android": {version, build, notes, apk}，iPhone 不會讀到
+      final a = j['android'] is Map ? j['android'] as Map : j;
       final build = (a['build'] as num?)?.toInt() ?? 0;
       final url = '${a['apk'] ?? ''}';
       if (build <= appBuild || !url.startsWith('https://')) return;

@@ -430,19 +430,20 @@ class NavPage extends StatelessWidget {
     this.leading,
     this.search,
     this.bottom,
-    this.safeTop = true,
   });
   final String? title;
   final Widget? titleWidget;
   final List<Widget> slivers;
   final List<Widget> actions;
-  final bool close, safeTop;
+  final bool close;
   final Widget? leading, search, bottom;
 
   @override
   Widget build(BuildContext context) {
     final p = Palette.of(context);
-    final top = safeTop ? MediaQuery.paddingOf(context).top : 0.0;
+    // 一律讓開狀態列：底部頁面（presentSheet）已經拿掉上方留白，這裡就是 0；
+    // 從底部頁面推出來的全螢幕頁面（例如課文書架）才不會把返回鍵放到狀態列底下
+    final top = MediaQuery.paddingOf(context).top;
     final canPop = Navigator.of(context).canPop();
     return Material(
       color: p.bg,

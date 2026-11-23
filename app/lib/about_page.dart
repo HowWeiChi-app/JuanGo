@@ -53,7 +53,6 @@ class AboutPage extends StatelessWidget {
     );
     return NavPage(
       title: '關於與授權',
-      safeTop: false,
       slivers: [
         Sec(
           children: [
@@ -157,7 +156,6 @@ class _Licenses extends StatelessWidget {
         final all = snap.data;
         return NavPage(
           title: '套件授權',
-          safeTop: false,
           slivers: [
             Sec(
               footer: 'Android 版用 Flutter 和下列套件製作。',
@@ -196,7 +194,6 @@ class _LicenseText extends StatelessWidget {
     final p = Palette.of(context);
     return NavPage(
       title: name,
-      safeTop: false,
       slivers: [
         for (final t in texts)
           Sec(

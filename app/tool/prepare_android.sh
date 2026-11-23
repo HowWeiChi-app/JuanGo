@@ -226,4 +226,56 @@ cat > android/app/proguard-rules.pro <<'TXT'
 -dontwarn com.google.mlkit.vision.text.devanagari.**
 -dontwarn com.google.mlkit.vision.text.japanese.**
 -dontwarn com.google.mlkit.vision.text.korean.**
+# release 版 R8 會縮減掉 ML Kit 用反射找的類別，辨識時 NullPointerException（getClass() on a null object）→ 全部保留
+-keep class com.google.mlkit.** { *; }
+-keep class com.google.android.gms.internal.mlkit_vision_text_common.** { *; }
+-keep class com.google.android.gms.internal.mlkit_vision_common.** { *; }
+-keep class com.google_mlkit_text_recognition.** { *; }
+-keep class com.google_mlkit_document_scanner.** { *; }
 TXT
+
+# 9. 發版金鑰：release 用自己的金鑰（~/.juango/key.properties，由 tools/make_release_key.sh 建立），不用 debug.keystore。
+#    沒有金鑰時：-Pdemo（官網截圖展示版）、-PdebugSigning=true（只測編譯）或 CI（GitHub 只檢查編譯）照舊用 debug 金鑰；
+#    其他 release 建置（裝到手機、發內測版）直接失敗，免得又發出 debug 金鑰簽的 APK。
+python3 - android/app/build.gradle.kts <<'PY'
+import sys
+path = sys.argv[1]
+g = open(path, encoding="utf-8").read()
+if "releaseKey" not in g:
+    head = '''// 發版金鑰（tool/prepare_android.sh 第 9 段加的）：路徑可用 JUANGO_KEY_PROPERTIES 換
+val releaseKeyFile = file(System.getenv("JUANGO_KEY_PROPERTIES") ?: "${System.getProperty("user.home")}/.juango/key.properties")
+val releaseKey: Map<String, String> = if (!releaseKeyFile.exists()) emptyMap() else releaseKeyFile.readLines()
+    .filter { "=" in it && !it.trimStart().startsWith("#") }
+    .associate { it.substringBefore("=").trim() to it.substringAfter("=").trim() }
+val allowDebugSigning = project.hasProperty("demo") || project.hasProperty("debugSigning") || System.getenv("CI") != null
+
+android {'''
+    assert g.count("\nandroid {") == 1, "找不到 android {"
+    g = g.replace("\nandroid {", "\n" + head, 1)
+    old = '''            // TODO: Add your own signing config for the release build.
+            // Signing with the debug keys for now, so `flutter run --release` works.
+            signingConfig = signingConfigs.getByName("debug")'''
+    assert old in g, "找不到預設的 release signingConfig"
+    g = g.replace(old, '''            signingConfig = signingConfigs.getByName(if (releaseKey.isEmpty()) "debug" else "release")''', 1)
+    g = g.replace("    buildTypes {", '''    signingConfigs {
+        if (!releaseKey.isEmpty()) create("release") {
+            storeFile = file(releaseKey.getValue("storeFile"))
+            storePassword = releaseKey.getValue("storePassword")
+            keyAlias = releaseKey.getValue("keyAlias")
+            keyPassword = releaseKey.getValue("keyPassword")
+        }
+    }
+
+    buildTypes {''', 1)
+    g += '''
+// 沒有發版金鑰又不是展示版／測編譯／CI：不准做出 debug 金鑰簽的 release APK
+tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" }.configureEach {
+    doFirst {
+        if (releaseKey.isEmpty() && !allowDebugSigning) throw GradleException(
+            "找不到發版金鑰 ${releaseKeyFile.path}：先在終端機跑 bash tools/make_release_key.sh（只測編譯可加 -PdebugSigning=true）")
+    }
+}
+'''
+open(path, "w", encoding="utf-8").write(g)
+print("build.gradle.kts 已設定發版金鑰")
+PY

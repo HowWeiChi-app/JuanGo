@@ -259,7 +259,6 @@ class _AddToListSheetState extends State<_AddToListSheet> {
         return NavPage(
           title: '加入其他清單',
           close: true,
-          safeTop: false,
           search: SearchBox(
             controller: _search,
             hint: '搜尋清單',
@@ -424,7 +423,6 @@ class _EditWordSheetState extends State<_EditWordSheet> {
     final p = Palette.of(context);
     return NavPage(
       title: '確認單字',
-      safeTop: false,
       leading: BarText(
         '取消',
         bold: false,
@@ -533,7 +531,6 @@ class _HistorySheet extends StatelessWidget {
     Color ink(int r) => [p.againInk, p.unsureInk, p.knowInk][r];
     return NavPage(
       title: '學習紀錄',
-      safeTop: false,
       close: true,
       slivers: [
         if (logs.isEmpty)
@@ -784,7 +781,6 @@ class _CandidatesSheetState extends State<_CandidatesSheet> {
     final allKnown = _selected.length == c.known.length;
     return NavPage(
       title: '選擇要加入的字',
-      safeTop: false,
       leading: BarText(
         '取消',
         bold: false,

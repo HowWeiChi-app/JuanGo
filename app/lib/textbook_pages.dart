@@ -69,7 +69,6 @@ class _BookshelfPageState extends State<BookshelfPage> {
           final books = _shelf.liveBooks;
           return NavPage(
             title: '課文書架',
-            safeTop: false,
             actions: [
               if (Cloud.shared.signedIn)
                 MenuBtn(
@@ -267,7 +266,6 @@ class BookPage extends StatelessWidget {
           final lessons = _shelf.lessonsIn(bookId);
           return NavPage(
             title: _shelf.book(bookId)?.title ?? '',
-            safeTop: false,
             actions: [
               MenuBtn(
                 label: '更多',
@@ -481,7 +479,6 @@ class _LessonReaderPageState extends State<LessonReaderPage> {
           return Stack(children: [
             NavPage(
               title: _shelf.lesson(widget.lessonId)?.title ?? '',
-              safeTop: false,
               actions: [
                 MenuBtn(
                   label: '更多',

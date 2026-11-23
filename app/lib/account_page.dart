@@ -333,7 +333,6 @@ class _AccountPageState extends State<AccountPage> {
         }
         return NavPage(
           title: '帳號登入',
-          safeTop: false,
           slivers: s == null ? _signedOut(p) : _signedIn(p, s),
         );
       },

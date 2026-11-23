@@ -28,3 +28,12 @@ supabase/.temp/
 
 # 本機用的開發版捷徑
 *.command
+
+# 私人截圖、資料和 Dia Cowork 的工作檔（不放 GitHub）
+截圖/
+使用者加入的檔案/
+.dia-cowork/
+.dia-cowork-stage/
+/PLAN.md
+/MEMORY.md
+/SUMMARY.md

@@ -908,7 +908,6 @@ class _RulesSheet extends StatelessWidget {
     final p = Palette.of(context);
     return NavPage(
       title: '學習規則',
-      safeTop: false,
       close: true,
       slivers: [
         Sec(

@@ -102,7 +102,6 @@ class _DevLogPageState extends State<DevLogPage> {
     final text = _text ?? '';
     return NavPage(
       title: 'Log 紀錄',
-      safeTop: false,
       actions: [
         if (text.isNotEmpty)
           BarText(
@@ -198,7 +197,6 @@ class _DevReportPageState extends State<DevReportPage> {
     final p = Palette.of(context);
     return NavPage(
       title: '回報問題',
-      safeTop: false,
       slivers: [
         SliverToBoxAdapter(
           child: Sec(

@@ -306,7 +306,6 @@ class _QuotaOverPageState extends State<QuotaOverPage> {
     final used = WordQuota.used();
     return NavPage(
       title: '單字超過上限',
-      safeTop: false,
       slivers: [
         Sec(
           children: [

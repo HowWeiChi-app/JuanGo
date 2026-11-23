@@ -34,6 +34,7 @@ create table if not exists public.shared_lists (
   constraint list_size check (pg_column_size(data) < 1000000)
 );
 alter table public.shared_lists enable row level security;
+-- 每人最多 10 個分享清單的上限在 supabase/abuse_limits.sql（另外的觸發器，重跑這個檔不會拿掉）
 
 -- owners see and manage their own lists; nobody can browse other people's
 drop policy if exists "owner manages" on public.shared_lists;

@@ -1045,7 +1045,6 @@ class _WordDetailPageState extends State<WordDetailPage> {
         final a = w.addedAt;
         const gap = SizedBox(height: 18);
         return NavPage(
-          safeTop: !widget.inSheet,
           close: widget.inSheet,
           actions: [
             BarIcon(

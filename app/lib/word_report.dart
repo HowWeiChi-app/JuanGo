@@ -13,10 +13,10 @@ import 'theme.dart';
 import 'widgets.dart';
 
 /// 和 pubspec.yaml 的 version 一致（test/word_report_test.dart 會檢查）
-const appVersion = '0.2.0';
+const appVersion = '0.2.1';
 
 /// 和 pubspec.yaml 版本號 + 後面的數字一致（同一個測試會檢查），用來比對有沒有新版
-const appBuild = 12;
+const appBuild = 13;
 
 class WordReport {
   static const kinds = [
@@ -171,7 +171,6 @@ class _ReportSheetState extends State<_ReportSheet> {
     final p = Palette.of(context);
     return NavPage(
       title: '回報問題',
-      safeTop: false,
       leading: BarText(
         '取消',
         bold: false,

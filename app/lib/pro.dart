@@ -602,7 +602,6 @@ class ProSettingsPage extends StatelessWidget {
       }
       return NavPage(
         title: '捲字 Pro',
-        safeTop: false,
         slivers: [
           Sec(
             children: [

@@ -366,7 +366,6 @@ class _SubPage extends StatelessWidget {
     listenable: AppSettings.shared,
     builder: (context, _) => NavPage(
       title: title,
-      safeTop: false,
       slivers: slivers(Palette.of(context)),
     ),
   );
@@ -649,7 +648,6 @@ class _SettingsRoot extends StatelessWidget {
             .$2;
         return NavPage(
           title: '設定',
-          safeTop: false,
           leading: const SizedBox.shrink(),
           actions: [BarText('完成', onTap: () => _closeSettings(context))],
           slivers: [
@@ -867,7 +865,7 @@ class _SettingsRoot extends StatelessWidget {
               footer: '大考詞彙和學測考古題永遠免費。資料來源、授權和隱私說明請見「關於與授權」。',
               children: [
                 RowTile(title: '字典', value: '${Dict.all.length} 個內建單字'),
-                const RowTile(title: '版本', value: '0.2.0'),
+                const RowTile(title: '版本', value: '0.2.1'),
                 RowTile(
                   title: '關於與授權',
                   chevron: true,

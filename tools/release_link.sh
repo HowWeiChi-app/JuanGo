@@ -32,8 +32,14 @@ build)
   cp app/build/app/outputs/flutter-apk/app-release.apk "$TMP/in.apk"
   zip -q -d "$TMP/in.apk" 'lib/x86_64/*' 'lib/armeabi-v7a/*' 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/MANIFEST.MF' || true
   "$BT/zipalign" -f -p 4 "$TMP/in.apk" "$TMP/aligned.apk"
-  "$BT/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android \
-    --ks-key-alias androiddebugkey --key-pass pass:android --out "$OUT/$NAME" "$TMP/aligned.apk"
+  # 用發版金鑰重簽（~/.juango/key.properties，tools/make_release_key.sh 建的），不再用 debug.keystore
+  KP="${JUANGO_KEY_PROPERTIES:-$HOME/.juango/key.properties}"
+  [ -f "$KP" ] || { echo "找不到發版金鑰 $KP：先跑 bash tools/make_release_key.sh" >&2; exit 1; }
+  kp() { sed -n "s/^$1=//p" "$KP"; }
+  KS_PASS="$(kp storePassword)" KEY_PASS="$(kp keyPassword)"
+  export KS_PASS KEY_PASS
+  "$BT/apksigner" sign --ks "$(kp storeFile)" --ks-pass env:KS_PASS \
+    --ks-key-alias "$(kp keyAlias)" --key-pass env:KEY_PASS --out "$OUT/$NAME" "$TMP/aligned.apk"
   rm -rf "$TMP"
   echo "== $(du -h "$OUT/$NAME" | cut -f1) $NAME"
   # %q mangles Chinese in macOS's bash 3.2, so quote by hand
