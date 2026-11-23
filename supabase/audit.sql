@@ -110,9 +110,9 @@ order by a.at desc;
 --    出現就表示權限有漏洞）
 --  · 用伺服器金鑰（service_role）改東西：App 和網站都沒有這把，出現就表示金鑰外流
 --  · 一個帳號或 IP 在 10 分鐘內改超過 200 次
-create or replace view 管理.可疑異動 as
-with base as (
-  select a.*, case
+create or replace function 管理.audit_reason(a 管理.audit_log) returns text
+language sql immutable as $$
+  select case
     when a.role = 'anon' and a.tbl <> 'public.word_reports' then '沒登入卻改了資料'
     when a.db_user in ('anon', 'authenticated') and a.tbl in ('public.entitlements', 'public.dev_testers',
          'public.user_subscriptions', 'public.promo_codes', 'public.promo_campaigns', 'public.promo_claims',
@@ -120,18 +120,19 @@ with base as (
          'public.dev_builds', 'public.battle_ratings', 'public.battle_players')
          then '直接改了只有後台和伺服器函式能改的表'
     when a.role = 'service_role' then '用了伺服器金鑰'
-  end as reason
-  from 管理.audit_log a
-),
-burst as (
+  end
+$$;
+
+create or replace view 管理.可疑異動 as
+with burst as (
   select coalesce(user_id::text, ip) who, date_trunc('minute', at) - (extract(minute from at)::int % 10) * interval '1 minute' slot, count(*) n
   from 管理.audit_log where coalesce(user_id::text, ip) <> '' group by 1, 2 having count(*) > 200
 )
-select b.at as "時間", b.reason as "原因", b.tbl as "資料表",
-       case b.op when 'INSERT' then '新增' when 'UPDATE' then '修改' else '刪除' end as "動作",
-       upper(p.pid) as "使用者 ID", p.name as "暱稱", b.role as "身分", b.ip as "IP", b.row_key as "哪一列"
-from base b left join public.battle_players p on p.user_id = b.user_id
-where b.reason is not null
+select a.at as "時間", 管理.audit_reason(a) as "原因", a.tbl as "資料表",
+       case a.op when 'INSERT' then '新增' when 'UPDATE' then '修改' else '刪除' end as "動作",
+       upper(p.pid) as "使用者 ID", p.name as "暱稱", a.role as "身分", a.ip as "IP", a.row_key as "哪一列"
+from 管理.audit_log a left join public.battle_players p on p.user_id = a.user_id
+where 管理.audit_reason(a) is not null
 union all
 select s.slot, '10 分鐘內改了 ' || s.n || ' 次', null, null, upper(p.pid), p.name, null,
        case when p.user_id is null then s.who end, null
@@ -141,3 +142,44 @@ order by 1 desc;
 revoke all on all tables in schema 管理 from public, anon, authenticated;
 
 comment on table 管理.audit_log is '資料庫異動紀錄（只記哪一列、改了哪些欄位，不存內容），保留 30 天';
+
+-- ------------------------------------------------------------------ Email 通知
+-- 每 5 分鐘（pg_cron → Edge Function audit-alert）把上次之後的新異動整理成一封信，寄到 ALERT_EMAIL
+-- （沒設就寄到 GMAIL_USER）。有可疑異動時標題會寫「⚠️ 可疑」。沒有新異動就不寄。
+create table if not exists 管理.audit_alert_state (
+  id        int primary key default 1 check (id = 1),
+  last_id   bigint not null default 0,
+  last_sent timestamptz
+);
+insert into 管理.audit_alert_state (last_id) select coalesce(max(id), 0) from 管理.audit_log on conflict (id) do nothing;
+revoke all on 管理.audit_alert_state from public, anon, authenticated;
+
+-- Edge Function 用 service role 呼叫：拿上次之後的新異動（最多 300 列）並往前移；4 分鐘內叫第二次就回 null。
+create or replace function public.audit_alert_take() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  s 管理.audit_alert_state;
+  top bigint;
+  rows jsonb;
+begin
+  select * into s from 管理.audit_alert_state where id = 1 for update;
+  if s.last_sent > now() - interval '4 minutes' then return null; end if;
+  select max(id) into top from (select id from 管理.audit_log where id > s.last_id order by id limit 300) x;
+  if top is null then return jsonb_build_object('rows', '[]'::jsonb, 'more', false); end if;
+  select jsonb_agg(jsonb_build_object(
+           'at', to_char(a.at at time zone 'Asia/Taipei', 'MM-DD HH24:MI:SS'),
+           'tbl', a.tbl, 'op', a.op, 'id', upper(p.pid), 'name', p.name, 'role', a.role, 'ip', a.ip,
+           'row', a.row_key, 'changed', array_to_string(a.changed, '、'), 'reason', 管理.audit_reason(a)) order by a.id)
+    into rows
+  from 管理.audit_log a left join battle_players p on p.user_id = a.user_id
+  where a.id > s.last_id and a.id <= top;
+  update 管理.audit_alert_state set last_id = top, last_sent = now() where id = 1;
+  return jsonb_build_object('rows', rows, 'more', exists (select 1 from 管理.audit_log where id > top));
+end $$;
+revoke all on function public.audit_alert_take() from public, anon, authenticated;
+grant execute on function public.audit_alert_take() to service_role;
+
+create extension if not exists pg_net;
+select cron.unschedule('audit-alert') where exists (select 1 from cron.job where jobname = 'audit-alert');
+select cron.schedule('audit-alert', '*/5 * * * *',
+  $$select net.http_post('https://zqvxfundqjegjveifqus.supabase.co/functions/v1/audit-alert', '{}'::jsonb)$$);
