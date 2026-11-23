@@ -52,7 +52,8 @@ Android 版有帳號與同步，用同一個 Email 登入後，iPhone 和 Androi
 | `tools/exams/` | 把大考中心公布的試題和答案 PDF 轉成 `exams.json` |
 | `tools/similar/` | 產生相似字詞，寫進 `words.json` |
 | `tools/build_release.sh` | 編譯要發布的 APK 和 IPA |
-| `docs/` | 介面設計規則（`DESIGN.md`） |
+| `tools/release_link.sh` | 把 Android 安裝檔放上 Supabase，給一次性下載連結用（說明在 `docs/下載連結.md`） |
+| `docs/` | 介面設計規則（`DESIGN.md`）、測試版下載連結（`下載連結.md`） |
 | `.github/workflows/` | 自動化流程：編譯 Android App、編譯 iPhone App |
 | `dist/` | 本機的發版輸出，不進 repo |
 
