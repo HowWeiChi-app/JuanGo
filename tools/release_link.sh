@@ -25,7 +25,18 @@ build)
   (cd app && flutter build apk --release --target-platform android-arm64)
   mkdir -p "$OUT"
   NAME="build-$BUILD-$(openssl rand -hex 8).apk"
-  cp app/build/app/outputs/flutter-apk/app-release.apk "$OUT/$NAME"
+  # ML Kit 會把 x86_64、armeabi-v7a 的檔案也放進來，拿掉再用同一把金鑰重簽，才不會超過 50 MB
+  BT="$(ls -d "$HOME"/Library/Android/sdk/build-tools/* | sort -V | tail -1)"
+  JAVA_HOME="${JAVA_HOME:-$(flutter config --list | sed -n 's/.*jdk-dir: //p')}"
+  export JAVA_HOME PATH="$JAVA_HOME/bin:$PATH"
+  TMP="$(mktemp -d)"
+  cp app/build/app/outputs/flutter-apk/app-release.apk "$TMP/in.apk"
+  zip -q -d "$TMP/in.apk" 'lib/x86_64/*' 'lib/armeabi-v7a/*' 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/MANIFEST.MF' || true
+  "$BT/zipalign" -f -p 4 "$TMP/in.apk" "$TMP/aligned.apk"
+  "$BT/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android \
+    --ks-key-alias androiddebugkey --key-pass pass:android --out "$OUT/$NAME" "$TMP/aligned.apk"
+  rm -rf "$TMP"
+  echo "== $(du -h "$OUT/$NAME" | cut -f1) $NAME"
   # %q mangles Chinese in macOS's bash 3.2, so quote by hand
   printf "NAME=%s\nBUILD=%s\nVERSION=%s\nNOTES='%s'\n" "$NAME" "$BUILD" "$VERSION" "$(printf "%s" "$NOTES" | sed "s/'/'\\\\''/g")" > "$OUT/pending.env"
   cat <<SQL
