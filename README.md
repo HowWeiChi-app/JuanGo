@@ -97,57 +97,32 @@ Android 版有帳號與同步，用同一個 Email 登入後，iPhone 和 Androi
 
 #### A. iOS 27 以上（不用電腦）
 
-##### 第 1 步：從 App Store 下載三個免費 App
+##### 第 1 步：從 App Store 下載兩個免費 App
 
 | App | 用途 | 下載 |
 | --- | --- | --- |
-| rootshell | 在手機上跑配對用的指令 | [App Store](https://apps.apple.com/app/rootshell-local-terminal-ssh/id6755794662) |
-| Open Minis | 在手機上跑安裝 SideInstaller 的指令 | [App Store](https://apps.apple.com/app/id6759188481) |
+| Open Minis（1.16 以上） | 在手機上跑安裝 SideInstaller 的指令 | [App Store](https://apps.apple.com/app/id6759188481) |
 | LocalDevVPN | 讓手機自己連到自己，安裝時要開著 | [App Store](https://apps.apple.com/app/id6755608044) |
 
-##### 第 2 步：在 rootshell 配對
+##### 第 2 步：打開開發者模式和定位權限
 
-1. 打開 rootshell，進到 **Settings › Location Diary Mode**，選 **Session Only**。
-2. 回到主畫面，點 **Local Shell**，再點右上角的 **Open**，會出現一個可以打字的黑色畫面（終端機）。
-3. 下面三行**一次貼一行**，每貼一行就按鍵盤上的「換行」執行，等它跑完再貼下一行：
-
-   ```sh
-   curl -fsSLO https://raw.githubusercontent.com/FrizzleM/siboot/main/rootshell/bin/siboot-pair.wasm
-   ```
-
-   ```sh
-   ifconfig en0 > ifconfig.txt
-   ```
-
-   ```sh
-   ./siboot-pair.wasm
-   ```
-
-4. 跑完第三行後，rootshell 會顯示一組配對碼。**不要關掉 rootshell**，切到「設定 › 隱私權與安全性 › 開發者模式」，滑到最下面，點 **Pair with siboot**，輸入手機密碼和 rootshell 上的配對碼。
+1. 到「設定 › 隱私權與安全性 › 開發者模式」，把開關打開，手機會要求重新開機。
+2. 到「設定 › App › Open Minis › 位置」，選「永遠」。這只是讓 Open Minis 在背景繼續跑，不會收集你的位置。
 
 ##### 第 3 步：在 Open Minis 安裝 SideInstaller
 
-1. 打開 LocalDevVPN，按連線，讓它保持連線。
-2. 打開 Open Minis，點右上角的終端機圖示，再點 **Shell Terminal**。
-3. 貼上這一行並執行：
+1. 在 iPhone 用 Safari 打開 [sideinstaller.net/install.html](https://sideinstaller.net/install.html)，看過並同意使用條款。
+2. 打開 LocalDevVPN，按連線，讓它保持連線。
+3. 打開 Open Minis，點右上角的終端機圖示，再點 **Shell Terminal**，會出現一個可以打字的畫面（終端機）。
+4. 貼上這一行，按鍵盤上的「換行」執行：
 
    ```sh
    wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh
    ```
 
-4. 依序輸入它問的東西：
-   - rootshell 顯示的**傳輸碼**（只有第一次要輸入）
-   - 你的 **Apple 帳號 email**
-   - **Apple 帳號密碼**
-   - 手機或其他 Apple 裝置收到的 **6 位數驗證碼**
-5. 畫面說完成之前不要切走 Open Minis。
-6. 到「設定 › 一般 › VPN 與裝置管理」，點你的 Apple 帳號，按「信任」。
-
-如果「設定 › 隱私權與安全性」裡找不到「開發者模式」開關，配對完成後在 Open Minis 執行下面這行，它會幫你打開：
-
-```sh
-siboot developer-mode --turn-on
-```
+5. 照畫面上的說明做。手機會跳出一組配對碼，到「設定」出現的配對提示裡輸入；接著依序輸入你的 **Apple 帳號 email**、**密碼**，和手機或其他 Apple 裝置收到的 **6 位數驗證碼**。
+6. 畫面說完成之前不要切走 Open Minis。
+7. 到「設定 › 一般 › VPN 與裝置管理」，點你的 Apple 帳號，按「信任」。
 
 ##### 第 4 步：用 SideInstaller 安裝 SideStore
 
@@ -172,7 +147,7 @@ https://github.com/HowWeiChi-app/JuanGo/releases/download/v0.2.0/JuanGo-0.2.0.ip
 
 iOS 26 的 iPhone 要先用電腦做一個「配對檔」，之後就可以在手機上完成。
 
-1. **安裝 SideInstaller**：在 iPhone 用 Safari 打開 [sideinstaller.net/#legacy](https://sideinstaller.net/#legacy)，照網頁上的說明用其中一個企業憑證安裝 SideInstaller。
+1. **安裝 SideInstaller**：在 iPhone 用 Safari 打開 [sideinstaller.net/install.html](https://sideinstaller.net/install.html)，展開最下面的 **Legacy（Enterprise certificates）**：先安裝 DNS 描述檔，並在「設定 › 一般 › VPN 與裝置管理 › DNS」選 SideInstaller；再按其中一個憑證的 **Install**，到「設定 › 一般 › VPN 與裝置管理」信任它（打不開就換另一個）。裝好 SideStore 之後，記得把 DNS 描述檔刪掉。
 2. **在電腦做配對檔**：
    - iOS 26.4 以上：在 Mac 或 Windows 電腦下載 [idevice_pair](https://github.com/jkcoxson/idevice_pair/releases/latest)，用線把 iPhone 接上電腦，iPhone 問要不要信任這台電腦時按「信任」。在 idevice_pair 選你的 iPhone，選 **Remote pairing**，按 **Create**，完成前 iPhone 不要鎖定，再按 **Save to file…** 存檔。
    - iOS 26.0～26.3：照 [SideStore 的配對檔說明](https://docs.sidestore.io/docs/advanced/alternative#pairing) 做。
