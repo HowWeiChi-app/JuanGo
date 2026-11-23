@@ -29,6 +29,10 @@ begin
      and (r.match_id, r.n) not in (select match_id, n from battle_rounds order by closed_at desc nulls last limit 3000);
   delete from battle_invites where created_at < now() - interval '1 day';
   delete from battle_queue where last_seen < now() - interval '1 hour';
+  -- 異動紀錄（audit.sql）留 30 天
+  if to_regclass('管理.audit_log') is not null then
+    execute 'delete from 管理.audit_log where at < now() - interval ''30 days''';
+  end if;
 end $$;
 revoke all on function public.cloud_cleanup() from public, anon, authenticated;
 select cron.unschedule('cloud-cleanup') where exists (select 1 from cron.job where jobname = 'cloud-cleanup');
@@ -36,7 +40,7 @@ select cron.schedule('cloud-cleanup', '41 20 * * *', 'select public.cloud_cleanu
 
 -- ------------------------------------------------------------------ 2. 中文檢視表
 create schema if not exists 管理;
-revoke all on schema 管理 from public, anon, authenticated;
+revoke all on schema 管理 from public;  -- 表和檢視表另外對 anon、authenticated 收回；usage 留給 audit.sql 的紀錄函式
 
 create or replace view 管理.使用者 as
 select upper(p.pid)                                  as "ID",
