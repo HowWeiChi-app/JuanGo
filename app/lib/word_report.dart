@@ -15,6 +15,9 @@ import 'widgets.dart';
 /// 和 pubspec.yaml 的 version 一致（test/word_report_test.dart 會檢查）
 const appVersion = '0.2.0';
 
+/// 和 pubspec.yaml 版本號 + 後面的數字一致（同一個測試會檢查），用來比對有沒有新版
+const appBuild = 11;
+
 class WordReport {
   static const kinds = [
     ('meaning', '中文解釋錯誤'),

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'add_tab.dart';
+import 'app_update.dart';
 import 'battle.dart';
 import 'dev_update.dart';
 import 'cloud.dart';
@@ -244,7 +245,12 @@ class _MainTabsState extends State<MainTabs> with WidgetsBindingObserver {
     Cloud.shared.syncQuietly();
     WordReport.flush();
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkQuota());
-    // 開發版：有新版就提醒下載
+    // 有新版就提醒下載（開發版另外查內測版）
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => unawaited(
+        AppUpdate.check(() => appNavigator.currentContext ?? context),
+      ),
+    );
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => unawaited(
         DevUpdate.check(() => appNavigator.currentContext ?? context),

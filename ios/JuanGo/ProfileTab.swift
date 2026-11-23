@@ -280,6 +280,7 @@ struct SettingsView: View {
                     Button("清除所有單字與紀錄", role: .destructive) { confirmWipe = true }
                     Button("重新進行新手導覽") { settings.onboarded = false; dismiss() }
                 }
+                UpdateSection()
                 Section {
                     LabeledContent("字典", value: "\(Dictionary_.all.count) 個內建單字")
                     LabeledContent("版本", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")

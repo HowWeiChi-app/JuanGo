@@ -2,7 +2,9 @@
 # 編譯要發布的 iPhone 和 Android 版，放到 dist/release/。
 # iPhone 版沒有簽名，安裝時用 Sideloadly 或 AltStore 以自己的 Apple ID 簽。
 #
-# 用法：在 repo 根目錄執行  bash tools/build_release.sh
+# 用法：在 repo 根目錄執行  bash tools/build_release.sh "這版改了什麼（App 內更新提醒會顯示）"
+# 最後會重寫 release/latest.json：已經安裝的 App 讀它檢查有沒有新版。
+# 它要跟著 commit 推上 main，而且要等 GitHub Release 的安裝檔換好再推，App 才不會抓到舊檔。
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -44,6 +46,9 @@ fi
 mkdir "$WORK/Payload"
 cp -R "$WORK/products/Release-iphoneos/$APP.app" "$WORK/Payload/"
 (cd "$WORK" && zip -qry "$OUT/$APP-$VERSION.ipa" Payload)
+
+BUILD="$(sed -n 's/^version: [^+]*+\(.*\)/\1/p' app/pubspec.yaml)"
+python3 tools/write_latest.py "$VERSION" "$BUILD" "${1:-}"
 
 echo "== 完成"
 (cd "$OUT" && shasum -a 256 ./*)

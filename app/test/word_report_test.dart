@@ -22,11 +22,12 @@ void main() {
   setUp(resetState);
 
   test('App 版本和 pubspec.yaml 一致', () {
-    final v = RegExp(
-      r'^version:\s*([\d.]+)',
+    final m = RegExp(
+      r'^version:\s*([\d.]+)\+(\d+)',
       multiLine: true,
-    ).firstMatch(File('pubspec.yaml').readAsStringSync())!.group(1);
-    expect(appVersion, v);
+    ).firstMatch(File('pubspec.yaml').readAsStringSync())!;
+    expect(appVersion, m.group(1));
+    expect(appBuild, int.parse(m.group(2)!));
   });
 
   test('沒網路時先存著，連上後補送一次', () async {

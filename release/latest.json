@@ -1,0 +1,7 @@
+{
+  "version": "0.2.0",
+  "build": 11,
+  "notes": "App 會自己檢查更新：iPhone 可以一鍵更新並刷新簽名，Android 會提醒下載新版。",
+  "ipa": "https://github.com/HowWeiChi-app/JuanGo/releases/download/v0.2.0/JuanGo-0.2.0.ipa",
+  "apk": "https://github.com/HowWeiChi-app/JuanGo/releases/download/v0.2.0/JuanGo-0.2.0.apk"
+}

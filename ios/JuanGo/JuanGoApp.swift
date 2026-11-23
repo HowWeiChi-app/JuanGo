@@ -63,6 +63,7 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.4), value: settings.onboarded)
         .modifier(WordRepair())
         .modifier(QuotaReminders())
+        .modifier(UpdateReminders())
         // the emailed sign-in link comes back as juango://login-callback#access_token=…
         .onOpenURL { url in
             if let l = BattleLink(url: url) { battleLink = l; return }
