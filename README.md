@@ -101,6 +101,10 @@ flutter build apk --release
 
 Android 版要用同一把簽名金鑰編譯，已安裝的手機才能直接更新，所以發版都在同一台電腦上做。
 
+## 授權
+
+程式碼以 [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) 授權（全文見 `LICENSE`）：可以免費使用、修改和分享，但不能用在商業用途。下方列出的單字資料、字表和圖示，仍各自依原本的授權使用。
+
 ## 資料來源與授權
 
 - 大考詞彙與分級：大學入學考試中心《高中英文參考詞彙表》（111 學年度起適用），僅供非營利學習使用。
