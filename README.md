@@ -4,6 +4,8 @@
 
 ## 功能
 
+最新版本是 [0.2.0 測試版](https://github.com/HowWeiChi-app/JuanGo/releases/tag/v0.2.0)（build 9）。
+
 - **主頁**：每日目標進度環、待複習數、連續天數，一鍵開始今日學習；「我的清單」每列顯示幾個字待複習，點一下就練那個清單，還有自動產生的「最近答錯」列表；今天練完會顯示明天有幾個字要複習；自由練習、學習紀錄
 - **例句**：內建字庫多數都附有事先產生的例句和中文翻譯，少數由裝置端 Apple Intelligence 在背景補上；例句裡的單字會標出來。單字頁和字卡背面可以聽整句例句，不喜歡的例句可以「換一句」
 - **探索**：左右滑的單字卡，點兩下收進「我的單字」
@@ -23,7 +25,10 @@
     - 聽力題可以「慢速再聽」
     - 結算頁先列出這輪的字，點字可看單字頁，也可以「只練答錯的字」
     - 複習以「天」為單位到期：昨晚練的字，今天早上就會出現在待複習
+- **回報單字問題**：單字頁的選單按「回報問題」，可以回報解釋、音標、詞性、例句、發音或分級錯誤；沒網路時先存著，下次打開 App 再送出
+- **考前倒數**：設定考試名稱和日期，主頁顯示倒數，並依剩下的天數調整每日新字
 - **我的**：連續天數、學習日曆、熟練階梯、成就勳章
+- **捲字 Pro 方案頁**：可以先看方案和價格，商店開通後才能訂閱
 - **App 捷徑**：對 Siri 說「用 JuanGo 開始今日學習」，或從 Spotlight、捷徑 App、動作按鈕直接開始今天的練習
 - **每日提醒**：設定的時間提醒複習，並說今天有幾個字到期；當天已經練過就不提醒
 - **備份與分享**：設定 › 備份可匯出／還原全部資料；清單頁右上角可把清單分享成檔案或 8 碼分享代碼，別人在「新增 › 匯入檔案／輸入分享代碼」加入
@@ -62,6 +67,11 @@ Android 版有帳號與同步，用同一個 Email 登入後，iPhone 和 Androi
 ### iPhone
 
 - **自己編譯**：用 Xcode 26 打開 `ios/JuanGo.xcodeproj`，在 Signing \& Capabilities 換成自己的 Team，執行到 iPhone 或模擬器。
+- **用 SideInstaller 安裝（不用電腦）**：
+    1. 從官方網站 [sideinstaller.net](https://sideinstaller.net/) 安裝 SideInstaller（只用這個網站或 [GitHub](https://github.com/FrizzleM/SideInstaller)，sideinstaller.com 是假網站）。iOS 27 以上不用電腦；iOS 17.4 到 26 要先用電腦做配對檔，做法見 SideInstaller 的說明。
+    2. 在 iPhone 用 Safari 打開 [一鍵安裝捲字 JuanGo 0.2.0](https://sideinstaller.net/open.html?url=https%3A%2F%2Fgithub.com%2FHowWeiChi-app%2FJuanGo%2Freleases%2Fdownload%2Fv0.2.0%2FJuanGo-0.2.0.ipa)，按下去會交給 SideInstaller 下載並安裝。
+    3. 也可以在 SideInstaller 安裝的 SideStore 或 LiveContainer 裡，自己貼上 IPA 網址：`https://github.com/HowWeiChi-app/JuanGo/releases/download/v0.2.0/JuanGo-0.2.0.ipa`
+    4. 第一次要在「設定 › 一般 › VPN 與裝置管理」信任自己的 Apple ID。
 - **自己簽名安裝 IPA**：下載 Releases 裡的 IPA，用 [Sideloadly](https://sideloadly.io) 或 [AltStore](https://altstore.io) 以自己的 Apple ID 簽名安裝。iPhone 要打開「設定 › 隱私權與安全性 › 開發者模式」，並在「設定 › 一般 › VPN 與裝置管理」信任自己的 Apple ID。免費 Apple ID 簽的 App 每 7 天要重簽一次（資料不會消失）。
 
 需求：iOS 26、Xcode 26。
