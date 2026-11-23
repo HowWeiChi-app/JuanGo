@@ -596,6 +596,9 @@ begin
   end loop;
 
   perform battle_check_open();
+  if exists (select 1 from battle_players where user_id = me.user_id and ranked_locked) then
+    raise exception '排位賽暫停中：系統偵測到疑似外掛。如果是誤判，請聯絡開發者';
+  end if;
   mine := battle_rating(me.user_id);
   my_tier := battle_tier(mine.rating);
 
@@ -910,7 +913,10 @@ declare
   c1  int; c2 int; ms1 int; ms2 int;
   out1 text; out2 text;
   a   jsonb; b jsonb;
-  quick int;
+  quick1 int; quick2 int;
+  bot1 boolean := false; bot2 boolean := false;
+  void jsonb := jsonb_build_object('delta', 0, 'breakdown', jsonb_build_array(
+                  jsonb_build_object('label', '疑似外掛，這場不計分', 'value', 0)));
 begin
   select * into m from battle_matches where id = p_match for update;
   if m.status = 'finished' then return; end if;
@@ -919,9 +925,21 @@ begin
   if m.rated and p_reason <> 'abandoned' and m.status = 'playing' then
     select count(*) filter (where p1_pick = answer), coalesce(avg(coalesce(p1_ms, 10000)), 10000),
            count(*) filter (where p2_pick = answer), coalesce(avg(coalesce(p2_ms, 10000)), 10000),
-           count(*) filter (where p1_pick = answer and p1_ms < 800)
-      into c1, ms1, c2, ms2, quick
+           count(*) filter (where p1_pick = answer and p1_ms < 1200),
+           count(*) filter (where p2_pick = answer and p2_ms < 1200)
+      into c1, ms1, c2, ms2, quick1, quick2
     from battle_rounds where match_id = p_match and closed_at is not null;
+    -- 外掛偵測（battle_anticheat.sql）：10 題裡有 8 題以上在 1.2 秒內答對，人很難做到。
+    -- 這場雙方都不計分，記到 battle_bot_flags（會進可疑異動並寄信），7 天內 3 次就暫停排位賽。
+    bot1 := quick1 >= 8;
+    bot2 := m.p2 is not null and quick2 >= 8;
+    if bot1 then perform battle_flag_bot(m.p1, p_match, quick1, ms1); end if;
+    if bot2 then perform battle_flag_bot(m.p2, p_match, quick2, ms2); end if;
+  end if;
+  if m.rated and p_reason <> 'abandoned' and m.status = 'playing' and (bot1 or bot2) then
+    a := void;
+    if m.p2 is not null then b := void; end if;
+  elsif m.rated and p_reason <> 'abandoned' and m.status = 'playing' then
     out1 := case when p_winner is null then 'draw' when p_winner = m.p1 then 'win' else 'loss' end;
     out2 := case out1 when 'win' then 'loss' when 'loss' then 'win' else 'draw' end;
     r1 := battle_rating(m.p1);
@@ -932,7 +950,6 @@ begin
       b := battle_apply(m.p2, out2, r1.rating, false, c2, ms2,
                         p_reason = 'left' and out2 = 'loss', p_reason = 'left' and out2 = 'win');
     end if;
-    if quick >= 8 then update battle_players set flagged = flagged + 1 where user_id = m.p1; end if;
     update battle_players set games = games + 1, wins = wins + (out1 = 'win')::int, losses = losses + (out1 = 'loss')::int,
       draws = draws + (out1 = 'draw')::int where user_id = m.p1;
     update battle_players set games = games + 1, wins = wins + (out2 = 'win')::int, losses = losses + (out2 = 'loss')::int,
@@ -942,7 +959,7 @@ begin
     p1_delta = coalesce((a->>'delta')::int, 0), p2_delta = coalesce((b->>'delta')::int, 0),
     p1_breakdown = a->'breakdown', p2_breakdown = b->'breakdown', finished_at = clock_timestamp()
   where id = p_match;
-  if m.rated and p_reason = 'score' and m.p2 is not null then perform battle_learn(p_match); end if;
+  if m.rated and p_reason = 'score' and m.p2 is not null and not (bot1 or bot2) then perform battle_learn(p_match); end if;
 end $$;
 
 -- Moves a match forward. There is no background job: every state request and answer runs this.

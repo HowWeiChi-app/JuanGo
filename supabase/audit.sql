@@ -113,6 +113,7 @@ order by a.at desc;
 create or replace function 管理.audit_reason(a 管理.audit_log) returns text
 language sql immutable as $$
   select case
+    when a.tbl = 'public.battle_bot_flags' and a.op = 'INSERT' then '疑似對戰外掛（battle_anticheat.sql）'
     when a.role = 'anon' and a.tbl <> 'public.word_reports' then '沒登入卻改了資料'
     when a.db_user in ('anon', 'authenticated') and a.tbl in ('public.entitlements', 'public.dev_testers',
          'public.user_subscriptions', 'public.promo_codes', 'public.promo_campaigns', 'public.promo_claims',
