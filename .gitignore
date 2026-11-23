@@ -25,3 +25,6 @@ tools/exams/pdf/
 
 # Supabase CLI
 supabase/.temp/
+
+# 本機用的開發版捷徑
+*.command
