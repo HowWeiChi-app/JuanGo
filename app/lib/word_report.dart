@@ -16,7 +16,7 @@ import 'widgets.dart';
 const appVersion = '0.2.0';
 
 /// 和 pubspec.yaml 版本號 + 後面的數字一致（同一個測試會檢查），用來比對有沒有新版
-const appBuild = 11;
+const appBuild = 12;
 
 class WordReport {
   static const kinds = [

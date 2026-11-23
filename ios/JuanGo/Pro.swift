@@ -73,13 +73,22 @@ final class ProStore {
 
     /// the plan bought in the store (RevenueCat, not connected yet)
     private var bought: ProPlan?
-    /// what the account has: the dev build's GOs PRO while signed in, otherwise what was bought
-    var plan: ProPlan? { devUnlocked ? .gos : bought }
+    /// what the account has: a dev account's GOs PRO, then what the server lists (codes, promos), then what was bought
+    var plan: ProPlan? { devUnlocked ? .gos : (serverPlan ?? bought) }
+    private var serverPlan: ProPlan? {
+        switch Cloud.shared.account?.plan { case "gos": .gos; case "juango": .juango; default: nil }
+    }
     private(set) var period: ProPeriod?
-    private(set) var expires: Date?
-    /// The dev build unlocks Pro for the signed-in account only: signing out locks every Pro feature again,
-    /// with the dev texts and 開發者選項 hidden, exactly like the free version.
-    var devUnlocked: Bool { DevFlags.gosPro && Cloud.shared.signedIn }
+    private var boughtExpires: Date?
+    var expires: Date? {
+        boughtExpires ?? Cloud.shared.account?.expires_at.flatMap {
+            let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return f.date(from: $0) ?? ISO8601DateFormatter().date(from: $0)
+        }
+    }
+    /// A dev account (listed in dev_testers on the server, or any account on a dev build) gets GOs PRO while
+    /// signed in: signing out locks every Pro feature again, with the dev texts and 開發者選項 hidden.
+    var devUnlocked: Bool { Cloud.shared.signedIn && (DevFlags.gosPro || Cloud.shared.account?.tester == true) }
 
     var isPro: Bool { plan != nil }
 

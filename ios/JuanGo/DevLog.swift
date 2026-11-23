@@ -8,6 +8,8 @@ import UIKit
 nonisolated enum DevLog {
     private static let queue = DispatchQueue(label: "JuanGo.devlog")
     private static let maxLines = 2000
+    /// on for the dev build and for dev accounts (set by Cloud when my_account answers or the account signs out)
+    nonisolated(unsafe) static var on = DevFlags.gosPro
     private static var url: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("devlog.txt")
     }
@@ -20,7 +22,7 @@ nonisolated enum DevLog {
 
     /// Adds one line, e.g. `DevLog.add("cloud", "POST rest/v1/pages → 403 …")`. Only the dev build records.
     static func add(_ tag: String, _ message: String) {
-        guard DevFlags.gosPro else { return }
+        guard on else { return }
         let line = "\(stamp.string(from: .now)) [\(tag)] \(message.replacingOccurrences(of: "\n", with: " "))\n"
         queue.async {
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

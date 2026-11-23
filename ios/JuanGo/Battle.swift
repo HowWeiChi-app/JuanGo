@@ -669,6 +669,13 @@ struct BattleView: View {
             if ProcessInfo.processInfo.environment["JUANGO_BATTLE"] != nil { placing = false }
             #endif
             if !placing { start() }
+            else if Cloud.shared.signedIn {
+                // tested on another phone or before a reinstall: the server keeps the result
+                Task {
+                    await Cloud.shared.loadAccount()
+                    if placing, settings.levelTested { placing = false; start() }
+                }
+            }
         }
         .onChange(of: model?.me?.retest) { _, r in if r == true { retest() } }
         .onChange(of: model?.phase) { _, p in UIApplication.shared.isIdleTimerDisabled = p == .playing }

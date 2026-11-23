@@ -6,6 +6,7 @@ import 'package:http/testing.dart';
 import 'package:juango/cloud.dart';
 import 'package:juango/dictionary.dart';
 import 'package:juango/models.dart';
+import 'package:juango/settings.dart';
 import 'package:juango/store.dart';
 
 import 'harness.dart';
@@ -208,14 +209,17 @@ void main() {
     expect(date, matches(RegExp(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$')));
   });
 
-  test('雲端的設定不會蓋掉這台裝置的設定', () async {
+  test('登入後第一次同步拿帳號的設定，之後不蓋掉這台裝置改的', () async {
     final c = cloud(
       (r) async =>
           r.method == 'GET' ? _rows(_iosBackup()) : http.Response('', 201),
     );
     c.handle(_link());
     await c.sync();
-    expect(AppStore.shared.fullBackup()['settings']['dailyGoal'], isNot(99));
+    expect(AppSettings.shared.dailyGoal, 99);
+    AppSettings.shared.update((s) => s.dailyGoal = 15);
+    await c.sync();
+    expect(AppSettings.shared.dailyGoal, 15);
   });
 
   test('token 過期會自動更新，同時的請求只更新一次', () async {
@@ -346,6 +350,7 @@ void main() {
     final file = AppStore.shared.listFile('期中考', AppStore.shared.wordList);
     expect(await c.share(file, 'custom:1'), 'K7Q3P9XM');
     expect(await c.share(file, 'custom:1'), 'K7Q3P9XM');
+    sent.removeWhere((l) => l.contains('rpc/my_account'));
     expect(sent.first, startsWith('POST /rest/v1/shared_lists'));
     expect(
       sent.last,

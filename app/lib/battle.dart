@@ -1139,7 +1139,19 @@ class _BattlePageState extends State<BattlePage> {
     BattlePage.open++;
     BattlePage._pages.add(this);
     Cloud.shared.addListener(_signedInChanged);
-    if (!_placing) _start();
+    if (!_placing) {
+      _start();
+    } else if (Cloud.shared.signedIn) {
+      // 這個帳號可能在別支手機做過程度測驗：先問伺服器，做過就不用重測
+      unawaited(
+        Cloud.shared.loadAccount().then((_) {
+          if (mounted && _placing && AppSettings.shared.levelTested) {
+            setState(() => _placing = false);
+            _start();
+          }
+        }),
+      );
+    }
   }
 
   void _start() {

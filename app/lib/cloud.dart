@@ -11,6 +11,8 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'dev_log.dart';
+import 'pro.dart' show devGosPro;
+import 'settings.dart';
 import 'store.dart';
 
 /// 這把 key 本來就要放在 App 裡，能碰到什麼由 supabase/schema.sql 的資料列權限決定
@@ -102,6 +104,35 @@ class Cloud extends ChangeNotifier {
   String? notice;
 
   bool get signedIn => session != null;
+
+  /// 伺服器上的帳號資訊（supabase/account.sql 的 my_account）：
+  /// id（10 碼使用者 ID）、tester（開發帳號）、placed_level（程度測驗）、plan／expires_at（Pro）。登出後是 null
+  Map<String, dynamic>? account;
+
+  /// 使用者 ID（好友代碼），設定頁顯示
+  String? get accountId => account?['id'] as String?;
+
+  /// 向伺服器拿帳號資訊。做過程度測驗的帳號，換手機或重裝後不用重測
+  Future<void> loadAccount() async {
+    if (!signedIn) return;
+    try {
+      final j = await rpc('my_account', const {}, const Duration(seconds: 10));
+      if (j is! Map<String, dynamic> || !signedIn) return;
+      account = j;
+      DevLog.on = devGosPro || j['tester'] == true;
+      final placed = (j['placed_level'] as num?)?.toInt();
+      final s = AppSettings.shared;
+      if (placed != null && !s.levelTested) {
+        s.update((x) {
+          x.levelTested = true;
+          x.level = '$placed';
+        });
+      }
+      notifyListeners();
+    } catch (e) {
+      debugPrint('帳號資訊拿不到：$e');
+    }
+  }
 
   /// 讀不出登入資料（例如換手機還原）就當作沒登入，不影響 App 其他功能
   Future<void> load() async {
@@ -260,9 +291,22 @@ class Cloud extends ChangeNotifier {
     return true;
   }
 
+  /// 登出：先把單字、進度和設定傳上雲端，再從這支手機移除（下次登入會拿回來）。
+  /// 上傳失敗就不登出，免得沒傳上去的東西不見
   Future<void> signOut() async {
+    if (signedIn) {
+      await sync();
+    }
+    AppStore.shared.wipeAccount();
+    AppSettings.shared.resetAccount();
+    await _endSession();
+  }
+
+  Future<void> _endSession() async {
     final token = session?.accessToken;
     _store(null);
+    account = null;
+    DevLog.on = devGosPro;
     lastSync = null;
     notifyListeners();
     try {
@@ -287,6 +331,8 @@ class Cloud extends ChangeNotifier {
   Future<void> deleteAccount() async {
     await _send(_rest('rpc/delete_my_account'), 'POST', json: {});
     _store(null);
+    account = null;
+    DevLog.on = devGosPro;
     lastSync = null;
     notifyListeners();
     try {
@@ -298,10 +344,12 @@ class Cloud extends ChangeNotifier {
       DateTime.now().add(Duration(seconds: seconds.toInt() - 60));
 
   void _store(CloudSession? s) {
+    final signingIn = s != null && session == null;
     if ((s == null) != (session == null))
       DevLog.add('cloud', s == null ? '登出' : '登入');
     session = s;
     unawaited(_persist(s));
+    if (signingIn) unawaited(loadAccount());
   }
 
   Future<void> _persist(CloudSession? s) async {
@@ -386,7 +434,9 @@ class Cloud extends ChangeNotifier {
       var result = '已上傳';
       final remote = await _download();
       if (remote != null)
-        result = '已同步（${AppStore.shared.restore(remote, settings: false)}）';
+        // 登入後第一次同步：連設定一起拿回來（登出時這支手機的設定已經清掉）
+        result =
+            '已同步（${AppStore.shared.restore(remote, settings: lastSync == null)}）';
       await _upload();
       await _markSynced();
       return result;
@@ -398,6 +448,7 @@ class Cloud extends ChangeNotifier {
 
   /// 回到 App 時的自動同步，失敗了下次再試，不打擾使用者
   Future<void> syncQuietly() async {
+    unawaited(loadAccount());
     try {
       await sync();
     } catch (e) {

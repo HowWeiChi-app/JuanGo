@@ -67,8 +67,8 @@ Android 版有帳號與同步，用同一個 Email 登入後，iPhone 和 Androi
 | `tools/similar/` | 產生相似字詞，寫進 `words.json` |
 | `tools/battle/` | 從 `words.json` 產生對戰題庫 `supabase/battle_words.sql` |
 | `tools/build_release.sh` | 編譯要發布的 APK 和 IPA |
-| `tools/release_link.sh` | 把 Android 安裝檔放上 Supabase，給一次性下載連結用（說明在 `docs/下載連結.md`） |
-| `docs/` | 介面設計規則（`DESIGN.md`）、單字對戰規則（`單字對戰規則.md`）、下載連結（`下載連結.md`）、iPhone 安裝教學（`iPhone安裝教學.md`） |
+| `tools/release_link.sh` | 把 Android 安裝檔放上 Supabase，給舊的 1.0.0 開發版抓更新（說明在 `docs/帳號與資料庫管理.md`） |
+| `docs/` | 介面設計規則（`DESIGN.md`）、單字對戰規則（`單字對戰規則.md`）、帳號與資料庫管理（`帳號與資料庫管理.md`）、iPhone 安裝教學（`iPhone安裝教學.md`） |
 | `.github/workflows/` | 自動化流程：編譯 Android App、編譯 iPhone App |
 | `release/` | 更新資訊 `latest.json`：已經安裝的 App 讀它檢查有沒有新版，`tools/build_release.sh` 發版時重寫 |
 | `dist/` | 本機的發版輸出，不進 repo |

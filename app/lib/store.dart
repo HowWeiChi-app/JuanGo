@@ -205,6 +205,16 @@ class AppStore extends ChangeNotifier {
     save();
   }
 
+  /// 登出：帳號的單字、清單、紀錄和考前倒數都從這支手機移除（雲端還有一份）
+  void wipeAccount() {
+    _byTerm.clear();
+    lists.clear();
+    logs.clear();
+    removed.clear();
+    countdown = Countdown();
+    save();
+  }
+
   // MARK: 備份與分享清單
 
   /// 內建字典裡拼法完全相同的字，備份會省略和它一樣的內容

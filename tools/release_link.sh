@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# 把測試版的 Android 安裝檔（arm64）放到 Supabase 私人空間 dev-builds，給一次性下載連結用：
-#   select public.dev_link_new('名字');
-# 拿到 https://howweichi-app.github.io/juango/download/?t=… ，按一次下載就失效，下載到的一律是最新登記的那一版。
+# 把 Android 安裝檔（arm64）放到 Supabase 私人空間 dev-builds，登記在 dev_builds。
+# 只給舊的 1.0.0 開發版抓更新用（它們向 dev_latest() 查新版）；0.2.0 build 11 以後的 App 改讀 release/latest.json。
 #
 # 用法（在 repo 根目錄，先跑過 tools/build_release.sh）：
 #   1. bash tools/release_link.sh build "這版改了什麼"

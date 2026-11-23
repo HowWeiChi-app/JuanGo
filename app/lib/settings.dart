@@ -237,8 +237,44 @@ class AppSettings extends ChangeNotifier {
   String get reminderText =>
       '${reminderMinutes ~/ 60}:${(reminderMinutes % 60).toString().padLeft(2, '0')}';
 
-  // 備份檔裡的設定（欄位和 iOS 版相同）
+  /// 登出：帳號的設定都回到預設值（雲端還有一份，登入後拿回來）。
+  /// 新手導覽不用再做一次，所以 onboarded 留著
+  void resetAccount() => update((s) {
+    final d = AppSettings._();
+    s
+      ..levelTested = false
+      ..levelRetest = false
+      ..reminderOn = false
+      ..muted = d.muted
+      ..showTranslation = d.showTranslation
+      ..haptics = d.haptics
+      ..exploreTipsDone = d.exploreTipsDone
+      ..studyRulesSeen = d.studyRulesSeen
+      ..listShowMeaning = d.listShowMeaning
+      ..detailAutoSpeak = d.detailAutoSpeak
+      ..exploreShowIPA = d.exploreShowIPA
+      ..language = d.language
+      ..level = d.level
+      ..themeID = d.themeID
+      ..dailyGoal = d.dailyGoal
+      ..reminderMinutes = d.reminderMinutes
+      ..appearance = d.appearance
+      ..fontStyle = d.fontStyle
+      ..practiceLimit = d.practiceLimit
+      ..speechRate = d.speechRate
+      ..examOn = d.examOn
+      ..examName = d.examName
+      ..examDate = d.examDate
+      ..examTop = d.examTop;
+  });
+
+  // 備份檔裡的設定（欄位和 iOS 版相同）；登入後第一次同步會套用雲端上的這一份
   Map<String, Object> get backupValues => {
+    'levelTested': levelTested,
+    'language': language,
+    'practiceLimit': practiceLimit,
+    'exploreTipsDone': exploreTipsDone,
+    'studyRulesSeen': studyRulesSeen,
     'level': level,
     'dailyGoal': dailyGoal,
     'reminderOn': reminderOn,
@@ -262,6 +298,11 @@ class AppSettings extends ChangeNotifier {
   void applyBackup(Map<String, dynamic> m) => update((s) {
     T? v<T>(String k) => m[k] is T ? m[k] as T : null;
     s.level = v<String>('level') ?? s.level;
+    if (v<bool>('levelTested') == true) s.levelTested = true;
+    s.language = v<String>('language') ?? s.language;
+    s.practiceLimit = v<int>('practiceLimit') ?? s.practiceLimit;
+    s.exploreTipsDone = v<bool>('exploreTipsDone') ?? s.exploreTipsDone;
+    s.studyRulesSeen = v<bool>('studyRulesSeen') ?? s.studyRulesSeen;
     s.dailyGoal = v<int>('dailyGoal') ?? s.dailyGoal;
     s.reminderMinutes = v<int>('reminderMinutes') ?? s.reminderMinutes;
     s.reminderOn = v<bool>('reminderOn') ?? s.reminderOn;

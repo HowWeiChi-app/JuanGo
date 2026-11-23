@@ -79,11 +79,9 @@ enum ProFeature {
 
 class ProStore extends ChangeNotifier {
   ProStore._() {
-    if (devGosPro) {
-      unawaited(_loadDev());
-      // 登入、登出時 Pro 狀態跟著變
-      Cloud.shared.addListener(notifyListeners);
-    }
+    unawaited(_loadDev());
+    // 登入、登出、拿到帳號資訊時 Pro 狀態跟著變
+    Cloud.shared.addListener(notifyListeners);
   }
 
   /// 開發者選項關掉的功能，照免費版運作
@@ -122,13 +120,27 @@ class ProStore extends ChangeNotifier {
   /// 在商店買的方案（RevenueCat 還沒接上）
   ProPlan? _bought;
 
-  /// 這個帳號有的方案：開發版登入時是 GOs PRO，不然就是買的
-  ProPlan? get plan => devUnlocked ? ProPlan.gos : _bought;
-  ProPeriod? period;
-  DateTime? expires;
+  /// 這個帳號有的方案：開發帳號是 GOs PRO，再來是伺服器上的方案（兌換碼、活動），最後是商店買的
+  ProPlan? get plan =>
+      devUnlocked ? ProPlan.gos : (_serverPlan ?? _bought);
 
-  /// 開發版的 Pro 綁在登入的帳號上：登出就跟免費版一樣，開發版的說明和開發者選項也不顯示
-  bool get devUnlocked => devGosPro && Cloud.shared.signedIn;
+  /// 伺服器算的方案（my_account 的 plan）
+  ProPlan? get _serverPlan => switch (Cloud.shared.account?['plan']) {
+    'gos' => ProPlan.gos,
+    'juango' => ProPlan.juango,
+    _ => null,
+  };
+  ProPeriod? period;
+  DateTime? _expires;
+  DateTime? get expires =>
+      _expires ??
+      DateTime.tryParse('${Cloud.shared.account?['expires_at'] ?? ''}')?.toLocal();
+
+  /// 開發帳號：dev_testers 名單裡的帳號登入後打開（開發版 App 只要登入就打開）。
+  /// 登出就跟免費版一樣，開發版的說明和開發者選項也不顯示
+  bool get devUnlocked =>
+      Cloud.shared.signedIn &&
+      (devGosPro || Cloud.shared.account?['tester'] == true);
 
   bool get isPro => plan != null;
 

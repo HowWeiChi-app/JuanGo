@@ -29,9 +29,12 @@ class DevLog {
 
   static String _two(int n) => n.toString().padLeft(2, '0');
 
-  /// 記一行，例如 DevLog.add('cloud', 'POST /rest/v1/pages → 403 …')。只有開發版會記
+  /// 開發帳號（或開發版）才記 log；Cloud 拿到帳號資訊和登出時更新
+  static bool on = devGosPro;
+
+  /// 記一行，例如 DevLog.add('cloud', 'POST /rest/v1/pages → 403 …')。只有開發帳號會記
   static void add(String tag, String message) {
-    if (!devGosPro || disabled) return;
+    if (!on || disabled) return;
     final t = DateTime.now();
     final line =
         '${_two(t.month)}-${_two(t.day)} ${_two(t.hour)}:${_two(t.minute)}:${_two(t.second)} [$tag] ${message.replaceAll('\n', ' ')}\n';

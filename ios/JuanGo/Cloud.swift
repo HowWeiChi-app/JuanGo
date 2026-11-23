@@ -56,6 +56,19 @@ final class Cloud {
     }
 
     private(set) var session: Session?
+    /// What supabase/account.sql `my_account()` says about the signed-in account; nil until it answers.
+    struct Account: Decodable {
+        /// 10-character user ID (the battle friend code)
+        var id: String
+        /// listed in dev_testers: the account gets the dev build's GOs PRO and 開發者選項
+        var tester: Bool
+        /// the level the 18-question test placed this account at, kept on the server
+        var placed_level: Int?
+        /// "juango" or "gos" from entitlements (redeem codes, promos, purchases)
+        var plan: String?
+        var expires_at: String?
+    }
+    private(set) var account: Account?
     private(set) var syncing = false
     private(set) var lastSync: Date?
     private var refreshing: Task<String, Error>?
@@ -119,7 +132,36 @@ final class Cloud {
         return true
     }
 
-    func signOut() {
+    /// Loads `account` and takes the server's level test result, so a new phone or a reinstall skips the test.
+    func loadAccount() async {
+        guard signedIn, let d = try? await rpc("my_account", timeout: 10),
+              let a = try? JSONDecoder().decode(Account.self, from: d), signedIn else { return }
+        account = a
+        DevLog.on = DevFlags.gosPro || a.tester
+        let s = AppSettings.shared
+        if let placed = a.placed_level, !s.levelTested {
+            s.level = String(placed)
+            s.levelTested = true
+        }
+    }
+
+    /// Uploads everything first, then removes this account's words, lists, records and settings from the phone,
+    /// so the next person who signs in starts clean. Throws (and stays signed in) when the upload fails.
+    func signOut(_ ctx: ModelContext) async throws {
+        if signedIn {
+            do { try await sync(ctx) }
+            catch { throw Failure(message: "沒有登出：資料還沒傳到雲端（\(error.localizedDescription)）。連上網路再試一次。") }
+        }
+        try? ctx.delete(model: ReviewLog.self)
+        try? ctx.delete(model: Word.self)
+        try? ctx.delete(model: WordList.self)
+        try? ctx.save()
+        Removed.clear()
+        AppSettings.shared.resetAccount()
+        endSession()
+    }
+
+    private func endSession() {
         if let token = session?.accessToken {
             var req = URLRequest(url: CloudConfig.url.appendingPathComponent("auth/v1/logout"))
             req.httpMethod = "POST"
@@ -128,6 +170,8 @@ final class Cloud {
             Task { _ = try? await URLSession.shared.data(for: req) }
         }
         store(nil)
+        account = nil
+        DevLog.on = DevFlags.gosPro
         lastSync = nil
         UserDefaults.standard.removeObject(forKey: "cloud.lastSync")
     }
@@ -136,13 +180,17 @@ final class Cloud {
     func deleteAccount() async throws {
         _ = try await send(rest("rpc/delete_my_account"), method: "POST", json: [:])
         store(nil)
+        account = nil
+        DevLog.on = DevFlags.gosPro
         lastSync = nil
         UserDefaults.standard.removeObject(forKey: "cloud.lastSync")
     }
 
     private func store(_ s: Session?) {
         if (s == nil) != (session == nil) { DevLog.add("cloud", s == nil ? "signed out" : "signed in") }
+        let signingIn = session == nil && s != nil
         session = s
+        if signingIn { Task { await loadAccount() } }
         if let s, let d = try? JSONEncoder().encode(s) { Keychain.write("session", d) } else { Keychain.delete("session") }
     }
 
@@ -209,10 +257,12 @@ final class Cloud {
         defer { syncing = false }
         var result = "已上傳"
         if let remote = try await download() {
-            let r = Backup.restore(remote, into: ctx, settings: false)
+            // the first sync after signing in takes the account's settings; later ones keep this phone's
+            let r = Backup.restore(remote, into: ctx, settings: lastSync == nil)
             result = "已同步（\(r)）"
         }
         try await upload(Backup.full(ctx))
+        if account == nil { Task { await loadAccount() } }
         lastSync = .now
         UserDefaults.standard.set(lastSync, forKey: "cloud.lastSync")
         return result

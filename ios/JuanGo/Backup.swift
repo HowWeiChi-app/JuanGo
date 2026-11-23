@@ -336,7 +336,9 @@ extension AppSettings {
          "detailAutoSpeak": .bool(detailAutoSpeak), "exploreShowIPA": .bool(exploreShowIPA),
          "aiTranslate": .bool(aiTranslate), "apiBaseURL": .string(apiBaseURL), "apiModel": .string(apiModel),
          "examOn": .bool(examOn), "examName": .string(examName), "examDate": .double(examDate.timeIntervalSince1970),
-         "examTop": .int(examTop)]
+         "examTop": .int(examTop), "levelTested": .bool(levelTested), "language": .string(language),
+         "exploreTipsDone": .bool(exploreTipsDone), "studyRulesSeen": .bool(studyRulesSeen),
+         "practiceLimit": .int(UserDefaults.standard.object(forKey: "practiceLimit") as? Int ?? 20)]
     }
 
     func apply(backup s: [String: BackupFile.SettingValue]) {
@@ -361,6 +363,26 @@ extension AppSettings {
         if let v = s["aiTranslate"]?.bool { aiTranslate = v }
         if let v = s["apiBaseURL"]?.string { apiBaseURL = v }
         if let v = s["apiModel"]?.string { apiModel = v }
+        // a test done on any phone counts; a backup from before the test never undoes it here
+        if s["levelTested"]?.bool == true { levelTested = true }
+        if let v = s["language"]?.string { language = v }
+        if s["exploreTipsDone"]?.bool == true { exploreTipsDone = true }
+        if s["studyRulesSeen"]?.bool == true { studyRulesSeen = true }
+        if let v = s["practiceLimit"]?.int { UserDefaults.standard.set(v, forKey: "practiceLimit") }
+    }
+
+    /// After signing out: every setting the account carries goes back to a new install's (onboarding stays done).
+    func resetAccount() {
+        // the same values as the defaults registered in AppSettings.init
+        language = "zh-Hant"; level = "3"; levelTested = false; levelRetest = false
+        dailyGoal = 10; reminderOn = false; reminderMinutes = 20 * 60
+        appearance = 0; fontStyle = 0; themeID = "phoenix"; muted = false
+        showTranslation = true; haptics = true; speechRate = 0.45
+        exploreTipsDone = false; studyRulesSeen = false; listShowMeaning = true
+        detailAutoSpeak = false; exploreShowIPA = true; aiTranslate = true
+        apiBaseURL = "https://apihub.agnes-ai.com/v1"; apiModel = "agnes-3.0-flash"
+        examOn = false; examName = "學測"; examDate = ExamPlan.defaultDate(); examTop = 6
+        UserDefaults.standard.removeObject(forKey: "practiceLimit")
     }
 }
 
@@ -378,6 +400,8 @@ enum Removed {
         for t in terms { d[t] = at.timeIntervalSince1970 }
         UserDefaults.standard.set(d, forKey: key)
     }
+
+    static func clear() { UserDefaults.standard.removeObject(forKey: key) }
 
     static func merge(_ records: [BackupFile.RemovedRecord]) {
         guard !records.isEmpty else { return }

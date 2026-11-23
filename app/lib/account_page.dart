@@ -71,6 +71,7 @@ class _AccountPageState extends State<AccountPage> {
     _code.addListener(() {
       if (mounted) setState(() {});
     });
+    if (_cloud.signedIn && _cloud.account == null) _cloud.loadAccount();
   }
 
   @override
@@ -145,6 +146,29 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
+  bool _signingOut = false;
+
+  void _confirmSignOut() => showAlert(
+    context,
+    '要登出嗎？',
+    message: '會先把單字、進度和設定傳到雲端，再從這支手機移除。下次登入就會回來。',
+    actions: [
+      const AlertAction('取消'),
+      AlertAction('登出', destructive: true, bold: true, onTap: _signOut),
+    ],
+  );
+
+  Future<void> _signOut() async {
+    setState(() => _signingOut = true);
+    try {
+      await _cloud.signOut();
+    } catch (e) {
+      if (mounted) showAlert(context, '沒有登出：資料還沒傳到雲端（$e）。請連上網路再試一次。');
+    } finally {
+      if (mounted) setState(() => _signingOut = false);
+    }
+  }
+
   Future<void> _sync() async {
     try {
       final r = await _cloud.sync();
@@ -160,8 +184,18 @@ class _AccountPageState extends State<AccountPage> {
   List<Widget> _signedIn(Palette p, CloudSession s) => [
     Sec(
       header: '帳號',
-      footer: '回到 App 時會自動同步，兩台裝置的單字和進度會合併，不會互相刪除。',
+      footer: '回到 App 時會自動同步，兩台裝置的單字和進度會合併，不會互相刪除。設定也會存到雲端，登入新手機時一起拿回來。',
       children: [
+        RowTile(
+          title: '使用者 ID',
+          value: _cloud.accountId ?? '讀取中…',
+          onTap: _cloud.accountId == null
+              ? null
+              : () {
+                  Clipboard.setData(ClipboardData(text: _cloud.accountId!));
+                  showAlert(context, '已拷貝使用者 ID');
+                },
+        ),
         RowTile(title: 'Email', value: s.email),
         RowTile(title: '上次同步', value: _time(_cloud.lastSync)),
         RowTile(
@@ -173,9 +207,13 @@ class _AccountPageState extends State<AccountPage> {
     ),
     _sharedLists(p),
     Sec(
-      footer: '刪除帳號會刪掉雲端上的備份和分享中的清單，這台裝置上的單字和進度會保留。',
+      footer: '登出會先把單字、進度和設定傳到雲端，再從這支手機移除，下次登入就會回來。刪除帳號會刪掉雲端上的備份和分享中的清單，這台裝置上的單字和進度會保留。',
       children: [
-        RowTile(title: '登出', titleColor: p.destructive, onTap: _cloud.signOut),
+        RowTile(
+          title: _signingOut ? '登出中…' : '登出',
+          titleColor: p.destructive,
+          onTap: _signingOut ? null : _confirmSignOut,
+        ),
         RowTile(
           title: _deleting ? '刪除中…' : '刪除帳號',
           titleColor: p.destructive,

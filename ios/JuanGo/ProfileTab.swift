@@ -413,6 +413,8 @@ struct AccountView: View {
     @State private var lists: [Cloud.SharedList] = []
     @State private var confirmDelete = false
     @State private var deleting = false
+    @State private var confirmSignOut = false
+    @State private var signingOut = false
     private var cloud: Cloud { .shared }
 
     var body: some View {
@@ -420,12 +422,19 @@ struct AccountView: View {
             if let s = cloud.session {
                 Section {
                     LabeledContent("帳號", value: s.email)
+                    Button {
+                        if let id = cloud.account?.id { UIPasteboard.general.string = id; message = "已拷貝使用者 ID" }
+                    } label: {
+                        LabeledContent("使用者 ID") {
+                            Text(cloud.account?.id ?? "讀取中…").font(.app(.body).monospaced())
+                        }
+                    }.tint(.primary)
                     LabeledContent("上次同步", value: cloud.lastSync?.formatted(date: .abbreviated, time: .shortened) ?? "還沒同步")
                     Button(cloud.syncing ? "同步中…" : "立即同步") {
                         Task { do { message = try await cloud.sync(ctx) } catch { message = error.localizedDescription } }
                     }.disabled(cloud.syncing)
                 } footer: {
-                    Text("同一個 Email 的裝置會互相同步。")
+                    Text("同一個 Email 的裝置會互相同步，單字、紀錄和設定都存在帳號上。點使用者 ID 可以拷貝，回報問題或加好友時用。")
                 }
                 Section {
                     if lists.allSatisfy({ $0.hoursLeft == 0 }) { Text("目前沒有分享中的清單").foregroundStyle(.secondary) }
@@ -449,10 +458,10 @@ struct AccountView: View {
                     Text("代碼 72 小時後失效並從雲端刪除；從清單再分享一次可以延長。左滑停止分享。")
                 }
                 Section {
-                    Button("登出", role: .destructive) { cloud.signOut(); lists = [] }
+                    Button(signingOut ? "登出中…" : "登出", role: .destructive) { confirmSignOut = true }.disabled(signingOut)
                     Button(deleting ? "刪除中…" : "刪除帳號", role: .destructive) { confirmDelete = true }.disabled(deleting)
                 } footer: {
-                    Text("刪除帳號會刪掉雲端上的備份和分享中的清單，這台裝置上的單字和進度會保留。")
+                    Text("登出前會先上傳到雲端，再把這個帳號的單字、紀錄和設定從這台裝置移除；再登入就會回來。刪除帳號會刪掉雲端上的備份和分享中的清單，這台裝置上的單字和進度會保留。")
                 }
             } else {
                 Section {
@@ -481,7 +490,19 @@ struct AccountView: View {
             }
         }.listRowBackground(Color.cardFill) }.themedBackground()
         .navigationTitle("帳號登入")
-        .task { await loadLists() }
+        .task { await loadLists(); if cloud.signedIn, cloud.account == nil { await cloud.loadAccount() } }
+        .alert("登出？", isPresented: $confirmSignOut) {
+            Button("登出", role: .destructive) {
+                Task {
+                    signingOut = true; defer { signingOut = false }
+                    do { try await cloud.signOut(ctx); lists = [] }
+                    catch { message = error.localizedDescription }
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("會先把資料傳到雲端，再從這台裝置移除這個帳號的單字、紀錄和設定。再登入同一個帳號就會回來。")
+        }
         .onChange(of: cloud.signedIn) { _, _ in Task { await loadLists() } }
         .alert("刪除帳號？", isPresented: $confirmDelete) {
             Button("刪除帳號", role: .destructive) {
